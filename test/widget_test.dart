@@ -129,7 +129,10 @@ void main() {
 
     await tester.pumpWidget(const FLSApp());
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
     await tester.tap(find.text('本机面板'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
