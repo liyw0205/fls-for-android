@@ -4,9 +4,14 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../models/panel_server.dart';
 
 class RemoteWebView extends StatefulWidget {
-  const RemoteWebView({super.key, required this.server});
+  const RemoteWebView({
+    super.key,
+    required this.server,
+    this.showUpdatePage = false,
+  });
 
   final PanelServer server;
+  final bool showUpdatePage;
 
   @override
   State<RemoteWebView> createState() => _RemoteWebViewState();
@@ -16,6 +21,14 @@ class _RemoteWebViewState extends State<RemoteWebView> {
   late final WebViewController _controller;
   int _progress = 0;
   String? _error;
+  bool _stopping = false;
+
+  Uri get _initialUri {
+    final base = Uri.parse(widget.server.url);
+    if (!widget.showUpdatePage) return base;
+    final path = base.path.replaceFirst(RegExp(r'/+$'), '');
+    return base.replace(path: '$path/about');
+  }
 
   @override
   void initState() {
@@ -25,9 +38,10 @@ class _RemoteWebViewState extends State<RemoteWebView> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) {
-            if (mounted) setState(() => _progress = progress);
+            if (mounted && !_stopping) setState(() => _progress = progress);
           },
           onPageStarted: (_) {
+            _stopping = false;
             if (mounted) setState(() => _error = null);
           },
           onWebResourceError: (error) {
@@ -37,7 +51,7 @@ class _RemoteWebViewState extends State<RemoteWebView> {
           },
         ),
       )
-      ..loadRequest(Uri.parse(widget.server.url));
+      ..loadRequest(_initialUri);
   }
 
   Future<void> _refresh() async {
@@ -46,6 +60,17 @@ class _RemoteWebViewState extends State<RemoteWebView> {
       _progress = 0;
     });
     await _controller.reload();
+  }
+
+  Future<void> _stopLoading() async {
+    _stopping = true;
+    try {
+      await _controller.runJavaScript('window.stop()');
+    } catch (_) {
+      await _controller.loadRequest(Uri.parse('about:blank'));
+    }
+    if (!mounted) return;
+    setState(() => _progress = 100);
   }
 
   @override
@@ -57,7 +82,9 @@ class _RemoteWebViewState extends State<RemoteWebView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.server.name,
+              widget.showUpdatePage
+                  ? '同步 · ${widget.server.name}'
+                  : widget.server.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 17),
@@ -72,9 +99,13 @@ class _RemoteWebViewState extends State<RemoteWebView> {
         ),
         actions: [
           IconButton(
-            tooltip: '刷新',
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
+            tooltip: _progress < 100 && _error == null ? '停止加载' : '刷新',
+            onPressed: _progress < 100 && _error == null
+                ? _stopLoading
+                : _refresh,
+            icon: Icon(
+              _progress < 100 && _error == null ? Icons.close : Icons.refresh,
+            ),
           ),
         ],
       ),

@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -38,6 +39,35 @@ void main() {
     expect(find.text('Full'), findsOneWidget);
     expect(find.text('导入容器'), findsOneWidget);
     expect(find.text('导出容器'), findsOneWidget);
+    expect(find.text('安装本机 FLS'), findsOneWidget);
+  });
+
+  testWidgets('remote panel actions include sync and remove', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'remote_panels_v1': '[{"name":"Home","url":"http://192.168.1.2:5700"}]',
+    });
+    final previousPathProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _TestPathProvider();
+    addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('top.fls/local_panel'),
+          (call) async => switch (call.method) {
+            'supportedAbis' => ['arm64-v8a'],
+            'isRunning' => false,
+            _ => null,
+          },
+        );
+
+    await tester.pumpWidget(const FLSApp());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('Home'), findsOneWidget);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pump();
+    expect(find.text('同步'), findsOneWidget);
+    expect(find.text('移除'), findsOneWidget);
   });
 }
 

@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'local_panel_host.dart';
+import 'operation_cancellation.dart';
 import 'runtime_path_validation.dart';
 
 enum RuntimeProfile {
@@ -179,20 +180,54 @@ class LocalInstallManager {
     }
   }
 
+  Future<http.StreamedResponse> _sendCancellable(
+    Uri uri,
+    OperationCancellation cancellation, {
+    Map<String, String> headers = const {},
+  }) async {
+    cancellation.throwIfCancelled();
+    final request = http.AbortableRequest(
+      'GET',
+      uri,
+      abortTrigger: cancellation.whenCancelled,
+    )..headers.addAll(headers);
+    try {
+      return await _client.send(request);
+    } catch (_) {
+      cancellation.throwIfCancelled();
+      rethrow;
+    }
+  }
+
+  Future<String> _readCancellable(
+    http.StreamedResponse response,
+    OperationCancellation cancellation,
+  ) async {
+    try {
+      return await response.stream.bytesToString();
+    } catch (_) {
+      cancellation.throwIfCancelled();
+      rethrow;
+    }
+  }
+
   Future<void> installRuntime({
     required List<String> supportedAbis,
     required ValueChanged<double> onProgress,
+    required OperationCancellation cancellation,
     RuntimeProfile profile = RuntimeProfile.python,
     String? githubMirror,
   }) async {
-    final response = await _client.get(
+    final response = await _sendCancellable(
       applyGithubMirror(_releaseUri, githubMirror),
+      cancellation,
       headers: const {'Accept': 'application/vnd.github+json'},
     );
     if (response.statusCode != 200) {
       throw StateError('读取 PRoot Release 失败：HTTP ${response.statusCode}');
     }
-    final release = jsonDecode(response.body);
+    final release = jsonDecode(await _readCancellable(response, cancellation));
+    cancellation.throwIfCancelled();
     if (release is! Map<String, dynamic>) {
       throw const FormatException('PRoot Release 格式无效');
     }
@@ -214,8 +249,14 @@ class LocalInstallManager {
     if (await staging.exists()) await staging.delete(recursive: true);
 
     try {
-      await _downloadAndVerify(asset, archive, onProgress);
-      await _activateRuntimeArchive(archive, staging, expectedProfile: profile);
+      await _downloadAndVerify(asset, archive, onProgress, cancellation);
+      onProgress(0);
+      await _activateRuntimeArchive(
+        archive,
+        staging,
+        expectedProfile: profile,
+        cancellation: cancellation,
+      );
     } finally {
       if (await archive.exists()) await archive.delete();
       if (await staging.exists()) await staging.delete(recursive: true);
@@ -225,13 +266,19 @@ class LocalInstallManager {
   Future<RuntimeProfile> importRuntime(
     File archive, {
     required ValueChanged<double> onProgress,
+    required OperationCancellation cancellation,
   }) async {
     final base = await root;
     final staging = Directory(p.join(base.path, '.runtime-import-staging'));
     await base.create(recursive: true);
     if (await staging.exists()) await staging.delete(recursive: true);
     try {
-      final imported = await _activateRuntimeArchive(archive, staging);
+      final imported = await _activateRuntimeArchive(
+        archive,
+        staging,
+        cancellation: cancellation,
+      );
+      cancellation.throwIfCancelled();
       onProgress(1);
       return imported;
     } finally {
@@ -267,19 +314,24 @@ class LocalInstallManager {
 
   Future<void> updatePanel({
     required ValueChanged<double> onProgress,
+    required OperationCancellation cancellation,
     String? githubMirror,
   }) async {
-    final branchResponse = await _client.get(
+    final branchResponse = await _sendCancellable(
       applyGithubMirror(
         Uri.https(_repoUri.authority, '${_repoUri.path}/commits/main'),
         githubMirror,
       ),
+      cancellation,
       headers: const {'Accept': 'application/vnd.github+json'},
     );
     if (branchResponse.statusCode != 200) {
       throw StateError('读取 FLS 版本失败：HTTP ${branchResponse.statusCode}');
     }
-    final commit = jsonDecode(branchResponse.body);
+    final commit = jsonDecode(
+      await _readCancellable(branchResponse, cancellation),
+    );
+    cancellation.throwIfCancelled();
     if (commit is! Map<String, dynamic> || commit['sha'] is! String) {
       throw const FormatException('FLS 版本信息格式无效');
     }
@@ -305,9 +357,12 @@ class LocalInstallManager {
         ),
         archive,
         onProgress,
+        cancellation,
       );
       await staging.create(recursive: true);
-      await _extractTarGz(archive, staging);
+      onProgress(0);
+      await _extractTarGz(archive, staging, cancellation: cancellation);
+      cancellation.throwIfCancelled();
       Directory? extracted;
       await for (final entry in staging.list()) {
         if (entry is Directory) {
@@ -320,6 +375,7 @@ class LocalInstallManager {
           !await Directory(p.join(extracted.path, 'fls_manager')).exists()) {
         throw const FormatException('FLS 源码包结构无效');
       }
+      cancellation.throwIfCancelled();
       await _replaceDirectory(extracted, await project);
       await File(p.join(base.path, 'panel-revision')).writeAsString(sha);
       await Future.wait([
@@ -333,7 +389,7 @@ class LocalInstallManager {
     }
   }
 
-  Future<void> startPanel() async {
+  Future<void> startPanel({required OperationCancellation cancellation}) async {
     final runtimeDir = await runtime;
     final projectDir = await project;
     if (!await hasRuntime() || !await hasProject()) {
@@ -354,28 +410,38 @@ class LocalInstallManager {
     if (!started) throw StateError('Android 本机面板服务启动失败');
     final client = http.Client();
     try {
-      for (var attempt = 0; attempt < 40; attempt++) {
+      while (true) {
+        cancellation.throwIfCancelled();
         try {
-          final response = await client
-              .get(Uri.parse('http://127.0.0.1:5700/'))
-              .timeout(const Duration(seconds: 2));
-          if (response.statusCode >= 200 && response.statusCode < 500) return;
+          final request = http.AbortableRequest(
+            'GET',
+            Uri.parse('http://127.0.0.1:5700/'),
+            abortTrigger: cancellation.whenCancelled,
+          );
+          final response = await client.send(request);
+          final ready = response.statusCode >= 200 && response.statusCode < 500;
+          await response.stream.drain<void>();
+          if (ready) return;
         } catch (_) {
-          await Future<void>.delayed(const Duration(milliseconds: 500));
+          cancellation.throwIfCancelled();
         }
+        await cancellation.delay(const Duration(milliseconds: 500));
       }
+    } on OperationCancelled {
+      await LocalPanelHost.stop();
+      rethrow;
     } finally {
       client.close();
     }
-    throw StateError('本机 FLS 未能在 20 秒内就绪，请检查本机面板日志');
   }
 
   Future<void> _downloadAndVerify(
     RuntimeAsset asset,
     File destination,
     ValueChanged<double> onProgress,
+    OperationCancellation cancellation,
   ) async {
-    final response = await _client.send(http.Request('GET', asset.url));
+    final response = await _sendCancellable(asset.url, cancellation);
     if (response.statusCode != 200) {
       throw StateError('下载 PRoot 失败：HTTP ${response.statusCode}');
     }
@@ -395,13 +461,14 @@ class LocalInstallManager {
         if (received > asset.size) {
           throw const FormatException('PRoot 镜像超过 Release 声明大小');
         }
-        onProgress((received / asset.size).clamp(0.0, 1.0));
+        onProgress((received / asset.size).clamp(0.0, 1.0).toDouble());
       }
       converter.close();
       await output.flush();
       await output.close();
     } catch (_) {
       await output.close();
+      cancellation.throwIfCancelled();
       rethrow;
     }
     if (hash.value?.toString() != asset.sha256) {
@@ -425,8 +492,9 @@ class LocalInstallManager {
     Uri uri,
     File destination,
     ValueChanged<double> onProgress,
+    OperationCancellation cancellation,
   ) async {
-    final response = await _client.send(http.Request('GET', uri));
+    final response = await _sendCancellable(uri, cancellation);
     if (response.statusCode != 200) {
       throw StateError('下载 FLS 失败：HTTP ${response.statusCode}');
     }
@@ -438,27 +506,52 @@ class LocalInstallManager {
         output.add(chunk);
         received += chunk.length;
         if (total != null && total > 0) {
-          onProgress((received / total).clamp(0.0, 1.0));
+          onProgress((received / total).clamp(0.0, 1.0).toDouble());
         }
       }
       await output.flush();
       await output.close();
     } catch (_) {
       await output.close();
+      cancellation.throwIfCancelled();
       rethrow;
     }
   }
 
-  Future<void> _extractTarGz(File archive, Directory destination) async {
-    final result = await Process.run('/system/bin/toybox', [
+  Future<void> _extractTarGz(
+    File archive,
+    Directory destination, {
+    OperationCancellation? cancellation,
+  }) async {
+    cancellation?.throwIfCancelled();
+    final process = await Process.start('/system/bin/toybox', [
       'tar',
       '-xzf',
       archive.path,
       '-C',
       destination.path,
     ]);
-    if (result.exitCode != 0) {
-      throw StateError('解压失败：${result.stderr}');
+    final stdoutDone = process.stdout.drain<void>();
+    final stderrText = process.stderr.transform(utf8.decoder).join();
+    final exitCode = process.exitCode;
+    final Object? result = cancellation == null
+        ? await exitCode
+        : await Future.any<Object?>([
+            exitCode,
+            cancellation.whenCancelled.then<Object?>((_) => null),
+          ]);
+    if (result == null) {
+      process.kill();
+      await exitCode;
+      await stdoutDone;
+      await stderrText;
+      cancellation!.throwIfCancelled();
+    }
+    await stdoutDone;
+    final errorText = await stderrText;
+    cancellation?.throwIfCancelled();
+    if (result is int && result != 0) {
+      throw StateError('解压失败：$errorText');
     }
   }
 
@@ -466,9 +559,11 @@ class LocalInstallManager {
     File archive,
     Directory staging, {
     RuntimeProfile? expectedProfile,
+    OperationCancellation? cancellation,
   }) async {
     await staging.create(recursive: true);
-    await _extractTarGz(archive, staging);
+    await _extractTarGz(archive, staging, cancellation: cancellation);
+    cancellation?.throwIfCancelled();
     final proot = File(p.join(staging.path, 'bin', 'proot'));
     final loader = File(p.join(staging.path, 'libexec', 'proot', 'loader'));
     final pythonExists = await runtimeFileExistsInRootfs(
@@ -510,6 +605,7 @@ class LocalInstallManager {
     await _makeExecutable(loader);
     final loader32 = File(p.join(staging.path, 'libexec', 'proot', 'loader32'));
     if (await loader32.exists()) await _makeExecutable(loader32);
+    cancellation?.throwIfCancelled();
     await _replaceDirectory(staging, await runtime);
     return profile;
   }

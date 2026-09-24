@@ -142,6 +142,14 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
     );
   }
 
+  void _syncPanel(PanelServer server) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RemoteWebView(server: server, showUpdatePage: true),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return CustomScrollView(
@@ -205,9 +213,11 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                     trailing: PopupMenuButton<String>(
                       tooltip: '面板操作',
                       onSelected: (value) {
+                        if (value == 'sync') _syncPanel(server);
                         if (value == 'remove') _removeServer(server);
                       },
                       itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'sync', child: Text('同步')),
                         PopupMenuItem(value: 'remove', child: Text('移除')),
                       ],
                     ),

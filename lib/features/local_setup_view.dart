@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../services/local_install_manager.dart';
 import '../services/local_file_bridge.dart';
 import '../services/local_panel_host.dart';
+import '../services/operation_cancellation.dart';
 import 'remote_web_view.dart';
 import '../models/panel_server.dart';
 
@@ -29,6 +30,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
   double _progress = 0;
   String _phase = '';
   String? _error;
+  OperationCancellation? _cancellation;
   final _mirrorController = TextEditingController();
 
   @override
@@ -39,6 +41,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
 
   @override
   void dispose() {
+    _cancellation?.cancel();
     _mirrorController.dispose();
     super.dispose();
   }
@@ -95,6 +98,8 @@ class _LocalSetupViewState extends State<LocalSetupView> {
   }
 
   Future<void> _installOrUpdate() async {
+    final cancellation = OperationCancellation();
+    _cancellation = cancellation;
     setState(() {
       _installing = true;
       _error = null;
@@ -111,34 +116,49 @@ class _LocalSetupViewState extends State<LocalSetupView> {
           supportedAbis: abis,
           profile: _selectedProfile,
           githubMirror: _mirrorController.text,
+          cancellation: cancellation,
           onProgress: (value) {
             if (mounted) setState(() => _progress = value);
           },
         );
       }
       setState(() {
-        _phase = '同步 FLS 面板';
+        _phase = '下载并安装 FLS 面板';
         _progress = 0;
       });
       await _manager.updatePanel(
         githubMirror: _mirrorController.text,
+        cancellation: cancellation,
         onProgress: (value) {
           if (mounted) setState(() => _progress = value);
         },
       );
-      setState(() => _phase = '启动本机面板');
-      await _manager.startPanel();
+      setState(() {
+        _phase = '启动本机面板';
+        _progress = 0;
+      });
+      await _manager.startPanel(cancellation: cancellation);
       await _refreshStatus();
       if (mounted && _panelReady) _openLocalPanel();
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted && error is! OperationCancelled) {
+        setState(() => _error = error.toString());
+      }
     } finally {
-      if (mounted) setState(() => _installing = false);
+      if (identical(_cancellation, cancellation)) _cancellation = null;
+      if (mounted) {
+        setState(() {
+          _installing = false;
+          if (cancellation.isCancelled) _phase = '已取消';
+        });
+      }
     }
   }
 
   Future<void> _importContainer() async {
     if (_installing) return;
+    final cancellation = OperationCancellation();
+    _cancellation = cancellation;
     setState(() {
       _installing = true;
       _error = null;
@@ -156,9 +176,11 @@ class _LocalSetupViewState extends State<LocalSetupView> {
         path: archive.path,
       );
       if (!copied) throw StateError('无法读取所选容器文件');
+      cancellation.throwIfCancelled();
       if (_panelReady) await LocalPanelHost.stop();
       final profile = await _manager.importRuntime(
         archive,
+        cancellation: cancellation,
         onProgress: (value) {
           if (mounted) setState(() => _progress = value);
         },
@@ -166,10 +188,18 @@ class _LocalSetupViewState extends State<LocalSetupView> {
       _selectedProfile = profile;
       await _refreshStatus();
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted && error is! OperationCancelled) {
+        setState(() => _error = error.toString());
+      }
     } finally {
       if (archive != null && await archive.exists()) await archive.delete();
-      if (mounted) setState(() => _installing = false);
+      if (identical(_cancellation, cancellation)) _cancellation = null;
+      if (mounted) {
+        setState(() {
+          _installing = false;
+          if (cancellation.isCancelled) _phase = '已取消';
+        });
+      }
     }
   }
 
@@ -199,17 +229,49 @@ class _LocalSetupViewState extends State<LocalSetupView> {
   }
 
   Future<void> _togglePanel() async {
-    try {
-      if (_panelReady) {
+    if (_installing) return;
+    if (_panelReady) {
+      try {
         await LocalPanelHost.stop();
-      } else {
-        await _manager.startPanel();
-        _openLocalPanel();
+        await _refreshStatus();
+      } catch (error) {
+        if (mounted) setState(() => _error = error.toString());
       }
-      await _refreshStatus();
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      return;
     }
+
+    final cancellation = OperationCancellation();
+    _cancellation = cancellation;
+    setState(() {
+      _installing = true;
+      _error = null;
+      _phase = '启动本机面板';
+      _progress = 0;
+    });
+    try {
+      await _manager.startPanel(cancellation: cancellation);
+      await _refreshStatus();
+      if (mounted && _panelReady) _openLocalPanel();
+    } catch (error) {
+      if (mounted && error is! OperationCancelled) {
+        setState(() => _error = error.toString());
+      }
+    } finally {
+      if (identical(_cancellation, cancellation)) _cancellation = null;
+      if (mounted) {
+        setState(() {
+          _installing = false;
+          if (cancellation.isCancelled) _phase = '已取消';
+        });
+      }
+    }
+  }
+
+  void _cancelOperation() {
+    final cancellation = _cancellation;
+    if (cancellation == null || cancellation.isCancelled) return;
+    cancellation.cancel();
+    if (mounted) setState(() {});
   }
 
   void _openLocalPanel() {
@@ -270,7 +332,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                                   : _installed
                                   ? '已安装 · 当前停止'
                                   : _runtimeInstalled
-                                  ? '${_installedProfile?.label ?? 'Python'} 容器已安装 · 尚未同步面板'
+                                  ? '${_installedProfile?.label ?? 'Python'} 容器已安装 · 尚未安装 FLS 面板'
                                   : '尚未安装',
                               style: TextStyle(
                                 color: _panelReady
@@ -402,6 +464,20 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                         LinearProgressIndicator(
                           value: _progress == 0 ? null : _progress,
                         ),
+                        const SizedBox(height: 8),
+                        if (_cancellation != null)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: _cancellation!.isCancelled
+                                  ? null
+                                  : _cancelOperation,
+                              icon: const Icon(Icons.close),
+                              label: Text(
+                                _cancellation!.isCancelled ? '正在取消...' : '取消',
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -448,7 +524,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                           _runtimeInstalled &&
                                   _selectedProfile != _installedProfile
                               ? '切换容器'
-                              : '更新面板',
+                              : '更新 FLS 面板',
                         ),
                       ),
                     ),
@@ -466,7 +542,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                       _runtimeInstalled && _selectedProfile != _installedProfile
                           ? '切换为 ${_selectedProfile.label} 并安装'
                           : _runtimeInstalled
-                          ? '同步并启动本机 FLS'
+                          ? '安装并启动本机 FLS'
                           : '安装本机 FLS',
                     ),
                   ),
