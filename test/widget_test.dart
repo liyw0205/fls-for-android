@@ -137,7 +137,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('启动失败'), findsOneWidget);
+    final renderedTexts = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((widget) => widget.data ?? widget.textSpan?.toPlainText() ?? '')
+        .toList();
+    expect(find.text('启动失败'), findsOneWidget, reason: '$renderedTexts');
     expect(find.text('查看启动诊断'), findsOneWidget);
     await tester.tap(find.text('查看启动诊断'));
     await tester.pump();
