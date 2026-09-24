@@ -20,6 +20,7 @@ void main() {
     await outside.create();
     await File(p.join(oldFiles.path, 'old')).writeAsString('old');
     await outsideFile.writeAsString('outside');
+    final outsideMode = (await outsideFile.stat()).mode & 0x1ff;
     await Link(p.join(target.path, 'root-link')).create(outside.path);
 
     final chmod = Platform.isAndroid ? '/system/bin/chmod' : 'chmod';
@@ -34,6 +35,6 @@ void main() {
     expect(await File(p.join(target.path, 'new')).readAsString(), 'new');
     expect(await Directory('${target.path}.previous').exists(), isFalse);
     expect(await outside.exists(), isTrue);
-    expect((await outsideFile.stat()).mode & 0x1ff, 0);
+    expect((await outsideFile.stat()).mode & 0x1ff, outsideMode);
   });
 }
