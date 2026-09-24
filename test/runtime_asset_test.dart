@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fls_for_android/services/local_install_manager.dart';
+import 'package:fls_for_android/services/runtime_path_validation.dart';
 
 void main() {
   const digest =
@@ -76,4 +79,43 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test(
+    'resolves absolute Python symlinks inside the imported rootfs',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('fls-rootfs-test-');
+      addTearDown(() => temp.delete(recursive: true));
+      final rootfs = Directory('${temp.path}/rootfs');
+      final venvBin = Directory('${rootfs.path}/opt/fls-venv/bin');
+      final systemBin = Directory('${rootfs.path}/usr/bin');
+      await venvBin.create(recursive: true);
+      await systemBin.create(recursive: true);
+      await File('${systemBin.path}/python3.11').writeAsString('python');
+      await Link('${systemBin.path}/python3').create('python3.11');
+      await Link('${venvBin.path}/python3').create('/usr/bin/python3');
+      await Link('${venvBin.path}/python').create('python3');
+
+      expect(
+        await runtimeFileExistsInRootfs(rootfs, 'opt/fls-venv/bin/python'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'does not resolve absolute Python symlinks against the host root',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('fls-rootfs-test-');
+      addTearDown(() => temp.delete(recursive: true));
+      final rootfs = Directory('${temp.path}/rootfs');
+      final venvBin = Directory('${rootfs.path}/opt/fls-venv/bin');
+      await venvBin.create(recursive: true);
+      await Link('${venvBin.path}/python').create('/usr/bin/python3');
+
+      expect(
+        await runtimeFileExistsInRootfs(rootfs, 'opt/fls-venv/bin/python'),
+        isFalse,
+      );
+    },
+  );
 }

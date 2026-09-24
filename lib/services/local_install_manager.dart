@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'local_panel_host.dart';
+import 'runtime_path_validation.dart';
 
 enum RuntimeProfile {
   python('python', 'Python'),
@@ -128,17 +129,18 @@ class LocalInstallManager {
 
   Future<bool> _hasRuntimeStructure() async {
     final dir = await runtime;
+    final pythonExists = await runtimeFileExistsInRootfs(
+      Directory(p.join(dir.path, 'rootfs')),
+      'opt/fls-venv/bin/python',
+    );
     final checks = await Future.wait([
-      File(
-        p.join(dir.path, 'rootfs', 'opt', 'fls-venv', 'bin', 'python'),
-      ).exists(),
       File(p.join(dir.path, 'bin', 'proot')).exists(),
       File(p.join(dir.path, 'libexec', 'proot', 'loader')).exists(),
       File(p.join(dir.path, 'lib', 'libandroid-shmem.so')).exists(),
       File(p.join(dir.path, 'lib', 'libtalloc.so')).exists(),
       File(p.join(dir.path, '.arch')).exists(),
     ]);
-    return checks.every((exists) => exists);
+    return pythonExists && checks.every((exists) => exists);
   }
 
   Future<RuntimeProfile?> installedRuntimeProfile() async {
@@ -467,13 +469,13 @@ class LocalInstallManager {
   }) async {
     await staging.create(recursive: true);
     await _extractTarGz(archive, staging);
-    final python = File(
-      p.join(staging.path, 'rootfs', 'opt', 'fls-venv', 'bin', 'python'),
-    );
     final proot = File(p.join(staging.path, 'bin', 'proot'));
     final loader = File(p.join(staging.path, 'libexec', 'proot', 'loader'));
+    final pythonExists = await runtimeFileExistsInRootfs(
+      Directory(p.join(staging.path, 'rootfs')),
+      'opt/fls-venv/bin/python',
+    );
     final requiredFiles = [
-      python,
       proot,
       loader,
       File(p.join(staging.path, 'lib', 'libandroid-shmem.so')),
@@ -481,10 +483,15 @@ class LocalInstallManager {
       File(p.join(staging.path, '.arch')),
       File(p.join(staging.path, '.profile')),
     ];
-    if (!await Future.wait(
-      requiredFiles.map((file) => file.exists()),
-    ).then((exists) => exists.every((value) => value))) {
-      throw const FormatException('运行时镜像缺少 PRoot、Python 或依赖库');
+    final missingFiles = <String>[];
+    if (!pythonExists) missingFiles.add('rootfs/opt/fls-venv/bin/python');
+    for (final file in requiredFiles) {
+      if (!await file.exists()) {
+        missingFiles.add(p.relative(file.path, from: staging.path));
+      }
+    }
+    if (missingFiles.isNotEmpty) {
+      throw FormatException('运行时镜像缺少必需文件：${missingFiles.join('、')}');
     }
     final arch = (await File(
       p.join(staging.path, '.arch'),
