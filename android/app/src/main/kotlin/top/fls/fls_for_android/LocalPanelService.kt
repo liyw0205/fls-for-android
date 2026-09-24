@@ -49,6 +49,13 @@ class LocalPanelService : Service() {
                 stopSelf(startId)
             } else {
                 activeProcess.destroy()
+                handler.postDelayed({
+                    if (process === activeProcess && activeProcess.isAlive &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ) {
+                        activeProcess.destroyForcibly()
+                    }
+                }, STOP_FORCE_KILL_DELAY_MILLIS)
             }
             return START_NOT_STICKY
         }
@@ -500,6 +507,7 @@ class LocalPanelService : Service() {
         private const val KEY_LOG = "log"
         private const val KEY_SCRIPTS = "scripts"
         private const val STABLE_RUN_MILLIS = 60_000L
+        private const val STOP_FORCE_KILL_DELAY_MILLIS = 1_500L
         private val RESTART_DELAYS_SECONDS = listOf(2L, 5L, 15L)
         private val REQUIRED_PATHS = listOf(
             "runtimeDir",

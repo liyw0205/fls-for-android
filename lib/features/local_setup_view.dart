@@ -184,26 +184,6 @@ class _LocalSetupViewState extends State<LocalSetupView>
     setState(() => _logText = text);
   }
 
-  void _openEnvironmentManager() {
-    if (!_installed) return;
-    if (!_panelReady) {
-      _startPanel(openEnvironmentManager: true);
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => RemoteWebView(
-          server: const PanelServer(
-            name: '本机 FLS',
-            url: 'http://127.0.0.1:5700',
-          ),
-          initialPath: '/panel/status',
-          pageTitle: '运行环境管理',
-        ),
-      ),
-    );
-  }
-
   void _selectTab(_LocalTab tab) {
     setState(() => _tab = tab);
     if (tab == _LocalTab.diagnostics) _loadServiceLog();
@@ -293,7 +273,6 @@ class _LocalSetupViewState extends State<LocalSetupView>
       });
       await _manager.startPanel(cancellation: cancellation);
       await _refreshStatus();
-      if (mounted && _panelReady) _openLocalPanel();
     } catch (error) {
       if (mounted && error is! OperationCancelled) {
         setState(() => _error = error.toString());
@@ -392,11 +371,22 @@ class _LocalSetupViewState extends State<LocalSetupView>
   Future<void> _togglePanel() async {
     if (_installing) return;
     if (_panelReady) {
+      setState(() {
+        _installing = true;
+        _error = null;
+        _phase = '停止本机面板';
+        _progress = 0;
+      });
       try {
         await LocalPanelHost.stop();
         await _refreshStatus();
       } catch (error) {
         if (mounted) setState(() => _error = error.toString());
+        try {
+          await _refreshStatus();
+        } catch (_) {}
+      } finally {
+        if (mounted) setState(() => _installing = false);
       }
       return;
     }
@@ -404,7 +394,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
     await _startPanel();
   }
 
-  Future<void> _startPanel({bool openEnvironmentManager = false}) async {
+  Future<void> _startPanel() async {
     if (_installing) return;
     final cancellation = OperationCancellation();
     _cancellation = cancellation;
@@ -417,13 +407,6 @@ class _LocalSetupViewState extends State<LocalSetupView>
     try {
       await _manager.startPanel(cancellation: cancellation);
       await _refreshStatus();
-      if (mounted && _panelReady) {
-        if (openEnvironmentManager) {
-          _openEnvironmentManager();
-        } else {
-          _openLocalPanel();
-        }
-      }
     } catch (error) {
       if (mounted && error is! OperationCancelled) {
         setState(() => _error = error.toString());
@@ -678,9 +661,9 @@ class _LocalSetupViewState extends State<LocalSetupView>
             const SizedBox(width: 8),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _installing ? null : _installOrUpdate,
-                icon: const Icon(Icons.system_update_alt),
-                label: const Text('更新 FLS'),
+                onPressed: _installing || !_panelReady ? null : _openLocalPanel,
+                icon: const Icon(Icons.open_in_browser),
+                label: const Text('打开面板'),
               ),
             ),
           ],
@@ -760,19 +743,12 @@ class _LocalSetupViewState extends State<LocalSetupView>
                   ),
                 ),
               ],
-              if (_runtimeInstalled && _installed) ...[
+              if (_installed) ...[
                 const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _installing ? null : _openEnvironmentManager,
-                  icon: const Icon(Icons.open_in_browser),
-                  label: const Text('打开 FLS 运行环境安装器'),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '安装命令会在当前容器内运行；例如 Python 基础容器也可以在面板的运行环境页面安装 Bash、Node.js、PHP 等。',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+                OutlinedButton.icon(
+                  onPressed: _installing ? null : _installOrUpdate,
+                  icon: const Icon(Icons.system_update_alt),
+                  label: const Text('更新 FLS'),
                 ),
               ],
               if (_runtimeInstalled) ...[

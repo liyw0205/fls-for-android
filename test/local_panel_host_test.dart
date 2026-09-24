@@ -1,8 +1,11 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fls_for_android/services/local_panel_host.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('parses persisted local service status', () {
     final status = LocalPanelStatus.fromMap({
       'state': 'retrying',
@@ -27,5 +30,28 @@ void main() {
     expect(status.exitCode, isNull);
     expect(status.restartAttempts, 0);
     expect(status.autoRestart, isFalse);
+  });
+
+  test('stop waits for both process exit and stopped service state', () async {
+    var processChecks = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('top.fls/local_panel'),
+          (call) async => switch (call.method) {
+            'stop' => null,
+            'isRunning' => ++processChecks < 3,
+            'status' => {
+              'state': processChecks < 4 ? 'running' : 'stopped',
+              'startedAtMs': 0,
+              'restartAttempts': 0,
+              'autoRestart': false,
+            },
+            _ => null,
+          },
+        );
+
+    await LocalPanelHost.stop();
+
+    expect(processChecks, 4);
   });
 }

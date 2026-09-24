@@ -106,6 +106,60 @@ void main() {
     expect(find.text('同步服务器数据到本机？'), findsNothing);
   });
 
+  testWidgets('local panel controls and FLS update live on their own tabs', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    var running = true;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('top.fls/local_panel'), (
+          call,
+        ) async {
+          if (call.method == 'stop') {
+            running = false;
+            return null;
+          }
+          return switch (call.method) {
+            'isRunning' => running,
+            'status' => {
+              'state': running ? 'running' : 'stopped',
+              'startedAtMs': 0,
+              'restartAttempts': 0,
+              'autoRestart': false,
+            },
+            'notificationsGranted' => true,
+            _ => null,
+          };
+        });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocalSetupView(
+          manager: _TestLocalInstallManager(
+            profile: RuntimeProfile.python,
+            projectInstalled: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('停止面板'), findsOneWidget);
+    expect(find.text('打开面板'), findsOneWidget);
+    expect(find.text('更新 FLS'), findsNothing);
+    await tester.tap(find.text('停止面板'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('启动面板'), findsOneWidget);
+    expect(find.text('Bad state:本机面板尚未停止，无法安全替换容器'), findsNothing);
+
+    await tester.tap(find.text('环境'));
+    await tester.pump();
+    expect(find.text('更新 FLS'), findsOneWidget);
+    expect(find.text('打开 FLS 运行环境安装器'), findsNothing);
+  });
+
   testWidgets('failed local service exposes its diagnostics', (tester) async {
     SharedPreferences.setMockInitialValues({});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -149,11 +203,16 @@ class _TestPathProvider extends PathProviderPlatform {
 }
 
 class _TestLocalInstallManager extends LocalInstallManager {
-  @override
-  Future<RuntimeProfile?> installedRuntimeProfile() async => null;
+  _TestLocalInstallManager({this.profile, this.projectInstalled = false});
+
+  final RuntimeProfile? profile;
+  final bool projectInstalled;
 
   @override
-  Future<bool> hasProject() async => false;
+  Future<RuntimeProfile?> installedRuntimeProfile() async => profile;
+
+  @override
+  Future<bool> hasProject() async => projectInstalled;
 
   @override
   Future<String> loadGithubMirror() async => '';

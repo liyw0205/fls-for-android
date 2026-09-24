@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'directory_replacement.dart';
 import 'local_panel_host.dart';
 import 'operation_cancellation.dart';
 import 'runtime_path_validation.dart';
@@ -344,7 +345,7 @@ class LocalInstallManager {
       }
       onProgress(0.9);
       cancellation.throwIfCancelled();
-      await _replaceDirectory(serverData, await data);
+      await replaceDirectoryWithBackup(serverData, await data);
       onProgress(1);
     } finally {
       if (await staging.exists()) await staging.delete(recursive: true);
@@ -525,7 +526,7 @@ class LocalInstallManager {
         throw const FormatException('FLS 源码包结构无效');
       }
       cancellation.throwIfCancelled();
-      await _replaceDirectory(extracted, await project);
+      await replaceDirectoryWithBackup(extracted, await project);
       await File(p.join(base.path, 'panel-revision')).writeAsString(sha);
       await Future.wait([
         (await data).create(recursive: true),
@@ -783,23 +784,8 @@ class LocalInstallManager {
     final loader32 = File(p.join(staging.path, 'libexec', 'proot', 'loader32'));
     if (await loader32.exists()) await _makeExecutable(loader32);
     cancellation?.throwIfCancelled();
-    await _replaceDirectory(staging, await runtime);
+    await replaceDirectoryWithBackup(staging, await runtime);
     return profile;
-  }
-
-  Future<void> _replaceDirectory(Directory staged, Directory target) async {
-    final backup = Directory('${target.path}.previous');
-    if (await backup.exists()) await backup.delete(recursive: true);
-    if (await target.exists()) await target.rename(backup.path);
-    try {
-      await staged.rename(target.path);
-      if (await backup.exists()) await backup.delete(recursive: true);
-    } catch (_) {
-      if (!await target.exists() && await backup.exists()) {
-        await backup.rename(target.path);
-      }
-      rethrow;
-    }
   }
 }
 
