@@ -88,16 +88,19 @@ void main() {
     expect(find.text('Home'), findsOneWidget);
 
     await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('同步服务器数据到本机'), findsOneWidget);
     expect(find.text('移除'), findsOneWidget);
     await tester.tap(find.text('同步服务器数据到本机'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('同步服务器数据到本机？'), findsOneWidget);
     expect(find.text('同步并覆盖本机 data'), findsOneWidget);
     expect(find.textContaining('本机数据会被覆盖'), findsOneWidget);
     await tester.tap(find.text('取消'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('同步服务器数据到本机？'), findsNothing);
   });
 
@@ -128,12 +131,14 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.text('本机面板'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('启动失败'), findsOneWidget);
     expect(find.text('查看启动诊断'), findsOneWidget);
     await tester.tap(find.text('查看启动诊断'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.textContaining('容器内 Python 入口缺失'), findsOneWidget);
   });
