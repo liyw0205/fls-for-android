@@ -13,6 +13,13 @@ void main() {
         'digest': digest,
         'size': 65000000,
       },
+      {
+        'name': 'fls-proot-all-arm64.tar.gz',
+        'browser_download_url':
+            'https://github.com/liyw0205/fls/releases/download/proot-runtime/fls-proot-all-arm64.tar.gz',
+        'digest': digest,
+        'size': 125000000,
+      },
     ],
   };
 
@@ -43,6 +50,30 @@ void main() {
         ['arm64-v8a'],
       ),
       isNull,
+    );
+  });
+
+  test('selects the full runtime profile', () {
+    final asset = selectRuntimeAsset(release, [
+      'arm64-v8a',
+    ], RuntimeProfile.all);
+    expect(asset?.name, 'fls-proot-all-arm64.tar.gz');
+    expect(asset?.size, 125000000);
+  });
+
+  test('applies an optional GitHub mirror prefix or template', () {
+    final original = Uri.parse('https://api.github.com/repos/liyw0205/fls');
+    expect(
+      applyGithubMirror(original, 'https://mirror.example/').toString(),
+      'https://mirror.example/https://api.github.com/repos/liyw0205/fls',
+    );
+    expect(
+      applyGithubMirror(original, 'https://mirror.example/?url=%s').toString(),
+      'https://mirror.example/?url=https://api.github.com/repos/liyw0205/fls',
+    );
+    expect(
+      () => applyGithubMirror(original, 'ftp://mirror.example'),
+      throwsFormatException,
     );
   });
 }

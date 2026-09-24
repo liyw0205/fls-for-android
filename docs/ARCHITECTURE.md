@@ -12,10 +12,11 @@ The app has two explicit panel modes:
   Android foreground service.
 
 The FLS project provides one runtime Release tag with `python` and `all`
-profiles. Local Android installs use the smaller `python` profile and select
-the `arm64` archive from Android's supported ABI list. Remote WebView mode
-remains available on other ABIs; local mode rejects unsupported ABIs before a
-download begins.
+profiles. Local Android installs let the user choose either profile and select
+the `arm64` archive from Android's supported ABI list. A user-provided GitHub
+mirror can prefix or template every GitHub API/download URL; an empty value
+uses the official source. Remote WebView mode remains available on other ABIs;
+local mode rejects unsupported ABIs before a download begins.
 
 ## Local files
 
@@ -52,9 +53,11 @@ forward independently.
    for `fls-manager.py` and `fls_manager/`, then replace only `project/`.
 6. Start the panel only after both runtime and source checks pass.
 
-Local updates intentionally do not upgrade the runtime. Runtime upgrades need a
-separate migration path and must preserve the current rootfs until the new one
-passes device smoke tests.
+Local updates intentionally do not upgrade the runtime unless the selected
+profile differs from the installed profile. Runtime archives can also be
+imported from Android's document picker or exported through the system save
+dialog. Import/export covers only the replaceable runtime; `data/`, `log/`,
+`scripts/`, and the FLS source remain separate and are preserved.
 
 ## Process boundary
 

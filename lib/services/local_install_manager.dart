@@ -6,8 +6,26 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'local_panel_host.dart';
+
+enum RuntimeProfile {
+  python('python', 'Python'),
+  all('all', 'Full');
+
+  const RuntimeProfile(this.id, this.label);
+
+  final String id;
+  final String label;
+
+  static RuntimeProfile? fromId(String value) {
+    for (final profile in values) {
+      if (profile.id == value) return profile;
+    }
+    return null;
+  }
+}
 
 class RuntimeAsset {
   const RuntimeAsset({
@@ -23,16 +41,17 @@ class RuntimeAsset {
   final int size;
 }
 
-RuntimeAsset? selectPythonRuntimeAsset(
+RuntimeAsset? selectRuntimeAsset(
   Map<String, dynamic> release,
   List<String> supportedAbis,
+  RuntimeProfile profile,
 ) {
   final arch = supportedAbis.contains('arm64-v8a') ? 'arm64' : null;
   if (arch == null) return null;
 
   final assets = release['assets'];
   if (assets is! List) return null;
-  final expectedName = 'fls-proot-python-$arch.tar.gz';
+  final expectedName = 'fls-proot-${profile.id}-$arch.tar.gz';
   for (final item in assets) {
     if (item is! Map<String, dynamic> || item['name'] != expectedName) {
       continue;
@@ -58,6 +77,26 @@ RuntimeAsset? selectPythonRuntimeAsset(
   return null;
 }
 
+RuntimeAsset? selectPythonRuntimeAsset(
+  Map<String, dynamic> release,
+  List<String> supportedAbis,
+) => selectRuntimeAsset(release, supportedAbis, RuntimeProfile.python);
+
+Uri applyGithubMirror(Uri original, String? mirror) {
+  final value = mirror?.trim() ?? '';
+  if (value.isEmpty) return original;
+  final parsed = Uri.tryParse(value);
+  if (parsed == null ||
+      !{'http', 'https'}.contains(parsed.scheme) ||
+      parsed.userInfo.isNotEmpty) {
+    throw const FormatException('GitHub 加速源必须是有效的 HTTP 或 HTTPS 地址');
+  }
+  if (value.contains('%s')) {
+    return Uri.parse(value.replaceFirst('%s', original.toString()));
+  }
+  return Uri.parse('${value.replaceFirst(RegExp(r'/+$'), '')}/$original');
+}
+
 class LocalInstallManager {
   LocalInstallManager({http.Client? client})
     : _client = client ?? http.Client();
@@ -68,6 +107,7 @@ class LocalInstallManager {
   static final _repoUri = Uri.parse(
     'https://api.github.com/repos/liyw0205/fls',
   );
+  static const _mirrorKey = 'github_mirror_v1';
   final http.Client _client;
 
   Future<Directory> get root async {
@@ -86,7 +126,7 @@ class LocalInstallManager {
   Future<Directory> get scripts async =>
       Directory(p.join((await root).path, 'scripts'));
 
-  Future<bool> hasRuntime() async {
+  Future<bool> _hasRuntimeStructure() async {
     final dir = await runtime;
     final checks = await Future.wait([
       File(
@@ -101,6 +141,18 @@ class LocalInstallManager {
     return checks.every((exists) => exists);
   }
 
+  Future<RuntimeProfile?> installedRuntimeProfile() async {
+    if (!await _hasRuntimeStructure()) return null;
+    final marker = File(p.join((await runtime).path, '.profile'));
+    if (!await marker.exists()) return RuntimeProfile.python;
+    return RuntimeProfile.fromId((await marker.readAsString()).trim());
+  }
+
+  Future<bool> hasRuntime({RuntimeProfile? profile}) async {
+    final installed = await installedRuntimeProfile();
+    return installed != null && (profile == null || installed == profile);
+  }
+
   Future<bool> hasProject() async {
     final dir = await project;
     final checks = await Future.wait([
@@ -110,12 +162,29 @@ class LocalInstallManager {
     return checks.every((exists) => exists);
   }
 
+  Future<String> loadGithubMirror() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_mirrorKey) ?? '';
+  }
+
+  Future<void> saveGithubMirror(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      await prefs.remove(_mirrorKey);
+    } else {
+      await prefs.setString(_mirrorKey, normalized);
+    }
+  }
+
   Future<void> installRuntime({
     required List<String> supportedAbis,
     required ValueChanged<double> onProgress,
+    RuntimeProfile profile = RuntimeProfile.python,
+    String? githubMirror,
   }) async {
     final response = await _client.get(
-      _releaseUri,
+      applyGithubMirror(_releaseUri, githubMirror),
       headers: const {'Accept': 'application/vnd.github+json'},
     );
     if (response.statusCode != 200) {
@@ -125,10 +194,16 @@ class LocalInstallManager {
     if (release is! Map<String, dynamic>) {
       throw const FormatException('PRoot Release 格式无效');
     }
-    final asset = selectPythonRuntimeAsset(release, supportedAbis);
-    if (asset == null) {
-      throw StateError('没有适用于此设备 ABI 的 Python 容器镜像');
+    final selectedAsset = selectRuntimeAsset(release, supportedAbis, profile);
+    if (selectedAsset == null) {
+      throw StateError('没有适用于此设备 ABI 的 ${profile.label} 容器镜像');
     }
+    final asset = RuntimeAsset(
+      name: selectedAsset.name,
+      url: applyGithubMirror(selectedAsset.url, githubMirror),
+      sha256: selectedAsset.sha256,
+      size: selectedAsset.size,
+    );
 
     final base = await root;
     final archive = File(p.join(base.path, '.${asset.name}.part'));
@@ -138,48 +213,65 @@ class LocalInstallManager {
 
     try {
       await _downloadAndVerify(asset, archive, onProgress);
-      await staging.create(recursive: true);
-      await _extractTarGz(archive, staging);
-      final python = File(
-        p.join(staging.path, 'rootfs', 'opt', 'fls-venv', 'bin', 'python'),
-      );
-      final proot = File(p.join(staging.path, 'bin', 'proot'));
-      final loader = File(p.join(staging.path, 'libexec', 'proot', 'loader'));
-      final requiredFiles = [
-        python,
-        proot,
-        loader,
-        File(p.join(staging.path, 'lib', 'libandroid-shmem.so')),
-        File(p.join(staging.path, 'lib', 'libtalloc.so')),
-        File(p.join(staging.path, '.arch')),
-      ];
-      if (!await Future.wait(
-        requiredFiles.map((file) => file.exists()),
-      ).then((exists) => exists.every((value) => value))) {
-        throw const FormatException('运行时镜像缺少 PRoot、Python 或依赖库');
-      }
-      final arch = (await File(
-        p.join(staging.path, '.arch'),
-      ).readAsString()).trim();
-      if (arch != 'arm64') {
-        throw FormatException('运行时架构不匹配：$arch');
-      }
-      await _makeExecutable(proot);
-      await _makeExecutable(loader);
-      final loader32 = File(
-        p.join(staging.path, 'libexec', 'proot', 'loader32'),
-      );
-      if (await loader32.exists()) await _makeExecutable(loader32);
-      await _replaceDirectory(staging, await runtime);
+      await _activateRuntimeArchive(archive, staging, expectedProfile: profile);
     } finally {
       if (await archive.exists()) await archive.delete();
       if (await staging.exists()) await staging.delete(recursive: true);
     }
   }
 
-  Future<void> updatePanel({required ValueChanged<double> onProgress}) async {
+  Future<RuntimeProfile> importRuntime(
+    File archive, {
+    required ValueChanged<double> onProgress,
+  }) async {
+    final base = await root;
+    final staging = Directory(p.join(base.path, '.runtime-import-staging'));
+    await base.create(recursive: true);
+    if (await staging.exists()) await staging.delete(recursive: true);
+    try {
+      final imported = await _activateRuntimeArchive(archive, staging);
+      onProgress(1);
+      return imported;
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
+    }
+  }
+
+  Future<File> exportRuntime() async {
+    if (!await hasRuntime()) {
+      throw StateError('没有可导出的本机容器');
+    }
+    final base = await root;
+    final profile = await installedRuntimeProfile();
+    final archive = File(
+      p.join(
+        base.path,
+        '.fls-container-${profile?.id ?? RuntimeProfile.python.id}-${DateTime.now().millisecondsSinceEpoch}.tar.gz',
+      ),
+    );
+    final result = await Process.run('/system/bin/toybox', [
+      'tar',
+      '-czf',
+      archive.path,
+      '-C',
+      (await runtime).path,
+      '.',
+    ]);
+    if (result.exitCode != 0 || !await archive.exists()) {
+      throw StateError('容器导出失败：${result.stderr}');
+    }
+    return archive;
+  }
+
+  Future<void> updatePanel({
+    required ValueChanged<double> onProgress,
+    String? githubMirror,
+  }) async {
     final branchResponse = await _client.get(
-      Uri.https(_repoUri.authority, '${_repoUri.path}/commits/main'),
+      applyGithubMirror(
+        Uri.https(_repoUri.authority, '${_repoUri.path}/commits/main'),
+        githubMirror,
+      ),
       headers: const {'Accept': 'application/vnd.github+json'},
     );
     if (branchResponse.statusCode != 200) {
@@ -205,7 +297,10 @@ class LocalInstallManager {
 
     try {
       await _downloadFile(
-        Uri.https('api.github.com', '/repos/liyw0205/fls/tarball/$sha'),
+        applyGithubMirror(
+          Uri.https('api.github.com', '/repos/liyw0205/fls/tarball/$sha'),
+          githubMirror,
+        ),
         archive,
         onProgress,
       );
@@ -363,6 +458,53 @@ class LocalInstallManager {
     if (result.exitCode != 0) {
       throw StateError('解压失败：${result.stderr}');
     }
+  }
+
+  Future<RuntimeProfile> _activateRuntimeArchive(
+    File archive,
+    Directory staging, {
+    RuntimeProfile? expectedProfile,
+  }) async {
+    await staging.create(recursive: true);
+    await _extractTarGz(archive, staging);
+    final python = File(
+      p.join(staging.path, 'rootfs', 'opt', 'fls-venv', 'bin', 'python'),
+    );
+    final proot = File(p.join(staging.path, 'bin', 'proot'));
+    final loader = File(p.join(staging.path, 'libexec', 'proot', 'loader'));
+    final requiredFiles = [
+      python,
+      proot,
+      loader,
+      File(p.join(staging.path, 'lib', 'libandroid-shmem.so')),
+      File(p.join(staging.path, 'lib', 'libtalloc.so')),
+      File(p.join(staging.path, '.arch')),
+      File(p.join(staging.path, '.profile')),
+    ];
+    if (!await Future.wait(
+      requiredFiles.map((file) => file.exists()),
+    ).then((exists) => exists.every((value) => value))) {
+      throw const FormatException('运行时镜像缺少 PRoot、Python 或依赖库');
+    }
+    final arch = (await File(
+      p.join(staging.path, '.arch'),
+    ).readAsString()).trim();
+    if (arch != 'arm64') {
+      throw FormatException('运行时架构不匹配：$arch');
+    }
+    final profile = RuntimeProfile.fromId(
+      (await File(p.join(staging.path, '.profile')).readAsString()).trim(),
+    );
+    if (profile == null ||
+        (expectedProfile != null && profile != expectedProfile)) {
+      throw const FormatException('运行时容器版本标记无效或与选择不一致');
+    }
+    await _makeExecutable(proot);
+    await _makeExecutable(loader);
+    final loader32 = File(p.join(staging.path, 'libexec', 'proot', 'loader32'));
+    if (await loader32.exists()) await _makeExecutable(loader32);
+    await _replaceDirectory(staging, await runtime);
+    return profile;
   }
 
   Future<void> _replaceDirectory(Directory staged, Directory target) async {

@@ -8,8 +8,11 @@ FLS panel remains the source of truth for its web UI and backend behavior.
 
 - Save multiple remote panel addresses and open the existing panel in Android
   WebView. Login and session cookies stay in the WebView data store.
-- Install the ARM64 Python PRoot runtime from the fixed
-  [`proot-runtime` release](https://github.com/liyw0205/fls/releases/tag/proot-runtime).
+- Install either the ARM64 Python or Full PRoot runtime from the fixed
+  [`proot-runtime` release](https://github.com/liyw0205/fls/releases/tag/proot-runtime),
+  with optional GitHub mirror support.
+- Import and export runtime containers through the Android document picker;
+  panel data, logs, and scripts stay outside the replaceable runtime.
 - Verify the runtime asset against the SHA-256 digest published by GitHub,
   sync FLS source by commit, and run the local service on `127.0.0.1:5700`.
 - Keep task data, logs, and user scripts outside the replaceable panel source.

@@ -41,6 +41,19 @@ one ARM64 Android phone and one Android 14+ device:
    files are normally removed when the app is uninstalled. Add export/restore
    before promising data survives app removal.
 
+Container management checks:
+
+1. Install both `Python` and `Full` profiles and verify that changing the
+   selection replaces only `runtime/`, while panel data, logs, scripts, and
+   source state remain intact.
+2. Enter an empty mirror, a prefix mirror (for example
+   `https://mirror.example/`), and a `%s` URL template; verify release metadata,
+   runtime archives, and FLS source downloads all use the selected source.
+3. Import a valid `fls-proot-*.tar.gz`, a wrong-architecture archive, and a
+   malformed archive. Only the valid archive may replace the current runtime.
+4. Export each profile through the Android save dialog, extract the archive on
+   a host, and verify its `.profile`, `.arch`, PRoot, loader, and Python files.
+
 Record device model, Android API, ABI, app version, exact action, result, and
 relevant service log for each run. Do not mark a test as passed based only on
 an APK build.
