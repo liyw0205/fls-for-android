@@ -81,7 +81,6 @@ class _LocalSetupViewState extends State<LocalSetupView> {
 
   void _selectProfile(RuntimeProfile profile) {
     setState(() => _selectedProfile = profile);
-    unawaited(_manager.saveGithubMirror(_mirrorController.text));
   }
 
   Future<File> _temporaryArchive(String name) async {
@@ -102,7 +101,6 @@ class _LocalSetupViewState extends State<LocalSetupView> {
       _progress = 0;
       _phase = '检查设备运行时';
     });
-    final shouldOpen = _panelReady;
     try {
       await _manager.saveGithubMirror(_mirrorController.text);
       if (_panelReady) await LocalPanelHost.stop();
@@ -131,7 +129,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
       setState(() => _phase = '启动本机面板');
       await _manager.startPanel();
       await _refreshStatus();
-      if (mounted && shouldOpen) _openLocalPanel();
+      if (mounted && _panelReady) _openLocalPanel();
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
@@ -355,7 +353,7 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                         autocorrect: false,
                         decoration: const InputDecoration(
                           labelText: 'GitHub 加速源（可选）',
-                          hintText: '留空使用 GitHub 官方地址',
+                          hintText: '留空使用官方地址；支持前缀或 %s 模板',
                           prefixIcon: Icon(Icons.bolt_outlined),
                         ),
                         onChanged: (value) {
@@ -446,7 +444,12 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                       child: OutlinedButton.icon(
                         onPressed: _installing ? null : _installOrUpdate,
                         icon: const Icon(Icons.system_update_alt),
-                        label: const Text('更新面板'),
+                        label: Text(
+                          _runtimeInstalled &&
+                                  _selectedProfile != _installedProfile
+                              ? '切换容器'
+                              : '更新面板',
+                        ),
                       ),
                     ),
                   ],
@@ -459,7 +462,13 @@ class _LocalSetupViewState extends State<LocalSetupView> {
                         ? null
                         : _installOrUpdate,
                     icon: const Icon(Icons.download),
-                    label: Text(_runtimeInstalled ? '同步并启动本机 FLS' : '安装本机 FLS'),
+                    label: Text(
+                      _runtimeInstalled && _selectedProfile != _installedProfile
+                          ? '切换为 ${_selectedProfile.label} 并安装'
+                          : _runtimeInstalled
+                          ? '同步并启动本机 FLS'
+                          : '安装本机 FLS',
+                    ),
                   ),
                 ),
               const SizedBox(height: 20),

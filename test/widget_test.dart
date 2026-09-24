@@ -29,6 +29,15 @@ void main() {
     expect(find.text('远程面板'), findsOneWidget);
     expect(find.text('本机面板'), findsOneWidget);
     expect(find.text('没有已保存的面板'), findsOneWidget);
+
+    await tester.tap(find.text('本机面板'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('容器版本'), findsOneWidget);
+    expect(find.text('Python'), findsOneWidget);
+    expect(find.text('Full'), findsOneWidget);
+    expect(find.text('导入容器'), findsOneWidget);
+    expect(find.text('导出容器'), findsOneWidget);
   });
 }
 

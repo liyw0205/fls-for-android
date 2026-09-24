@@ -26,7 +26,14 @@ class LocalPanelHost {
         false;
   }
 
-  static Future<void> stop() => _channel.invokeMethod<void>('stop');
+  static Future<void> stop() async {
+    await _channel.invokeMethod<void>('stop');
+    for (var attempt = 0; attempt < 50; attempt++) {
+      if (!await isRunning()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw StateError('本机面板尚未停止，无法安全替换容器');
+  }
 
   static Future<bool> isRunning() async =>
       await _channel.invokeMethod<bool>('isRunning') ?? false;
