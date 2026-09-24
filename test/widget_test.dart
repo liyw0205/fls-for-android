@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fls_for_android/features/local_setup_view.dart';
 import 'package:fls_for_android/main.dart';
+import 'package:fls_for_android/services/local_install_manager.dart';
 
 void main() {
   testWidgets('shows the remote and local panel modes', (tester) async {
@@ -106,9 +108,6 @@ void main() {
 
   testWidgets('failed local service exposes its diagnostics', (tester) async {
     SharedPreferences.setMockInitialValues({});
-    final previousPathProvider = PathProviderPlatform.instance;
-    PathProviderPlatform.instance = _TestPathProvider();
-    addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('top.fls/local_panel'),
@@ -127,21 +126,13 @@ void main() {
           },
         );
 
-    await tester.pumpWidget(const FLSApp());
-    await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    await tester.pumpWidget(
+      MaterialApp(home: LocalSetupView(manager: _TestLocalInstallManager())),
     );
-    await tester.pump();
-    await tester.tap(find.text('本机面板'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    final renderedTexts = tester
-        .widgetList<Text>(find.byType(Text))
-        .map((widget) => widget.data ?? widget.textSpan?.toPlainText() ?? '')
-        .toList();
-    expect(find.text('启动失败'), findsOneWidget, reason: '$renderedTexts');
+    expect(find.text('启动失败'), findsOneWidget);
     expect(find.text('查看启动诊断'), findsOneWidget);
     await tester.tap(find.text('查看启动诊断'));
     await tester.pump();
@@ -155,4 +146,15 @@ class _TestPathProvider extends PathProviderPlatform {
   @override
   Future<String?> getApplicationSupportPath() async =>
       '/tmp/fls-for-android-test';
+}
+
+class _TestLocalInstallManager extends LocalInstallManager {
+  @override
+  Future<RuntimeProfile?> installedRuntimeProfile() async => null;
+
+  @override
+  Future<bool> hasProject() async => false;
+
+  @override
+  Future<String> loadGithubMirror() async => '';
 }

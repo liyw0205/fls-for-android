@@ -14,7 +14,9 @@ import '../models/panel_server.dart';
 enum _LocalTab { overview, environment, diagnostics }
 
 class LocalSetupView extends StatefulWidget {
-  const LocalSetupView({super.key});
+  const LocalSetupView({super.key, this.manager});
+
+  final LocalInstallManager? manager;
 
   @override
   State<LocalSetupView> createState() => _LocalSetupViewState();
@@ -22,7 +24,8 @@ class LocalSetupView extends StatefulWidget {
 
 class _LocalSetupViewState extends State<LocalSetupView>
     with WidgetsBindingObserver {
-  final _manager = LocalInstallManager();
+  late final LocalInstallManager _manager =
+      widget.manager ?? LocalInstallManager();
   bool _loading = true;
   bool _installing = false;
   bool _installed = false;

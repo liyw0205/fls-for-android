@@ -83,7 +83,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [const RemotePanelsView(), const LocalSetupView()];
+    final pages = [const RemotePanelsView(), LocalSetupView()];
     return Scaffold(
       body: SafeArea(
         child: IndexedStack(index: _selectedIndex, children: pages),
