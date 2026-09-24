@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
@@ -28,3 +28,32 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --release --target-platform android-arm64
+      - name: Read app version
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          version_full="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1 | tr -d '\r')"
+          version_name="${version_full%%+*}"
+          if [ -z "$version_full" ] || [ -z "$version_name" ]; then
+            echo "Unable to read app version from pubspec.yaml" >&2
+            exit 1
+          fi
+          echo "version_full=$version_full" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+      - name: Prepare release APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "build/app/outputs/flutter-apk/fls-for-android-${{ steps.version.outputs.version_full }}-arm64.apk"
+      - name: Publish GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version_full }}"
+          name: "FLS for Android v${{ steps.version.outputs.version_name }}"
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: true
+          files: "build/app/outputs/flutter-apk/fls-for-android-${{ steps.version.outputs.version_full }}-arm64.apk"
