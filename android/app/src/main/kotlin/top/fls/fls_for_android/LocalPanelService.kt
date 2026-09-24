@@ -12,6 +12,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.system.ErrnoException
+import android.system.Os
 import java.io.File
 
 class LocalPanelService : Service() {
@@ -99,8 +101,7 @@ class LocalPanelService : Service() {
             }
             startPanel(paths, port)
         } catch (error: Exception) {
-            appendServiceLog("服务启动失败: ${error.message}")
-            handleUnexpectedExit(paths, null)
+            handleStartError(paths, error)
         }
         return START_STICKY
     }
@@ -127,7 +128,6 @@ class LocalPanelService : Service() {
         activePaths = paths
         val runtime = File(paths.getValue("runtimeDir"))
         val rootfs = File(runtime, "rootfs")
-        val python = File(rootfs, "opt/fls-venv/bin/python")
         val proot = File(applicationInfo.nativeLibraryDir, "libdaidai_proot.so")
         val loader = File(applicationInfo.nativeLibraryDir, "libproot_loader.so")
         val project = File(paths.getValue("projectDir"))
@@ -135,9 +135,17 @@ class LocalPanelService : Service() {
         val log = File(paths.getValue("logDir"))
         val scripts = File(paths.getValue("scriptsDir"))
         listOf(data, log, scripts, File(runtime, "tmp")).forEach { it.mkdirs() }
-        if (!proot.canExecute() || !loader.canExecute() || !python.exists() ||
-            !File(project, "fls-manager.py").exists()) {
-            throw IllegalStateException("Android PRoot、loader、Python 或 FLS 程序文件缺失")
+        val missingFiles = mutableListOf<String>()
+        if (!proot.canExecute()) missingFiles.add("Android PRoot")
+        if (!loader.canExecute()) missingFiles.add("PRoot loader")
+        if (!rootfsFileExists(rootfs, "opt/fls-venv/bin/python")) {
+            missingFiles.add("容器内 Python 入口")
+        }
+        if (!File(project, "fls-manager.py").isFile) {
+            missingFiles.add("FLS 程序 fls-manager.py")
+        }
+        if (missingFiles.isNotEmpty()) {
+            throw InvalidPanelRuntimeException("运行文件缺失：${missingFiles.joinToString("、")}")
         }
 
         val command = mutableListOf(
@@ -223,6 +231,21 @@ class LocalPanelService : Service() {
         finishAfterCrash(exitCode)
     }
 
+    private fun handleStartError(paths: Map<String, String>, error: Exception) {
+        appendServiceLog("服务启动失败: ${error.message}")
+        if (error is InvalidPanelRuntimeException) {
+            preferences.edit()
+                .putBoolean(KEY_DESIRED, false)
+                .putString(KEY_STATE, STATE_FAILED)
+                .remove(KEY_EXIT_CODE)
+                .apply()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        handleUnexpectedExit(paths, null)
+    }
+
     private fun scheduleRestart(paths: Map<String, String>, exitCode: Int?) {
         if (restartAttempts >= RESTART_DELAYS_SECONDS.size) {
             finishAfterCrash(exitCode)
@@ -247,8 +270,12 @@ class LocalPanelService : Service() {
             try {
                 startPanel(paths, preferences.getInt(KEY_PORT, DEFAULT_PORT))
             } catch (error: Exception) {
-                appendServiceLog("恢复失败: ${error.message}")
-                handleUnexpectedExit(paths, exitCode)
+                if (error is InvalidPanelRuntimeException) {
+                    handleStartError(paths, error)
+                } else {
+                    appendServiceLog("恢复失败: ${error.message}")
+                    handleUnexpectedExit(paths, exitCode)
+                }
             }
         }, delay * 1000L)
     }
@@ -328,6 +355,50 @@ class LocalPanelService : Service() {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    private fun rootfsFileExists(rootfs: File, relativePath: String): Boolean {
+        if (relativePath.startsWith("/")) return false
+        val pending = relativePath.split('/').filter { it.isNotEmpty() }.toMutableList()
+        val resolved = mutableListOf<String>()
+        val followedLinks = mutableSetOf<String>()
+        var linkCount = 0
+
+        while (pending.isNotEmpty()) {
+            val segment = pending.removeAt(0)
+            if (segment == ".") continue
+            if (segment == "..") {
+                if (resolved.isEmpty()) return false
+                resolved.removeAt(resolved.lastIndex)
+                continue
+            }
+
+            val candidate = File(
+                rootfs,
+                (resolved + segment).joinToString(File.separator),
+            )
+            val linkTarget = try {
+                Os.readlink(candidate.absolutePath)
+            } catch (_: ErrnoException) {
+                null
+            }
+            if (linkTarget != null) {
+                if (++linkCount > 40 || !followedLinks.add(candidate.absolutePath)) return false
+                val remaining = pending.toList()
+                pending.clear()
+                // Absolute symlink targets are rooted in the container, not Android.
+                if (linkTarget.startsWith("/")) resolved.clear()
+                pending.addAll(linkTarget.split('/').filter { it.isNotEmpty() })
+                pending.addAll(remaining)
+                continue
+            }
+
+            if (!candidate.exists()) return false
+            if (pending.isNotEmpty() && !candidate.isDirectory) return false
+            resolved.add(segment)
+        }
+
+        return File(rootfs, resolved.joinToString(File.separator)).isFile
     }
 
     private fun buildNotification(message: String): Notification {
@@ -490,3 +561,5 @@ class LocalPanelService : Service() {
                 .getBoolean(KEY_AUTO_RESTART, false)
     }
 }
+
+private class InvalidPanelRuntimeException(message: String) : IllegalStateException(message)

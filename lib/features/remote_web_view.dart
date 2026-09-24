@@ -7,13 +7,11 @@ class RemoteWebView extends StatefulWidget {
   const RemoteWebView({
     super.key,
     required this.server,
-    this.showUpdatePage = false,
     this.initialPath,
     this.pageTitle,
   });
 
   final PanelServer server;
-  final bool showUpdatePage;
   final String? initialPath;
   final String? pageTitle;
 
@@ -34,9 +32,7 @@ class _RemoteWebViewState extends State<RemoteWebView> {
       final relativePath = widget.initialPath!.replaceFirst(RegExp(r'^/+'), '');
       return base.replace(path: '$basePath/$relativePath');
     }
-    if (!widget.showUpdatePage) return base;
-    final path = base.path.replaceFirst(RegExp(r'/+$'), '');
-    return base.replace(path: '$path/about');
+    return base;
   }
 
   @override
@@ -91,10 +87,7 @@ class _RemoteWebViewState extends State<RemoteWebView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.pageTitle ??
-                  (widget.showUpdatePage
-                      ? '同步 · ${widget.server.name}'
-                      : widget.server.name),
+              widget.pageTitle ?? widget.server.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 17),

@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/panel_server.dart';
 import '../services/panel_store.dart';
+import 'remote_data_sync_view.dart';
 import 'remote_web_view.dart';
 
 class RemotePanelsView extends StatefulWidget {
@@ -176,10 +179,30 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
     );
   }
 
-  void _syncPanel(PanelServer server) {
-    Navigator.of(context).push(
+  Future<void> _syncPanel(PanelServer server) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('同步服务器数据到本机？'),
+        content: Text(
+          '将下载“${server.name}”的 data 并完整替换本机 data。任务、账号、配置和变量等本机数据会被覆盖；服务器数据不变。本机 scripts、日志和 data/backups 会保留。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('同步并覆盖本机 data'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => RemoteWebView(server: server, showUpdatePage: true),
+        builder: (_) => RemoteDataSyncView(server: server),
       ),
     );
   }
@@ -302,7 +325,7 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                         onSelected: (value) {
                           if (value == 'favorite') _toggleFavorite(server);
                           if (value == 'edit') _editServer(server);
-                          if (value == 'sync') _syncPanel(server);
+                          if (value == 'sync') unawaited(_syncPanel(server));
                           if (value == 'remove') _removeServer(server);
                         },
                         itemBuilder: (_) => [
@@ -311,7 +334,10 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                             child: Text(server.isFavorite ? '取消收藏' : '收藏'),
                           ),
                           const PopupMenuItem(value: 'edit', child: Text('编辑')),
-                          PopupMenuItem(value: 'sync', child: Text('同步')),
+                          const PopupMenuItem(
+                            value: 'sync',
+                            child: Text('同步服务器数据到本机'),
+                          ),
                           const PopupMenuItem(
                             value: 'remove',
                             child: Text('移除'),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -312,6 +313,154 @@ class LocalInstallManager {
     return archive;
   }
 
+  Future<void> importServerDataArchive(
+    File archive, {
+    required OperationCancellation cancellation,
+    required ValueChanged<double> onProgress,
+  }) async {
+    final base = await root;
+    final staging = Directory(p.join(base.path, '.data-sync-staging'));
+    await base.create(recursive: true);
+    if (await staging.exists()) await staging.delete(recursive: true);
+    try {
+      await staging.create(recursive: true);
+      await _validateDataArchive(archive, cancellation);
+      onProgress(0.1);
+      await _extractTarGz(archive, staging, cancellation: cancellation);
+      cancellation.throwIfCancelled();
+
+      final serverData = Directory(p.join(staging.path, 'data'));
+      if (await FileSystemEntity.type(serverData.path, followLinks: false) !=
+          FileSystemEntityType.directory) {
+        throw const FormatException('远程备份中没有有效的 data 目录');
+      }
+      final stagedBackups = Directory(p.join(serverData.path, 'backups'));
+      if (await stagedBackups.exists()) {
+        await stagedBackups.delete(recursive: true);
+      }
+      final localBackups = Directory(p.join((await data).path, 'backups'));
+      if (await localBackups.exists()) {
+        await _copyDirectory(localBackups, stagedBackups, cancellation);
+      }
+      onProgress(0.9);
+      cancellation.throwIfCancelled();
+      await _replaceDirectory(serverData, await data);
+      onProgress(1);
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
+    }
+  }
+
+  Future<void> _validateDataArchive(
+    File archive,
+    OperationCancellation cancellation,
+  ) async {
+    final process = await Process.start('/system/bin/toybox', [
+      'tar',
+      '-tzf',
+      archive.path,
+    ]);
+    cancellation.whenCancelled.then((_) => process.kill());
+    final stderr = process.stderr.transform(utf8.decoder).join();
+    var entries = 0;
+    String? invalidPath;
+    await for (final line
+        in process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      cancellation.throwIfCancelled();
+      entries++;
+      final normalized = line.replaceAll('\\', '/');
+      final parts = normalized.split('/');
+      if (entries > 100000 ||
+          normalized.startsWith('/') ||
+          RegExp(r'^[A-Za-z]:').hasMatch(normalized) ||
+          parts.contains('..') ||
+          (normalized != 'data' &&
+              normalized != 'dependencies.txt' &&
+              !normalized.startsWith('data/'))) {
+        invalidPath = line;
+        process.kill();
+        break;
+      }
+    }
+    final exitCode = await process.exitCode;
+    final errorText = await stderr;
+    cancellation.throwIfCancelled();
+    if (invalidPath != null) {
+      throw const FormatException('远程 data 备份包含非法路径');
+    }
+    if (exitCode != 0 || entries == 0) {
+      throw FormatException('远程 data 备份无法读取：$errorText');
+    }
+
+    final typeProcess = await Process.start('/system/bin/toybox', [
+      'tar',
+      '-tvzf',
+      archive.path,
+    ]);
+    cancellation.whenCancelled.then((_) => typeProcess.kill());
+    final typeStderr = typeProcess.stderr.transform(utf8.decoder).join();
+    var typeEntries = 0;
+    var invalidType = false;
+    await for (final line
+        in typeProcess.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      cancellation.throwIfCancelled();
+      typeEntries++;
+      if (line.isEmpty || (line[0] != '-' && line[0] != 'd')) {
+        invalidType = true;
+        typeProcess.kill();
+        break;
+      }
+    }
+    final typeExitCode = await typeProcess.exitCode;
+    final typeErrorText = await typeStderr;
+    cancellation.throwIfCancelled();
+    if (invalidType) {
+      throw const FormatException('远程 data 备份包含不支持的文件类型');
+    }
+    if (typeExitCode != 0 || typeEntries != entries) {
+      throw FormatException('远程 data 备份无法校验：$typeErrorText');
+    }
+  }
+
+  Future<void> _copyDirectory(
+    Directory source,
+    Directory destination,
+    OperationCancellation cancellation,
+  ) async {
+    await destination.create(recursive: true);
+    await for (final entity in source.list(followLinks: false)) {
+      cancellation.throwIfCancelled();
+      final target = p.join(destination.path, p.basename(entity.path));
+      if (entity is Directory) {
+        await _copyDirectory(entity, Directory(target), cancellation);
+      } else if (entity is File) {
+        final iterator = StreamIterator<List<int>>(entity.openRead());
+        final output = File(target).openWrite();
+        try {
+          while (await Future.any([
+            iterator.moveNext(),
+            cancellation.whenCancelled.then<bool>(
+              (_) => throw const OperationCancelled(),
+            ),
+          ])) {
+            cancellation.throwIfCancelled();
+            output.add(iterator.current);
+          }
+          await output.flush();
+        } finally {
+          await iterator.cancel();
+          await output.close();
+        }
+      } else {
+        throw const FormatException('本地 backups 包含不支持的文件类型');
+      }
+    }
+  }
+
   Future<void> updatePanel({
     required ValueChanged<double> onProgress,
     required OperationCancellation cancellation,
@@ -427,11 +576,14 @@ class LocalInstallManager {
         } catch (_) {
           cancellation.throwIfCancelled();
         }
-        if (attempts % 10 == 0) {
+        if (attempts % 4 == 0) {
           final status = await LocalPanelHost.status();
-          if (!status.isRunning &&
-              status.state != LocalPanelState.starting &&
-              status.state != LocalPanelState.retrying) {
+          final terminal =
+              status.state == LocalPanelState.crashed ||
+              status.state == LocalPanelState.failed ||
+              status.state == LocalPanelState.interrupted ||
+              (status.state == LocalPanelState.stopped && attempts >= 10);
+          if (terminal) {
             throw StateError(
               '本机面板启动失败（${status.state.name}，退出码 ${status.exitCode ?? "未知"}）',
             );
@@ -446,7 +598,14 @@ class LocalInstallManager {
       await LocalPanelHost.stop();
       rethrow;
     } catch (_) {
-      await LocalPanelHost.stop();
+      try {
+        final status = await LocalPanelHost.status();
+        if (status.state == LocalPanelState.running ||
+            status.state == LocalPanelState.starting ||
+            status.state == LocalPanelState.retrying) {
+          await LocalPanelHost.stop();
+        }
+      } catch (_) {}
       rethrow;
     } finally {
       client.close();

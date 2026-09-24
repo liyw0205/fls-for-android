@@ -295,6 +295,9 @@ class _LocalSetupViewState extends State<LocalSetupView>
       if (mounted && error is! OperationCancelled) {
         setState(() => _error = error.toString());
       }
+      try {
+        await _refreshStatus();
+      } catch (_) {}
     } finally {
       if (identical(_cancellation, cancellation)) _cancellation = null;
       if (mounted) {
@@ -422,6 +425,9 @@ class _LocalSetupViewState extends State<LocalSetupView>
       if (mounted && error is! OperationCancelled) {
         setState(() => _error = error.toString());
       }
+      try {
+        await _refreshStatus();
+      } catch (_) {}
     } finally {
       if (identical(_cancellation, cancellation)) _cancellation = null;
       if (mounted) {
@@ -506,9 +512,85 @@ class _LocalSetupViewState extends State<LocalSetupView>
 
   List<Widget> _tabContent(BuildContext context) {
     return [
+      ..._operationFeedback(context),
       if (_tab == _LocalTab.overview) ..._overviewContent(context),
       if (_tab == _LocalTab.environment) ..._environmentContent(context),
       if (_tab == _LocalTab.diagnostics) ..._diagnosticsContent(context),
+    ];
+  }
+
+  List<Widget> _operationFeedback(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return [
+      if (_installing) ...[
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _phase,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                LinearProgressIndicator(
+                  value: _progress == 0 ? null : _progress,
+                ),
+                if (_cancellation != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _cancellation!.isCancelled
+                          ? null
+                          : _cancelOperation,
+                      icon: const Icon(Icons.close),
+                      label: Text(
+                        _cancellation!.isCancelled ? '正在取消...' : '取消',
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (_error != null) ...[
+        Material(
+          color: const Color(0xFFFFF0EC),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.error_outline, color: Color(0xFFB54732)),
+                const SizedBox(width: 10),
+                Expanded(child: Text(_error!)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (_serviceStatus.state == LocalPanelState.failed && !_installing) ...[
+        TextButton.icon(
+          onPressed: () {
+            _selectTab(_LocalTab.diagnostics);
+            _loadServiceLog();
+          },
+          icon: const Icon(Icons.article_outlined),
+          label: const Text('查看启动诊断'),
+          style: TextButton.styleFrom(
+            foregroundColor: colorScheme.error,
+            alignment: Alignment.centerLeft,
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
     ];
   }
 
@@ -580,60 +662,6 @@ class _LocalSetupViewState extends State<LocalSetupView>
         ),
       ),
       const SizedBox(height: 12),
-      if (_installing) ...[
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _phase,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 12),
-                LinearProgressIndicator(
-                  value: _progress == 0 ? null : _progress,
-                ),
-                if (_cancellation != null) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: _cancellation!.isCancelled
-                          ? null
-                          : _cancelOperation,
-                      icon: const Icon(Icons.close),
-                      label: Text(
-                        _cancellation!.isCancelled ? '正在取消...' : '取消',
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-      ],
-      if (_error != null) ...[
-        Material(
-          color: const Color(0xFFFFF0EC),
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.error_outline, color: Color(0xFFB54732)),
-                const SizedBox(width: 10),
-                Expanded(child: Text(_error!)),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-      ],
       if (_installed)
         Row(
           children: [
