@@ -88,22 +88,20 @@ void main() {
     expect(find.text('Home'), findsOneWidget);
 
     await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('同步服务器数据到本机'), findsOneWidget);
     expect(find.text('移除'), findsOneWidget);
     await tester.tap(find.text('同步服务器数据到本机'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('同步服务器数据到本机？'), findsOneWidget);
     expect(find.text('同步并覆盖本机 data'), findsOneWidget);
     expect(find.textContaining('本机数据会被覆盖'), findsOneWidget);
     await tester.tap(find.text('取消'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('同步服务器数据到本机？'), findsNothing);
   });
 
-  testWidgets('failed local service remains diagnosable from environment tab', (
-    tester,
-  ) async {
+  testWidgets('failed local service exposes its diagnostics', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final previousPathProvider = PathProviderPlatform.instance;
     PathProviderPlatform.instance = _TestPathProvider();
@@ -130,10 +128,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.text('本机面板'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.text('环境'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('启动失败'), findsOneWidget);
     expect(find.text('查看启动诊断'), findsOneWidget);

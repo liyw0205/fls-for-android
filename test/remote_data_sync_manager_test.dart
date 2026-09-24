@@ -28,6 +28,7 @@ void main() {
           return http.Response(
             jsonEncode({'ok': true, 'job_id': 'job-1'}),
             200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
           );
         case 'GET /fls/api/backup/job/job-1':
           return http.Response(
@@ -39,6 +40,7 @@ void main() {
               'size': backupBytes.length,
             }),
             200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
           );
         case 'GET /fls/backup/download/fls-backup-config-fixture.tar.gz':
           return http.Response.bytes(backupBytes, 200);
