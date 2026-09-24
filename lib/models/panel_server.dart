@@ -1,18 +1,31 @@
 class PanelServer {
-  const PanelServer({required this.name, required this.url});
+  const PanelServer({
+    required this.name,
+    required this.url,
+    this.isFavorite = false,
+  });
 
   final String name;
   final String url;
+  final bool isFavorite;
 
   static PanelServer? fromJson(Object? value) {
     if (value is! Map<String, dynamic>) return null;
     final name = value['name'];
     final url = normalizePanelUrl(value['url']?.toString() ?? '');
     if (name is! String || name.trim().isEmpty || url == null) return null;
-    return PanelServer(name: name.trim(), url: url);
+    return PanelServer(
+      name: name.trim(),
+      url: url,
+      isFavorite: value['isFavorite'] == true,
+    );
   }
 
-  Map<String, String> toJson() => {'name': name, 'url': url};
+  Map<String, Object> toJson() => {
+    'name': name,
+    'url': url,
+    'isFavorite': isFavorite,
+  };
 }
 
 String? normalizePanelUrl(String input) {

@@ -1,10 +1,14 @@
 package top.fls.fls_for_android
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,6 +17,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var pendingFileResult: MethodChannel.Result? = null
     private var pendingExportPath: String? = null
+    private var pendingNotificationResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -45,10 +50,48 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "stop" -> {
-                        stopService(Intent(this, LocalPanelService::class.java))
+                        startService(
+                            Intent(this, LocalPanelService::class.java)
+                                .setAction(LocalPanelService.ACTION_STOP),
+                        )
                         result.success(null)
                     }
                     "isRunning" -> result.success(LocalPanelService.isRunning())
+                    "status" -> result.success(LocalPanelService.status(this))
+                    "setAutoRestart" -> {
+                        val enabled = (call.arguments as? Map<*, *>)?.get("enabled") as? Boolean
+                        if (enabled == null) {
+                            result.error("invalid_args", "自动恢复设置无效", null)
+                        } else {
+                            LocalPanelService.setAutoRestart(this, enabled)
+                            result.success(null)
+                        }
+                    }
+                    "notificationsGranted" -> result.success(notificationsGranted())
+                    "requestNotificationPermission" -> requestNotificationPermission(result)
+                    "openAppSettings" -> {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:$packageName"),
+                            ),
+                        )
+                        result.success(null)
+                    }
+                    "openBatterySettings" -> {
+                        val batteryIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                        val target = if (batteryIntent.resolveActivity(packageManager) != null) {
+                            batteryIntent
+                        } else {
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:$packageName"),
+                            )
+                        }
+                        startActivity(target)
+                        result.success(null)
+                    }
+                    "readServiceLog" -> result.success(readServiceLog())
                     else -> result.notImplemented()
                 }
             }
@@ -80,6 +123,56 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun notificationsGranted(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < 33 || notificationsGranted()) {
+            result.success(true)
+            return
+        }
+        if (pendingNotificationResult != null) {
+            result.error("busy", "通知权限请求正在处理", null)
+            return
+        }
+        pendingNotificationResult = result
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+    }
+
+    @Deprecated("Deprecated in Android API")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATIONS) return
+        val result = pendingNotificationResult ?: return
+        pendingNotificationResult = null
+        result.success(notificationsGranted())
+    }
+
+    private fun readServiceLog(): String {
+        val logFile = File(filesDir, "fls/local-panel.log")
+        if (!logFile.isFile) return "暂无本机服务日志"
+        val maxBytes = 128 * 1024L
+        val start = (logFile.length() - maxBytes).coerceAtLeast(0L)
+        val lines = FileInputStream(logFile).use { input ->
+            input.skip(start)
+            input.bufferedReader(Charsets.UTF_8).readLines().takeLast(240)
+        }
+        val header = Regex("(?i)^\\s*(cookie|set-cookie|authorization)\\s*:")
+        val secret = Regex(
+            "(?i)(token|password|passwd|secret|api[_-]?key)(\\s*[:=]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s,;&]+)",
+        )
+        return lines.joinToString("\n") { line ->
+            val safeLine = header.replace(line) { "${it.groupValues[1]}: [已隐藏]" }
+            secret.replace(safeLine) { "${it.groupValues[1]}${it.groupValues[2]}[已隐藏]" }
+        }.ifBlank { "暂无本机服务日志" }
     }
 
     private fun pickContainer(result: MethodChannel.Result) {
@@ -185,6 +278,7 @@ class MainActivity : FlutterActivity() {
         private const val FILE_CHANNEL = "top.fls/file_bridge"
         private const val REQUEST_PICK_CONTAINER = 5701
         private const val REQUEST_SAVE_CONTAINER = 5702
+        private const val REQUEST_NOTIFICATIONS = 5703
         private val REQUIRED_PATHS = listOf(
             "runtimeDir",
             "projectDir",

@@ -8,10 +8,14 @@ class RemoteWebView extends StatefulWidget {
     super.key,
     required this.server,
     this.showUpdatePage = false,
+    this.initialPath,
+    this.pageTitle,
   });
 
   final PanelServer server;
   final bool showUpdatePage;
+  final String? initialPath;
+  final String? pageTitle;
 
   @override
   State<RemoteWebView> createState() => _RemoteWebViewState();
@@ -25,6 +29,11 @@ class _RemoteWebViewState extends State<RemoteWebView> {
 
   Uri get _initialUri {
     final base = Uri.parse(widget.server.url);
+    if (widget.initialPath != null) {
+      final basePath = base.path.replaceFirst(RegExp(r'/+$'), '');
+      final relativePath = widget.initialPath!.replaceFirst(RegExp(r'^/+'), '');
+      return base.replace(path: '$basePath/$relativePath');
+    }
     if (!widget.showUpdatePage) return base;
     final path = base.path.replaceFirst(RegExp(r'/+$'), '');
     return base.replace(path: '$path/about');
@@ -82,9 +91,10 @@ class _RemoteWebViewState extends State<RemoteWebView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.showUpdatePage
-                  ? '同步 · ${widget.server.name}'
-                  : widget.server.name,
+              widget.pageTitle ??
+                  (widget.showUpdatePage
+                      ? '同步 · ${widget.server.name}'
+                      : widget.server.name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 17),

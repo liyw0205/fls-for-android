@@ -15,6 +15,8 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
   final _store = PanelStore();
   List<PanelServer> _servers = const [];
   bool _loading = true;
+  String _query = '';
+  bool _favoritesOnly = false;
 
   @override
   void initState() {
@@ -31,14 +33,16 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
     });
   }
 
-  Future<void> _addServer() async {
+  Future<void> _editServer([PanelServer? existing]) async {
     final nameController = TextEditingController();
     final urlController = TextEditingController();
+    nameController.text = existing?.name ?? '';
+    urlController.text = existing?.url ?? '';
     final formKey = GlobalKey<FormState>();
     final server = await showDialog<PanelServer>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('添加面板'),
+        title: Text(existing == null ? '添加面板' : '编辑面板'),
         content: Form(
           key: formKey,
           child: Column(
@@ -74,6 +78,7 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                       PanelServer(
                         name: nameController.text.trim(),
                         url: normalizePanelUrl(urlController.text)!,
+                        isFavorite: existing?.isFavorite ?? false,
                       ),
                     );
                   }
@@ -95,10 +100,11 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                 PanelServer(
                   name: nameController.text.trim(),
                   url: normalizePanelUrl(urlController.text)!,
+                  isFavorite: existing?.isFavorite ?? false,
                 ),
               );
             },
-            child: const Text('连接'),
+            child: Text(existing == null ? '连接' : '保存'),
           ),
         ],
       ),
@@ -106,10 +112,38 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
     nameController.dispose();
     urlController.dispose();
     if (server == null || !mounted) return;
-    final next = [server, ..._servers.where((item) => item.url != server.url)];
+    final next = existing == null
+        ? [server, ..._servers.where((item) => item.url != server.url)]
+        : [
+            ..._servers.where(
+              (item) => item.url != existing.url && item.url != server.url,
+            ),
+          ];
+    if (existing != null) {
+      final oldIndex = _servers.indexWhere((item) => item.url == existing.url);
+      next.insert(oldIndex.clamp(0, next.length), server);
+    }
     setState(() => _servers = next);
     await _store.save(next);
-    _openPanel(server);
+    if (existing == null) _openPanel(server);
+  }
+
+  Future<void> _addServer() => _editServer();
+
+  Future<void> _toggleFavorite(PanelServer server) async {
+    final next = _servers
+        .map(
+          (item) => item.url == server.url
+              ? PanelServer(
+                  name: item.name,
+                  url: item.url,
+                  isFavorite: !item.isFavorite,
+                )
+              : item,
+        )
+        .toList();
+    setState(() => _servers = next);
+    await _store.save(next);
   }
 
   Future<void> _removeServer(PanelServer server) async {
@@ -176,60 +210,133 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
             child: _EmptyPanels(onAdd: _addServer),
           )
         else ...[
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            sliver: SliverList.separated(
-              itemCount: _servers.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final server = _servers[index];
-                final uri = Uri.parse(server.url);
-                return Card(
-                  child: ListTile(
-                    minVerticalPadding: 12,
-                    leading: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE4F2EE),
-                        borderRadius: BorderRadius.circular(8),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: '搜索名称或地址',
+                        isDense: true,
                       ),
-                      child: const Icon(
-                        Icons.dns_outlined,
-                        color: Color(0xFF147D72),
-                      ),
+                      onChanged: (value) =>
+                          setState(() => _query = value.trim().toLowerCase()),
                     ),
-                    title: Text(
-                      server.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      '${uri.host}${uri.hasPort ? ':${uri.port}' : ''}${uri.path}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      tooltip: '面板操作',
-                      onSelected: (value) {
-                        if (value == 'sync') _syncPanel(server);
-                        if (value == 'remove') _removeServer(server);
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'sync', child: Text('同步')),
-                        PopupMenuItem(value: 'remove', child: Text('移除')),
-                      ],
-                    ),
-                    onTap: () => _openPanel(server),
                   ),
-                );
-              },
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: const Text('收藏'),
+                    selected: _favoritesOnly,
+                    onSelected: (selected) =>
+                        setState(() => _favoritesOnly = selected),
+                    avatar: const Icon(Icons.star_outline, size: 18),
+                  ),
+                ],
+              ),
             ),
           ),
+          if (_filteredServers.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Text('没有匹配的面板'),
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              sliver: SliverList.separated(
+                itemCount: _filteredServers.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final server = _filteredServers[index];
+                  final uri = Uri.parse(server.url);
+                  return Card(
+                    child: ListTile(
+                      minVerticalPadding: 12,
+                      leading: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE4F2EE),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.dns_outlined,
+                          color: Color(0xFF147D72),
+                        ),
+                      ),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              server.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          if (server.isFavorite)
+                            const Icon(
+                              Icons.star,
+                              size: 16,
+                              color: Color(0xFFB7791F),
+                            ),
+                        ],
+                      ),
+                      subtitle: Text(
+                        '${uri.host}${uri.hasPort ? ':${uri.port}' : ''}${uri.path}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        tooltip: '面板操作',
+                        onSelected: (value) {
+                          if (value == 'favorite') _toggleFavorite(server);
+                          if (value == 'edit') _editServer(server);
+                          if (value == 'sync') _syncPanel(server);
+                          if (value == 'remove') _removeServer(server);
+                        },
+                        itemBuilder: (_) => [
+                          PopupMenuItem(
+                            value: 'favorite',
+                            child: Text(server.isFavorite ? '取消收藏' : '收藏'),
+                          ),
+                          const PopupMenuItem(value: 'edit', child: Text('编辑')),
+                          PopupMenuItem(value: 'sync', child: Text('同步')),
+                          const PopupMenuItem(
+                            value: 'remove',
+                            child: Text('移除'),
+                          ),
+                        ],
+                      ),
+                      onTap: () => _openPanel(server),
+                    ),
+                  );
+                },
+              ),
+            ),
         ],
       ],
     );
+  }
+
+  List<PanelServer> get _filteredServers {
+    final query = _query;
+    return _servers.where((server) {
+      if (_favoritesOnly && !server.isFavorite) return false;
+      if (query.isEmpty) return true;
+      return server.name.toLowerCase().contains(query) ||
+          server.url.toLowerCase().contains(query);
+    }).toList();
   }
 }
 

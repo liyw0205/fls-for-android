@@ -22,4 +22,19 @@ void main() {
     expect(normalizePanelUrl('https://example.com/?token=secret'), isNull);
     expect(normalizePanelUrl('ftp://example.com'), isNull);
   });
+
+  test('loads legacy entries and round-trips favorites', () {
+    final legacy = PanelServer.fromJson({
+      'name': 'Home',
+      'url': 'https://fls.example.com/',
+    });
+    expect(legacy?.isFavorite, isFalse);
+
+    const favorite = PanelServer(
+      name: 'Home',
+      url: 'https://fls.example.com',
+      isFavorite: true,
+    );
+    expect(PanelServer.fromJson(favorite.toJson())?.isFavorite, isTrue);
+  });
 }

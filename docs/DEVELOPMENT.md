@@ -43,9 +43,11 @@ one ARM64 Android phone and one Android 14+ device:
 
 Container management checks:
 
-1. Install both `Python` and `Full` profiles and verify that changing the
-   selection replaces only `runtime/`, while panel data, logs, scripts, and
-   source state remain intact.
+1. Install the `Python` base image and use the FLS panel's `/panel/status`
+   installer to add a supported runtime inside the current container. Verify
+   that the new runner survives a panel restart. Separately test explicit
+   `Full` base-image replacement and verify that only `runtime/` is replaced,
+   while panel data, logs, scripts, and source state remain intact.
 2. Enter an empty mirror, a prefix mirror (for example
    `https://mirror.example/`), and a `%s` URL template; verify release metadata,
    runtime archives, and FLS source downloads all use the selected source.

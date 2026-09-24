@@ -409,9 +409,11 @@ class LocalInstallManager {
     );
     if (!started) throw StateError('Android 本机面板服务启动失败');
     final client = http.Client();
+    var attempts = 0;
     try {
       while (true) {
         cancellation.throwIfCancelled();
+        attempts++;
         try {
           final request = http.AbortableRequest(
             'GET',
@@ -425,9 +427,25 @@ class LocalInstallManager {
         } catch (_) {
           cancellation.throwIfCancelled();
         }
+        if (attempts % 10 == 0) {
+          final status = await LocalPanelHost.status();
+          if (!status.isRunning &&
+              status.state != LocalPanelState.starting &&
+              status.state != LocalPanelState.retrying) {
+            throw StateError(
+              '本机面板启动失败（${status.state.name}，退出码 ${status.exitCode ?? "未知"}）',
+            );
+          }
+        }
+        if (attempts >= 120) {
+          throw StateError('等待本机面板启动超时，请查看诊断日志');
+        }
         await cancellation.delay(const Duration(milliseconds: 500));
       }
     } on OperationCancelled {
+      await LocalPanelHost.stop();
+      rethrow;
+    } catch (_) {
       await LocalPanelHost.stop();
       rethrow;
     } finally {

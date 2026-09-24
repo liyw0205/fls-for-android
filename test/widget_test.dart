@@ -18,6 +18,13 @@ void main() {
           (call) async => switch (call.method) {
             'supportedAbis' => ['arm64-v8a'],
             'isRunning' => false,
+            'status' => {
+              'state': 'stopped',
+              'startedAtMs': 0,
+              'restartAttempts': 0,
+              'autoRestart': false,
+            },
+            'notificationsGranted' => true,
             _ => null,
           },
         );
@@ -34,11 +41,18 @@ void main() {
     await tester.tap(find.text('本机面板'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
-    expect(find.text('容器版本'), findsOneWidget);
-    expect(find.text('Python'), findsOneWidget);
-    expect(find.text('Full'), findsOneWidget);
+    expect(find.text('运行'), findsOneWidget);
+    expect(find.text('环境'), findsOneWidget);
+    expect(find.text('诊断'), findsOneWidget);
+    await tester.tap(find.text('环境'));
+    await tester.pump();
+    expect(find.text('容器基础镜像'), findsOneWidget);
+    expect(find.text('Python 基础'), findsOneWidget);
+    expect(find.text('Full 预装'), findsOneWidget);
     expect(find.text('导入容器'), findsOneWidget);
     expect(find.text('导出容器'), findsOneWidget);
+    await tester.tap(find.text('运行'));
+    await tester.pump();
     expect(find.text('安装本机 FLS'), findsOneWidget);
   });
 
@@ -55,6 +69,13 @@ void main() {
           (call) async => switch (call.method) {
             'supportedAbis' => ['arm64-v8a'],
             'isRunning' => false,
+            'status' => {
+              'state': 'stopped',
+              'startedAtMs': 0,
+              'restartAttempts': 0,
+              'autoRestart': false,
+            },
+            'notificationsGranted' => true,
             _ => null,
           },
         );
