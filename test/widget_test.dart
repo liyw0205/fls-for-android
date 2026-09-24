@@ -21,7 +21,9 @@ void main() {
           },
         );
     await tester.pumpWidget(const FLSApp());
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.text('FLS 面板'), findsOneWidget);
     expect(find.text('远程面板'), findsOneWidget);
