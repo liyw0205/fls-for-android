@@ -141,6 +141,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
 
   String get _serviceStateLabel => switch (_serviceStatus.state) {
     LocalPanelState.stopped => _installed ? '已停止' : '未安装',
+    LocalPanelState.stopping => '正在停止',
     LocalPanelState.starting => '正在启动',
     LocalPanelState.running => '运行中',
     LocalPanelState.retrying => '异常退出，正在恢复 ${_serviceStatus.restartAttempts}/3',
@@ -153,7 +154,8 @@ class _LocalSetupViewState extends State<LocalSetupView>
   Color get _serviceStateColor => switch (_serviceStatus.state) {
     LocalPanelState.running => const Color(0xFF147D72),
     LocalPanelState.retrying ||
-    LocalPanelState.starting => const Color(0xFF9A6700),
+    LocalPanelState.starting ||
+    LocalPanelState.stopping => const Color(0xFF9A6700),
     LocalPanelState.crashed ||
     LocalPanelState.failed ||
     LocalPanelState.interrupted => const Color(0xFFB54732),

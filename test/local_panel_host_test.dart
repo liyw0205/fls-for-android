@@ -32,6 +32,13 @@ void main() {
     expect(status.autoRestart, isFalse);
   });
 
+  test('parses the stopping service state', () {
+    final status = LocalPanelStatus.fromMap({'state': 'stopping'});
+
+    expect(status.state, LocalPanelState.stopping);
+    expect(status.isRunning, isFalse);
+  });
+
   test('stop waits for both process exit and stopped service state', () async {
     var processChecks = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

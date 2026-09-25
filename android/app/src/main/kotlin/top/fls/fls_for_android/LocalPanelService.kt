@@ -15,9 +15,10 @@ import android.os.Looper
 import android.system.ErrnoException
 import android.system.Os
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class LocalPanelService : Service() {
-    private var process: Process? = null
+    @Volatile private var process: Process? = null
     private var activePaths: Map<String, String>? = null
     private var restartAttempts = 0
     private val handler = Handler(Looper.getMainLooper())
@@ -34,9 +35,12 @@ class LocalPanelService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            if (preferences.getString(KEY_STATE, null) == STATE_STOPPING) {
+                return START_NOT_STICKY
+            }
             preferences.edit()
                 .putBoolean(KEY_DESIRED, false)
-                .putString(KEY_STATE, STATE_STOPPED)
+                .putString(KEY_STATE, STATE_STOPPING)
                 .putInt(KEY_RESTART_ATTEMPTS, 0)
                 .remove(KEY_EXIT_CODE)
                 .apply()
@@ -45,17 +49,11 @@ class LocalPanelService : Service() {
             val activeProcess = process
             if (activeProcess == null || !activeProcess.isAlive) {
                 process = null
+                markStopped()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf(startId)
             } else {
-                activeProcess.destroy()
-                handler.postDelayed({
-                    if (process === activeProcess && activeProcess.isAlive &&
-                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    ) {
-                        activeProcess.destroyForcibly()
-                    }
-                }, STOP_FORCE_KILL_DELAY_MILLIS)
+                stopPanel(startId, activeProcess, activePaths)
             }
             return START_NOT_STICKY
         }
@@ -221,6 +219,127 @@ class LocalPanelService : Service() {
                 preferences.edit().putInt(KEY_RESTART_ATTEMPTS, 0).apply()
             }
         }, STABLE_RUN_MILLIS)
+    }
+
+    private fun stopPanel(
+        startId: Int,
+        activeProcess: Process,
+        paths: Map<String, String>?,
+    ) {
+        Thread {
+            val graceful = paths != null && runFlsStop(paths)
+            if (!graceful) {
+                appendServiceLog("FLS 控制脚本未确认停止，准备停止 PRoot")
+            }
+
+            var exited = try {
+                activeProcess.waitFor(STOP_PROCESS_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+            if (!exited && activeProcess.isAlive) {
+                appendServiceLog("FLS 控制脚本后 PRoot 仍在运行，发送终止信号")
+                activeProcess.destroy()
+                exited = try {
+                    activeProcess.waitFor(STOP_FORCE_WAIT_MILLIS, TimeUnit.MILLISECONDS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    false
+                }
+            }
+            if (!exited && activeProcess.isAlive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                appendServiceLog("PRoot 未响应终止信号，执行强制终止")
+                activeProcess.destroyForcibly()
+                exited = try {
+                    activeProcess.waitFor(STOP_FORCE_WAIT_MILLIS, TimeUnit.MILLISECONDS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    false
+                }
+            }
+
+            handler.post {
+                if (process !== activeProcess) return@post
+                if (!exited && activeProcess.isAlive) {
+                    appendServiceLog("停止失败：PRoot 进程仍在运行")
+                    updateForegroundNotification("停止失败，PRoot 仍在运行")
+                    return@post
+                }
+                process = null
+                markStopped()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf(startId)
+            }
+        }.apply { name = "fls-panel-stop" }.start()
+    }
+
+    private fun runFlsStop(paths: Map<String, String>): Boolean {
+        val runtime = File(paths.getValue("runtimeDir"))
+        val rootfs = File(runtime, "rootfs")
+        val proot = File(applicationInfo.nativeLibraryDir, "libdaidai_proot.so")
+        val loader = File(applicationInfo.nativeLibraryDir, "libproot_loader.so")
+        val project = File(paths.getValue("projectDir"))
+        val data = File(paths.getValue("dataDir"))
+        val log = File(paths.getValue("logDir"))
+        val scripts = File(paths.getValue("scriptsDir"))
+        if (!proot.canExecute() || !loader.canExecute() || !File(project, "fls.sh").isFile) {
+            return false
+        }
+        val stopTmp = File(runtime, "tmp-stop").apply { mkdirs() }
+
+        val command = mutableListOf(
+            proot.absolutePath,
+            "--kill-on-exit",
+            "--link2symlink",
+            "-k", "4.14.0",
+            "-0",
+            "-r", rootfs.absolutePath,
+            "-b", "/dev",
+            "-b", "/proc",
+            "-b", "/sys",
+            "-b", "${project.absolutePath}:/opt/fls",
+            "-b", "${data.absolutePath}:/opt/fls/data",
+            "-b", "${log.absolutePath}:/opt/fls/log",
+            "-b", "${scripts.absolutePath}:/opt/fls/scripts",
+            "-w", "/opt/fls",
+            "/bin/sh",
+            "/opt/fls/fls.sh",
+            "stop",
+        )
+        val output = File(filesDir, "fls/local-panel.log").apply { parentFile?.mkdirs() }
+        return try {
+            val builder = ProcessBuilder(command)
+                .directory(filesDir)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(output))
+            builder.environment().apply {
+                put("LD_LIBRARY_PATH", applicationInfo.nativeLibraryDir)
+                put("PROOT_LOADER", loader.absolutePath)
+                put("PROOT_TMP_DIR", stopTmp.absolutePath)
+                put("FLS_BASE_DIR", "/opt/fls")
+                put("FLS_PYTHON", "/opt/fls-venv/bin/python")
+                put("LANG", "C.UTF-8")
+                put("LC_ALL", "C.UTF-8")
+            }
+            val controller = builder.start()
+            val completed = controller.waitFor(STOP_COMMAND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            if (!completed) {
+                controller.destroyForcibly()
+                false
+            } else {
+                val exitCode = controller.exitValue()
+                if (exitCode != 0) {
+                    appendServiceLog("FLS 停止脚本退出码：$exitCode")
+                }
+                exitCode == 0
+            }
+        } catch (error: Exception) {
+            appendServiceLog("执行 FLS 停止脚本失败：${error.message}")
+            false
+        } finally {
+            stopTmp.deleteRecursively()
+        }
     }
 
     private fun handleUnexpectedExit(paths: Map<String, String>, exitCode: Int?) {
@@ -507,7 +626,10 @@ class LocalPanelService : Service() {
         private const val KEY_LOG = "log"
         private const val KEY_SCRIPTS = "scripts"
         private const val STABLE_RUN_MILLIS = 60_000L
-        private const val STOP_FORCE_KILL_DELAY_MILLIS = 1_500L
+        private const val STOP_COMMAND_TIMEOUT_MILLIS = 8_000L
+        private const val STOP_PROCESS_TIMEOUT_MILLIS = 5_000L
+        private const val STOP_FORCE_WAIT_MILLIS = 2_000L
+        const val STATE_STOPPING = "stopping"
         private val RESTART_DELAYS_SECONDS = listOf(2L, 5L, 15L)
         private val REQUIRED_PATHS = listOf(
             "runtimeDir",
@@ -526,6 +648,7 @@ class LocalPanelService : Service() {
             val state = when {
                 isRunning() -> STATE_RUNNING
                 stored == STATE_RUNNING && preferences.getBoolean(KEY_DESIRED, false) -> STATE_INTERRUPTED
+                stored == STATE_STOPPING && !preferences.getBoolean(KEY_DESIRED, false) -> STATE_STOPPED
                 else -> stored
             }
             return mapOf(

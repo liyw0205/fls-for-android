@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 
 enum LocalPanelState {
   stopped,
+  stopping,
   starting,
   running,
   retrying,
@@ -77,7 +78,9 @@ class LocalPanelHost {
 
   static Future<void> stop() async {
     await _channel.invokeMethod<void>('stop');
-    for (var attempt = 0; attempt < 100; attempt++) {
+    // The in-container stop script can take up to eight seconds before the
+    // Android service falls back to terminating the PRoot process.
+    for (var attempt = 0; attempt < 240; attempt++) {
       final running = await isRunning();
       final status = await LocalPanelHost.status();
       if (!running && status.state == LocalPanelState.stopped) return;
