@@ -177,6 +177,8 @@ class LocalPanelService : Service() {
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.appendTo(output))
         builder.environment().apply {
+            put("HOME", "/root")
+            put("PATH", CONTAINER_PATH)
             put("LD_LIBRARY_PATH", applicationInfo.nativeLibraryDir)
             put("PROOT_LOADER", loader.absolutePath)
             put("PROOT_TMP_DIR", File(runtime, "tmp").absolutePath)
@@ -227,9 +229,13 @@ class LocalPanelService : Service() {
         paths: Map<String, String>?,
     ) {
         Thread {
-            val graceful = paths != null && runFlsStop(paths)
+            val scriptStopped = paths?.let(::runFlsStop) ?: false
+            val graceful = paths?.let(::runPythonFlsStop) ?: false
+            if (!scriptStopped) {
+                appendServiceLog("FLS 控制脚本未成功返回，已执行 Python 停止兜底")
+            }
             if (!graceful) {
-                appendServiceLog("FLS 控制脚本未确认停止，准备停止 PRoot")
+                appendServiceLog("Python 停止兜底未确认 FLS 退出，准备停止 PRoot")
             }
 
             var exited = try {
@@ -275,45 +281,78 @@ class LocalPanelService : Service() {
     }
 
     private fun runFlsStop(paths: Map<String, String>): Boolean {
-        val runtime = File(paths.getValue("runtimeDir"))
-        val rootfs = File(runtime, "rootfs")
-        val proot = File(applicationInfo.nativeLibraryDir, "libdaidai_proot.so")
-        val loader = File(applicationInfo.nativeLibraryDir, "libproot_loader.so")
         val project = File(paths.getValue("projectDir"))
-        val data = File(paths.getValue("dataDir"))
-        val log = File(paths.getValue("logDir"))
-        val scripts = File(paths.getValue("scriptsDir"))
-        if (!proot.canExecute() || !loader.canExecute() || !File(project, "fls.sh").isFile) {
-            return false
-        }
-        val stopTmp = File(runtime, "tmp-stop").apply { mkdirs() }
-
-        val command = mutableListOf(
-            proot.absolutePath,
-            "--kill-on-exit",
-            "--link2symlink",
-            "-k", "4.14.0",
-            "-0",
-            "-r", rootfs.absolutePath,
-            "-b", "/dev",
-            "-b", "/proc",
-            "-b", "/sys",
-            "-b", "${project.absolutePath}:/opt/fls",
-            "-b", "${data.absolutePath}:/opt/fls/data",
-            "-b", "${log.absolutePath}:/opt/fls/log",
-            "-b", "${scripts.absolutePath}:/opt/fls/scripts",
-            "-w", "/opt/fls",
-            "/bin/sh",
-            "/opt/fls/fls.sh",
-            "stop",
+        if (!File(project, "fls.sh").isFile) return false
+        val exitCode = runContainerCommand(
+            paths,
+            listOf("/bin/sh", "/opt/fls/fls.sh", "stop"),
+            STOP_COMMAND_TIMEOUT_MILLIS,
+            "tmp-stop",
+            "执行 FLS 停止脚本",
         )
-        val output = File(filesDir, "fls/local-panel.log").apply { parentFile?.mkdirs() }
+        return exitCode == 0
+    }
+
+    private fun runPythonFlsStop(paths: Map<String, String>): Boolean {
+        val exitCode = runContainerCommand(
+            paths,
+            listOf(
+                "/opt/fls-venv/bin/python",
+                "-c",
+                PYTHON_STOP_SCRIPT,
+                "/opt/fls/fls-manager.py",
+            ),
+            STOP_COMMAND_TIMEOUT_MILLIS,
+            "tmp-stop-python",
+            "执行 Python 停止兜底",
+        )
+        return exitCode == 0
+    }
+
+    private fun runContainerCommand(
+        paths: Map<String, String>,
+        innerCommand: List<String>,
+        timeoutMillis: Long,
+        tmpName: String,
+        description: String,
+    ): Int? {
+        var stopTmp: File? = null
         return try {
+            val runtime = File(paths.getValue("runtimeDir"))
+            val rootfs = File(runtime, "rootfs")
+            val proot = File(applicationInfo.nativeLibraryDir, "libdaidai_proot.so")
+            val loader = File(applicationInfo.nativeLibraryDir, "libproot_loader.so")
+            val project = File(paths.getValue("projectDir"))
+            val data = File(paths.getValue("dataDir"))
+            val log = File(paths.getValue("logDir"))
+            val scripts = File(paths.getValue("scriptsDir"))
+            if (!proot.canExecute() || !loader.canExecute()) return null
+            stopTmp = File(runtime, tmpName).apply { mkdirs() }
+
+            val command = mutableListOf(
+                proot.absolutePath,
+                "--kill-on-exit",
+                "--link2symlink",
+                "-k", "4.14.0",
+                "-0",
+                "-r", rootfs.absolutePath,
+                "-b", "/dev",
+                "-b", "/proc",
+                "-b", "/sys",
+                "-b", "${project.absolutePath}:/opt/fls",
+                "-b", "${data.absolutePath}:/opt/fls/data",
+                "-b", "${log.absolutePath}:/opt/fls/log",
+                "-b", "${scripts.absolutePath}:/opt/fls/scripts",
+                "-w", "/opt/fls",
+            ).apply { addAll(innerCommand) }
+            val output = File(filesDir, "fls/local-panel.log").apply { parentFile?.mkdirs() }
             val builder = ProcessBuilder(command)
                 .directory(filesDir)
                 .redirectErrorStream(true)
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(output))
             builder.environment().apply {
+                put("HOME", "/root")
+                put("PATH", CONTAINER_PATH)
                 put("LD_LIBRARY_PATH", applicationInfo.nativeLibraryDir)
                 put("PROOT_LOADER", loader.absolutePath)
                 put("PROOT_TMP_DIR", stopTmp.absolutePath)
@@ -323,22 +362,19 @@ class LocalPanelService : Service() {
                 put("LC_ALL", "C.UTF-8")
             }
             val controller = builder.start()
-            val completed = controller.waitFor(STOP_COMMAND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            val completed = controller.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
             if (!completed) {
+                appendServiceLog("${description}超时")
                 controller.destroyForcibly()
-                false
+                null
             } else {
-                val exitCode = controller.exitValue()
-                if (exitCode != 0) {
-                    appendServiceLog("FLS 停止脚本退出码：$exitCode")
-                }
-                exitCode == 0
+                controller.exitValue()
             }
         } catch (error: Exception) {
-            appendServiceLog("执行 FLS 停止脚本失败：${error.message}")
-            false
+            appendServiceLog("${description}失败：${error.message}")
+            null
         } finally {
-            stopTmp.deleteRecursively()
+            stopTmp?.deleteRecursively()
         }
     }
 
@@ -613,6 +649,8 @@ class LocalPanelService : Service() {
         private const val NOTIFICATION_ID = 5700
         private const val CRASH_NOTIFICATION_ID = 5701
         private const val DEFAULT_PORT = 5700
+        private const val CONTAINER_PATH =
+            "/opt/fls-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         private const val KEY_DESIRED = "desired"
         private const val KEY_AUTO_RESTART = "auto_restart"
         private const val KEY_STATE = "state"
@@ -630,6 +668,45 @@ class LocalPanelService : Service() {
         private const val STOP_PROCESS_TIMEOUT_MILLIS = 5_000L
         private const val STOP_FORCE_WAIT_MILLIS = 2_000L
         const val STATE_STOPPING = "stopping"
+        private val PYTHON_STOP_SCRIPT = """
+            import os
+            import signal
+            import sys
+            import time
+
+            target = sys.argv[1].encode()
+            current = os.getpid()
+            pids = []
+            for entry in os.listdir('/proc'):
+                if not entry.isdigit() or int(entry) == current:
+                    continue
+                try:
+                    pid = int(entry)
+                    comm = open('/proc/%s/comm' % entry, 'rb').read().strip()
+                    cmdline = open('/proc/%s/cmdline' % entry, 'rb').read()
+                except (OSError, ValueError):
+                    continue
+                if comm == b'fls-manager' or target in cmdline:
+                    pids.append(pid)
+
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+
+            deadline = time.monotonic() + 2
+            while pids and time.monotonic() < deadline:
+                pids = [pid for pid in pids if os.path.exists('/proc/%s' % pid)]
+                if pids:
+                    time.sleep(0.05)
+
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        """.trimIndent()
         private val RESTART_DELAYS_SECONDS = listOf(2L, 5L, 15L)
         private val REQUIRED_PATHS = listOf(
             "runtimeDir",
