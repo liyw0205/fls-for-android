@@ -45,6 +45,13 @@ class RuntimeAsset {
   final int size;
 }
 
+class _FileModeSnapshot {
+  const _FileModeSnapshot(this.path, this.mode);
+
+  final String path;
+  final int mode;
+}
+
 RuntimeAsset? selectRuntimeAsset(
   Map<String, dynamic> release,
   List<String> supportedAbis,
@@ -293,6 +300,7 @@ class LocalInstallManager {
       throw StateError('没有可导出的本机容器');
     }
     final base = await root;
+    final runtimeDir = await runtime;
     final profile = await installedRuntimeProfile();
     final archive = File(
       p.join(
@@ -300,18 +308,82 @@ class LocalInstallManager {
         '.fls-container-${profile?.id ?? RuntimeProfile.python.id}-${DateTime.now().millisecondsSinceEpoch}.tar.gz',
       ),
     );
-    final result = await Process.run('/system/bin/toybox', [
-      'tar',
-      '-czf',
-      archive.path,
-      '-C',
-      (await runtime).path,
-      '.',
-    ]);
-    if (result.exitCode != 0 || !await archive.exists()) {
-      throw StateError('容器导出失败：${result.stderr}');
+    final permissions = await _makeRuntimeReadableForExport(runtimeDir);
+    try {
+      try {
+        final result = await Process.run('/system/bin/toybox', [
+          'tar',
+          '-czf',
+          archive.path,
+          '-C',
+          runtimeDir.path,
+          '.',
+        ]);
+        if (result.exitCode != 0 || !await archive.exists()) {
+          final error = result.stderr.toString().trim();
+          throw StateError('容器导出失败：${error.isEmpty ? '无法创建归档文件' : error}');
+        }
+      } catch (_) {
+        if (await archive.exists()) await archive.delete();
+        rethrow;
+      }
+    } finally {
+      await _restoreFileModes(permissions);
     }
     return archive;
+  }
+
+  Future<List<_FileModeSnapshot>> _makeRuntimeReadableForExport(
+    Directory runtimeDir,
+  ) async {
+    final snapshots = <_FileModeSnapshot>[];
+    try {
+      await _collectAndMakeReadable(runtimeDir, snapshots);
+      return snapshots;
+    } catch (_) {
+      await _restoreFileModes(snapshots);
+      rethrow;
+    }
+  }
+
+  Future<void> _collectAndMakeReadable(
+    FileSystemEntity entity,
+    List<_FileModeSnapshot> snapshots,
+  ) async {
+    final type = await FileSystemEntity.type(entity.path, followLinks: false);
+    if (type == FileSystemEntityType.link ||
+        type == FileSystemEntityType.notFound) {
+      return;
+    }
+    final stat = await entity.stat();
+    final originalMode = stat.mode & 0xFFF;
+    final requiredBits = type == FileSystemEntityType.directory
+        ? 0x100 | 0x040
+        : 0x100;
+    final readableMode = originalMode | requiredBits;
+    if (readableMode != originalMode) {
+      final result = await Process.run('/system/bin/chmod', [
+        readableMode.toRadixString(8),
+        entity.path,
+      ]);
+      if (result.exitCode != 0) {
+        throw StateError('无法读取容器文件：${entity.path}');
+      }
+      snapshots.add(_FileModeSnapshot(entity.path, originalMode));
+    }
+    if (type != FileSystemEntityType.directory) return;
+    await for (final child in Directory(entity.path).list(followLinks: false)) {
+      await _collectAndMakeReadable(child, snapshots);
+    }
+  }
+
+  Future<void> _restoreFileModes(List<_FileModeSnapshot> snapshots) async {
+    for (final snapshot in snapshots.reversed) {
+      await Process.run('/system/bin/chmod', [
+        snapshot.mode.toRadixString(8),
+        snapshot.path,
+      ]);
+    }
   }
 
   Future<void> importServerDataArchive(
