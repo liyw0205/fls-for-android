@@ -1,14 +1,8 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:fls_for_android/features/online_scripts_view.dart';
 import 'package:fls_for_android/services/local_install_manager.dart';
 import 'package:fls_for_android/services/online_scripts_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -22,10 +16,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await _pumpScriptsView(tester);
+    await _pumpScriptsView(tester, offlineAfterCache: true);
 
     expect(find.text('Daily check-in'), findsOneWidget);
     expect(find.text('Weather tools'), findsOneWidget);
+    await _pumpUntilVisible(tester, find.textContaining('正在显示缓存'));
+    expect(find.textContaining('缓存同步于'), findsOneWidget);
     await tester.tap(find.text('仓库'));
     await tester.pump();
 
@@ -58,40 +54,10 @@ void main() {
 Future<void> _pumpScriptsView(
   WidgetTester tester, {
   TextScaler textScaler = TextScaler.noScaling,
+  bool offlineAfterCache = false,
 }) async {
-  final previousPathProvider = PathProviderPlatform.instance;
-  PathProviderPlatform.instance = _TestPathProvider();
-  addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
-
-  final client = MockClient((request) async {
-    return http.Response(
-      jsonEncode([
-        {
-          'id': 'daily_checkin',
-          'name': 'Daily check-in',
-          'type': 'raw',
-          'link': 'https://example.com/checkin.py',
-        },
-        {
-          'id': 'weather_tools',
-          'name': 'Weather tools',
-          'type': 'repo',
-          'link': 'https://github.com/example/weather-tools',
-        },
-      ]),
-      200,
-    );
-  });
-  final manager = OnlineScriptsManager(
-    client: client,
-    catalogUri: Uri.parse('https://catalog.example/index.json'),
-  );
-  addTearDown(() {
-    manager.close();
-    client.close();
-  });
-
-  await tester.runAsync(manager.fetchCatalogSnapshot);
+  final manager = _TestOnlineScriptsManager(offline: offlineAfterCache);
+  addTearDown(manager.close);
   await tester.pumpWidget(
     MaterialApp(
       home: MediaQuery(
@@ -114,13 +80,7 @@ Future<void> _pumpScriptsView(
       ),
     ),
   );
-  for (
-    var frame = 0;
-    frame < 20 && find.text('Daily check-in').evaluate().isEmpty;
-    frame++
-  ) {
-    await tester.pump(const Duration(milliseconds: 100));
-  }
+  await _pumpUntilVisible(tester, find.text('Daily check-in'));
   if (find.text('Daily check-in').evaluate().isEmpty) {
     final visibleText = tester
         .widgetList<Text>(find.byType(Text))
@@ -131,8 +91,58 @@ Future<void> _pumpScriptsView(
   }
 }
 
-class _TestPathProvider extends PathProviderPlatform {
+Future<void> _pumpUntilVisible(WidgetTester tester, Finder finder) async {
+  for (var frame = 0; frame < 20 && finder.evaluate().isEmpty; frame++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+class _TestOnlineScriptsManager extends OnlineScriptsManager {
+  _TestOnlineScriptsManager({required this.offline});
+
+  final bool offline;
+
+  static final _scripts = [
+    OnlineScript(
+      id: 'daily_checkin',
+      name: 'Daily check-in',
+      type: 'raw',
+      link: Uri(scheme: 'https', host: 'example.com', path: '/checkin.py'),
+      linkName: 'checkin.py',
+      installCommand: '',
+    ),
+    OnlineScript(
+      id: 'weather_tools',
+      name: 'Weather tools',
+      type: 'repo',
+      link: Uri(
+        scheme: 'https',
+        host: 'github.com',
+        path: '/example/weather-tools',
+      ),
+      linkName: 'weather-tools',
+      installCommand: '',
+    ),
+  ];
+
+  OnlineScriptsCatalogSnapshot get _snapshot => OnlineScriptsCatalogSnapshot(
+    scripts: _scripts,
+    lastCheckedAt: DateTime.utc(2026, 11, 24, 8),
+    lastSyncedAt: DateTime.utc(2026, 11, 24, 7, 30),
+    fromCache: offline,
+    refreshError: offline ? 'offline' : null,
+  );
+
   @override
-  Future<String?> getApplicationSupportPath() async =>
-      Directory.systemTemp.path;
+  Future<OnlineScriptsCatalogSnapshot?> readCachedCatalog() async => _snapshot;
+
+  @override
+  Future<OnlineScriptsCatalogSnapshot> fetchCatalogSnapshot() async =>
+      _snapshot;
+
+  @override
+  Future<bool> hasInstallTarget(
+    OnlineScript script,
+    LocalInstallManager installManager,
+  ) async => false;
 }
