@@ -45,7 +45,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.text('运行'), findsOneWidget);
     expect(find.text('环境'), findsOneWidget);
+    expect(find.text('脚本'), findsOneWidget);
     expect(find.text('诊断'), findsOneWidget);
+    expect(find.text('首次安装镜像'), findsOneWidget);
+    expect(find.text('Python 基础'), findsOneWidget);
+    expect(find.text('Full 预装'), findsOneWidget);
     await tester.tap(find.text('环境'));
     await tester.pump();
     expect(find.text('容器基础镜像'), findsOneWidget);
@@ -147,7 +151,7 @@ void main() {
 
     expect(find.text('停止面板'), findsOneWidget);
     expect(find.text('打开面板'), findsOneWidget);
-    expect(find.text('更新 FLS'), findsNothing);
+    expect(find.text('版本与更新日志'), findsNothing);
     await tester.tap(find.text('停止面板'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -156,7 +160,7 @@ void main() {
 
     await tester.tap(find.text('环境'));
     await tester.pump();
-    expect(find.text('更新 FLS'), findsOneWidget);
+    expect(find.text('版本与更新日志'), findsOneWidget);
     expect(find.text('打开 FLS 运行环境安装器'), findsNothing);
   });
 
@@ -216,4 +220,19 @@ class _TestLocalInstallManager extends LocalInstallManager {
 
   @override
   Future<String> loadGithubMirror() async => '';
+
+  @override
+  Future<String?> currentPanelVersion() async => null;
+
+  @override
+  Future<List<PanelRelease>> fetchPanelReleases({
+    String? githubMirror,
+    int limit = 10,
+  }) async => const [];
+
+  @override
+  Future<Map<RuntimeProfile, RuntimeAsset>> fetchRuntimeAssets({
+    required List<String> supportedAbis,
+    String? githubMirror,
+  }) async => const {};
 }

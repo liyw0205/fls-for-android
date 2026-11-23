@@ -9,9 +9,10 @@ import '../services/local_file_bridge.dart';
 import '../services/local_panel_host.dart';
 import '../services/operation_cancellation.dart';
 import 'remote_web_view.dart';
+import 'online_scripts_view.dart';
 import '../models/panel_server.dart';
 
-enum _LocalTab { overview, environment, diagnostics }
+enum _LocalTab { overview, environment, scripts, diagnostics }
 
 class LocalSetupView extends StatefulWidget {
   const LocalSetupView({super.key, this.manager});
@@ -28,6 +29,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
       widget.manager ?? LocalInstallManager();
   bool _loading = true;
   bool _installing = false;
+  bool _scriptInstalling = false;
   bool _installed = false;
   bool _runtimeInstalled = false;
   bool _panelReady = false;
@@ -46,7 +48,20 @@ class _LocalSetupViewState extends State<LocalSetupView>
   );
   RuntimeProfile _selectedProfile = RuntimeProfile.python;
   RuntimeProfile? _installedProfile;
+  Map<RuntimeProfile, RuntimeAsset> _runtimeAssets = const {};
+  bool _runtimeAssetsLoading = false;
+  bool _runtimeAssetsFailed = false;
+  List<PanelRelease> _panelReleases = const [];
+  PanelRelease? _selectedRelease;
+  String? _installedVersion;
+  bool _releasesLoading = false;
+  Completer<void>? _releaseLoadCompleter;
+  List<GithubMirrorTestResult> _mirrorResults = const [];
+  bool _testingMirrors = false;
+  bool _useMirror = false;
+  String _selectedMirror = '';
   double _progress = 0;
+  DownloadProgress? _downloadProgress;
   String _phase = '';
   String? _error;
   OperationCancellation? _cancellation;
@@ -82,11 +97,16 @@ class _LocalSetupViewState extends State<LocalSetupView>
       LocalPanelHost.status(),
       _manager.loadGithubMirror(),
       LocalPanelHost.notificationsGranted(),
+      _manager.currentPanelVersion(),
     ]);
     if (!mounted) return;
     final profile = values[0] as RuntimeProfile?;
     final serviceStatus = values[2] as LocalPanelStatus;
-    _mirrorController.text = values[3] as String;
+    final savedMirror = values[3] as String;
+    final builtIn = builtinGithubMirrors.where(
+      (option) => option.prefix == savedMirror,
+    );
+    _mirrorController.text = builtIn.isEmpty ? savedMirror : '';
     setState(() {
       _installedProfile = profile;
       _selectedProfile = profile ?? RuntimeProfile.python;
@@ -96,6 +116,11 @@ class _LocalSetupViewState extends State<LocalSetupView>
       _panelReady = serviceStatus.isRunning;
       _autoRestart = serviceStatus.autoRestart;
       _notificationsGranted = values[4] as bool;
+      _installedVersion = values[5] as String?;
+      _useMirror = savedMirror.isNotEmpty;
+      _selectedMirror = builtIn.isEmpty
+          ? (savedMirror.isEmpty ? '' : '__custom__')
+          : savedMirror;
       _loading = false;
     });
   }
@@ -114,6 +139,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
       _manager.hasProject(),
       LocalPanelHost.status(),
       LocalPanelHost.notificationsGranted(),
+      _manager.currentPanelVersion(),
     ]);
     if (!mounted) return;
     final profile = values[0] as RuntimeProfile?;
@@ -126,6 +152,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
       _panelReady = serviceStatus.isRunning;
       _autoRestart = serviceStatus.autoRestart;
       _notificationsGranted = values[3] as bool;
+      _installedVersion = values[4] as String?;
     });
   }
 
@@ -190,8 +217,218 @@ class _LocalSetupViewState extends State<LocalSetupView>
   }
 
   void _selectTab(_LocalTab tab) {
+    if (_installing || _scriptInstalling) return;
     setState(() => _tab = tab);
     if (tab == _LocalTab.diagnostics) _loadServiceLog();
+    if (tab == _LocalTab.environment) {
+      unawaited(_loadRuntimeAssets(silent: true));
+      unawaited(_loadPanelReleases(silent: true));
+    }
+  }
+
+  String? get _operationMirror {
+    if (!_useMirror) return null;
+    if (_selectedMirror == '__custom__') return _mirrorController.text.trim();
+    return _selectedMirror;
+  }
+
+  List<GithubMirrorOption> get _orderedMirrors {
+    final ordered = <GithubMirrorOption>[];
+    for (final result in _mirrorResults) {
+      for (final option in builtinGithubMirrors) {
+        if (result.mirror == option.prefix && !ordered.contains(option)) {
+          ordered.add(option);
+        }
+      }
+    }
+    for (final option in builtinGithubMirrors) {
+      if (!ordered.contains(option)) ordered.add(option);
+    }
+    return ordered;
+  }
+
+  Future<void> _selectMirror(String mirror) async {
+    setState(() {
+      _selectedMirror = mirror;
+      _useMirror = mirror.isNotEmpty;
+    });
+    await _manager.saveGithubMirror(_operationMirror ?? '');
+  }
+
+  Future<void> _testMirrors() async {
+    setState(() => _testingMirrors = true);
+    try {
+      final results = await _manager.testGithubMirrors(
+        customMirror: _mirrorController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() => _mirrorResults = results);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _testingMirrors = false);
+    }
+  }
+
+  Widget? _mirrorLatency(String mirror) {
+    GithubMirrorTestResult? result;
+    for (final item in _mirrorResults) {
+      if (item.mirror == mirror) {
+        result = item;
+        break;
+      }
+    }
+    if (result == null) return const Text('尚未测速');
+    if (!result.available) return Text(result.error ?? '不可用');
+    final latency = result.latency!;
+    final value = latency.inMilliseconds < 1000
+        ? '${latency.inMilliseconds} ms'
+        : '${(latency.inMilliseconds / 1000).toStringAsFixed(2)} s';
+    return Text(value);
+  }
+
+  Future<void> _loadRuntimeAssets({bool silent = false}) async {
+    if (mounted) {
+      setState(() {
+        _runtimeAssetsLoading = true;
+        _runtimeAssetsFailed = false;
+      });
+    }
+    try {
+      final assets = await _manager.fetchRuntimeAssets(
+        supportedAbis: await LocalPanelHost.supportedAbis(),
+        githubMirror: _operationMirror,
+      );
+      if (mounted) setState(() => _runtimeAssets = assets);
+    } catch (error) {
+      if (mounted) setState(() => _runtimeAssetsFailed = true);
+      if (!silent && mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _runtimeAssetsLoading = false);
+    }
+  }
+
+  String _runtimeAssetSize(RuntimeProfile profile) {
+    final asset = _runtimeAssets[profile];
+    if (asset != null) return '${_formatMegabytes(asset.size)} MB';
+    if (_runtimeAssetsLoading) return '读取中';
+    if (_runtimeAssetsFailed) return '获取失败';
+    return '未查询';
+  }
+
+  Future<void> _loadPanelReleases({bool silent = false}) async {
+    if (_releasesLoading) {
+      await _releaseLoadCompleter?.future;
+      return;
+    }
+    final completer = Completer<void>();
+    _releaseLoadCompleter = completer;
+    if (mounted) setState(() => _releasesLoading = true);
+    try {
+      final releases = await _manager.fetchPanelReleases(
+        githubMirror: _operationMirror,
+        limit: 10,
+      );
+      if (!mounted) return;
+      setState(() {
+        _panelReleases = releases;
+        if (releases.isNotEmpty &&
+            !_panelReleases.any(
+              (item) => item.tagName == _selectedRelease?.tagName,
+            )) {
+          _selectedRelease = releases.first;
+        }
+      });
+    } catch (error) {
+      if (!silent && mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _releasesLoading = false);
+      if (!completer.isCompleted) completer.complete();
+      if (identical(_releaseLoadCompleter, completer)) {
+        _releaseLoadCompleter = null;
+      }
+    }
+  }
+
+  Future<void> _showVersionManager() async {
+    if (_panelReleases.isEmpty) await _loadPanelReleases();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('FLS 版本与更新日志'),
+        content: SizedBox(
+          width: 520,
+          height: 520,
+          child: _panelReleases.isEmpty
+              ? Center(
+                  child: _releasesLoading
+                      ? const CircularProgressIndicator()
+                      : const Text('暂无可用 Release'),
+                )
+              : ListView.separated(
+                  itemCount: _panelReleases.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final release = _panelReleases[index];
+                    final installed = release.tagName == _installedVersion;
+                    final date = release.publishedAt?.toLocal().toString();
+                    return ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: Text(
+                        release.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${release.tagName}${date == null ? '' : ' · ${date.substring(0, 10)}'}${installed ? ' · 当前版本' : ''}',
+                      ),
+                      children: [
+                        if (release.body.trim().isNotEmpty)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: SelectableText(release.body.trim()),
+                          )
+                        else
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('此版本没有提供更新日志。'),
+                          ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton.tonal(
+                            onPressed: _installing || installed
+                                ? null
+                                : () {
+                                    Navigator.pop(dialogContext);
+                                    unawaited(
+                                      _installOrUpdate(release: release),
+                                    );
+                                  },
+                            child: Text(
+                              installed
+                                  ? '当前版本'
+                                  : _installed
+                                  ? '切换到此版本'
+                                  : '安装此版本',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<bool> _confirmRuntimeReplacement() async {
@@ -228,22 +465,37 @@ class _LocalSetupViewState extends State<LocalSetupView>
     );
   }
 
-  Future<void> _installOrUpdate({bool replaceRuntime = false}) async {
+  Future<void> _installOrUpdate({
+    bool replaceRuntime = false,
+    PanelRelease? release,
+  }) async {
+    if (_installing || _scriptInstalling) return;
     final replacingRuntime =
         replaceRuntime &&
         _runtimeInstalled &&
         _selectedProfile != _installedProfile;
     if (replacingRuntime && !await _confirmRuntimeReplacement()) return;
+    var targetRelease = release ?? _selectedRelease;
+    if (targetRelease == null) {
+      await _loadPanelReleases();
+      if (!mounted) return;
+      if (_panelReleases.isEmpty) {
+        setState(() => _error = '无法读取 FLS 版本列表，请检查网络后重试。');
+        return;
+      }
+      targetRelease = _panelReleases.first;
+    }
     final cancellation = OperationCancellation();
     _cancellation = cancellation;
     setState(() {
       _installing = true;
       _error = null;
       _progress = 0;
+      _downloadProgress = null;
       _phase = '检查设备运行时';
     });
     try {
-      await _manager.saveGithubMirror(_mirrorController.text);
+      await _manager.saveGithubMirror(_operationMirror ?? '');
       if (_panelReady) await LocalPanelHost.stop();
       final runtimeProfile = _runtimeInstalled && !replacingRuntime
           ? _installedProfile!
@@ -254,29 +506,49 @@ class _LocalSetupViewState extends State<LocalSetupView>
         await _manager.installRuntime(
           supportedAbis: abis,
           profile: runtimeProfile,
-          githubMirror: _mirrorController.text,
+          githubMirror: _operationMirror,
           cancellation: cancellation,
           onProgress: (value) {
             if (mounted) setState(() => _progress = value);
+          },
+          onDownloadProgress: (value) {
+            if (mounted) {
+              setState(() {
+                _downloadProgress = value;
+                _progress = value?.fraction ?? 0;
+              });
+            }
           },
         );
       }
       setState(() {
         _phase = '下载并安装 FLS 面板';
         _progress = 0;
+        _downloadProgress = null;
       });
       await _manager.updatePanel(
-        githubMirror: _mirrorController.text,
+        githubMirror: _operationMirror,
         cancellation: cancellation,
+        release: targetRelease,
         onProgress: (value) {
           if (mounted) setState(() => _progress = value);
+        },
+        onDownloadProgress: (value) {
+          if (mounted) {
+            setState(() {
+              _downloadProgress = value;
+              _progress = value?.fraction ?? 0;
+            });
+          }
         },
       );
       setState(() {
         _phase = '启动本机面板';
         _progress = 0;
+        _downloadProgress = null;
       });
       await _manager.startPanel(cancellation: cancellation);
+      _installedVersion = targetRelease.tagName;
       await _refreshStatus();
     } catch (error) {
       if (mounted && error is! OperationCancelled) {
@@ -290,6 +562,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
       if (mounted) {
         setState(() {
           _installing = false;
+          _downloadProgress = null;
           if (cancellation.isCancelled) _phase = '已取消';
         });
       }
@@ -374,7 +647,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
   }
 
   Future<void> _togglePanel() async {
-    if (_installing) return;
+    if (_installing || _scriptInstalling) return;
     if (_panelReady) {
       setState(() {
         _installing = true;
@@ -400,7 +673,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
   }
 
   Future<void> _startPanel() async {
-    if (_installing) return;
+    if (_installing || _scriptInstalling) return;
     final cancellation = OperationCancellation();
     _cancellation = cancellation;
     setState(() {
@@ -479,15 +752,22 @@ class _LocalSetupViewState extends State<LocalSetupView>
                   label: Text('环境'),
                 ),
                 ButtonSegment(
+                  value: _LocalTab.scripts,
+                  icon: Icon(Icons.code),
+                  label: Text('脚本'),
+                ),
+                ButtonSegment(
                   value: _LocalTab.diagnostics,
                   icon: Icon(Icons.monitor_heart_outlined),
                   label: Text('诊断'),
                 ),
               ],
               selected: {_tab},
-              onSelectionChanged: (selection) {
-                if (selection.isNotEmpty) _selectTab(selection.first);
-              },
+              onSelectionChanged: _installing || _scriptInstalling
+                  ? null
+                  : (selection) {
+                      if (selection.isNotEmpty) _selectTab(selection.first);
+                    },
             ),
           ),
         ),
@@ -506,6 +786,14 @@ class _LocalSetupViewState extends State<LocalSetupView>
       ..._operationFeedback(context),
       if (_tab == _LocalTab.overview) ..._overviewContent(context),
       if (_tab == _LocalTab.environment) ..._environmentContent(context),
+      if (_tab == _LocalTab.scripts)
+        OnlineScriptsView(
+          panelRunning: _panelReady,
+          onStartPanel: _startPanel,
+          onBusyChanged: (busy) {
+            if (mounted) setState(() => _scriptInstalling = busy);
+          },
+        ),
       if (_tab == _LocalTab.diagnostics) ..._diagnosticsContent(context),
     ];
   }
@@ -513,7 +801,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
   List<Widget> _operationFeedback(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return [
-      if (_installing) ...[
+      if (_installing || _scriptInstalling) ...[
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -521,13 +809,24 @@ class _LocalSetupViewState extends State<LocalSetupView>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _phase,
+                  _installing ? _phase : '正在本机面板安装在线脚本',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 12),
                 LinearProgressIndicator(
-                  value: _progress == 0 ? null : _progress,
+                  value:
+                      _downloadProgress?.fraction ??
+                      (_installing && _progress != 0 ? _progress : null),
                 ),
+                if (_downloadProgress != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _downloadProgress!.totalBytes == null
+                        ? '${_formatMegabytes(_downloadProgress!.receivedBytes)} MB / -- MB'
+                        : '${_formatMegabytes(_downloadProgress!.receivedBytes)} MB / ${_formatMegabytes(_downloadProgress!.totalBytes!)} MB  ${((_downloadProgress!.fraction ?? 0) * 100).round()}%',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
                 if (_cancellation != null) ...[
                   const SizedBox(height: 8),
                   Align(
@@ -658,6 +957,56 @@ class _LocalSetupViewState extends State<LocalSetupView>
         ),
       ),
       const SizedBox(height: 12),
+      if (!_runtimeInstalled) ...[
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('首次安装镜像', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 10),
+                SegmentedButton<RuntimeProfile>(
+                  expandedInsets: EdgeInsets.zero,
+                  segments: const [
+                    ButtonSegment(
+                      value: RuntimeProfile.python,
+                      label: Text('Python 基础'),
+                    ),
+                    ButtonSegment(
+                      value: RuntimeProfile.all,
+                      label: Text('Full 预装'),
+                    ),
+                  ],
+                  selected: {_selectedProfile},
+                  onSelectionChanged: _installing
+                      ? null
+                      : (selection) {
+                          if (selection.isNotEmpty) {
+                            _selectProfile(selection.first);
+                          }
+                        },
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Python 基础镜像更轻，只预装 Python。Full 镜像体积更大，额外预装常用工具和多种脚本运行器。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '下载大小：Python ${_runtimeAssets[RuntimeProfile.python] == null ? '约 62.7 MB' : '${_formatMegabytes(_runtimeAssets[RuntimeProfile.python]!.size)} MB'}  ·  Full ${_runtimeAssets[RuntimeProfile.all] == null ? '约 283.7 MB' : '${_formatMegabytes(_runtimeAssets[RuntimeProfile.all]!.size)} MB'}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
       if (_installed)
         Row(
           children: [
@@ -687,6 +1036,32 @@ class _LocalSetupViewState extends State<LocalSetupView>
             label: Text(_runtimeInstalled ? '安装 FLS 面板' : '安装本机 FLS'),
           ),
         ),
+      if (!_installed) ...[
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _installing ? null : _showVersionManager,
+            icon: const Icon(Icons.history),
+            label: const Text('选择 FLS 版本 / 查看更新日志'),
+          ),
+        ),
+      ],
+      if (_installed) ...[
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.new_releases_outlined),
+            title: const Text('FLS 面板版本'),
+            subtitle: Text(
+              '当前：${_installedVersion ?? '未知'}  ·  最新：${_panelReleases.isEmpty ? (_releasesLoading ? '读取中' : '未知') : _panelReleases.first.tagName}',
+              maxLines: 2,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _showVersionManager,
+          ),
+        ),
+      ],
       if (_serviceStatus.state == LocalPanelState.crashed ||
           _serviceStatus.state == LocalPanelState.failed ||
           _serviceStatus.state == LocalPanelState.interrupted) ...[
@@ -752,15 +1127,20 @@ class _LocalSetupViewState extends State<LocalSetupView>
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
-              ],
-              if (_installed) ...[
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _installing ? null : _installOrUpdate,
-                  icon: const Icon(Icons.system_update_alt),
-                  label: const Text('更新 FLS'),
+                const SizedBox(height: 8),
+                Text(
+                  '镜像大小：Python ${_runtimeAssetSize(RuntimeProfile.python)}  ·  Full ${_runtimeAssetSize(RuntimeProfile.all)}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _installing ? null : _showVersionManager,
+                icon: const Icon(Icons.system_update_alt),
+                label: const Text('版本与更新日志'),
+              ),
               if (_runtimeInstalled) ...[
                 const SizedBox(height: 16),
                 ExpansionTile(
@@ -803,20 +1183,92 @@ class _LocalSetupViewState extends State<LocalSetupView>
                   ],
                 ),
               ],
-              const SizedBox(height: 12),
-              TextField(
-                controller: _mirrorController,
-                enabled: !_installing,
-                keyboardType: TextInputType.url,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'GitHub 加速源（可选）',
-                  hintText: '留空使用官方地址；支持前缀或 %s 模板',
-                  prefixIcon: Icon(Icons.bolt_outlined),
-                ),
-                onChanged: (value) =>
-                    unawaited(_manager.saveGithubMirror(value)),
+              const Divider(height: 24),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('使用 GitHub 加速源'),
+                subtitle: const Text('关闭时使用 GitHub 官方源'),
+                value: _useMirror,
+                onChanged: _installing
+                    ? null
+                    : (enabled) async {
+                        if (enabled && _selectedMirror.isEmpty) {
+                          await _selectMirror(
+                            builtinGithubMirrors.first.prefix,
+                          );
+                        } else {
+                          setState(() => _useMirror = enabled);
+                          await _manager.saveGithubMirror(
+                            _operationMirror ?? '',
+                          );
+                        }
+                      },
               ),
+              if (_useMirror) ...[
+                RadioGroup<String>(
+                  groupValue: _selectedMirror,
+                  onChanged: (value) {
+                    if (!_installing && !_testingMirrors && value != null) {
+                      unawaited(_selectMirror(value));
+                    }
+                  },
+                  child: Column(
+                    children: [
+                      for (final mirror in _orderedMirrors)
+                        RadioListTile<String>(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          value: mirror.prefix,
+                          title: Text(mirror.name),
+                          subtitle: _mirrorLatency(mirror.prefix),
+                        ),
+                      RadioListTile<String>(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: '__custom__',
+                        title: const Text('自定义'),
+                        subtitle: _selectedMirror == '__custom__'
+                            ? _mirrorLatency(_mirrorController.text.trim())
+                            : null,
+                      ),
+                    ],
+                  ),
+                ),
+                if (_selectedMirror == '__custom__') ...[
+                  TextField(
+                    controller: _mirrorController,
+                    enabled: !_installing,
+                    keyboardType: TextInputType.url,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: '自定义加速源',
+                      hintText: '前缀或包含 %s 的 URL 模板',
+                      prefixIcon: Icon(Icons.link),
+                    ),
+                    onChanged: (value) {
+                      setState(() {});
+                      unawaited(_manager.saveGithubMirror(value));
+                    },
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _testingMirrors || _installing
+                        ? null
+                        : _testMirrors,
+                    icon: _testingMirrors
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.network_check),
+                    label: Text(_testingMirrors ? '正在批量测速' : '批量测速'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -973,3 +1425,6 @@ class _StorageRow extends StatelessWidget {
     );
   }
 }
+
+String _formatMegabytes(int bytes) =>
+    (bytes / (1024 * 1024)).toStringAsFixed(1);

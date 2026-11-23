@@ -31,6 +31,19 @@ enum RuntimeProfile {
   }
 }
 
+class DownloadProgress {
+  const DownloadProgress({required this.receivedBytes, this.totalBytes});
+
+  final int receivedBytes;
+  final int? totalBytes;
+
+  double? get fraction {
+    final total = totalBytes;
+    if (total == null || total <= 0) return null;
+    return (receivedBytes / total).clamp(0.0, 1.0).toDouble();
+  }
+}
+
 class RuntimeAsset {
   const RuntimeAsset({
     required this.name,
@@ -44,6 +57,86 @@ class RuntimeAsset {
   final String sha256;
   final int size;
 }
+
+class PanelRelease {
+  const PanelRelease({
+    required this.tagName,
+    required this.name,
+    required this.body,
+    required this.publishedAt,
+    required this.revision,
+    required this.htmlUrl,
+  });
+
+  final String tagName;
+  final String name;
+  final String body;
+  final DateTime? publishedAt;
+  final String revision;
+  final Uri htmlUrl;
+
+  factory PanelRelease.fromJson(Map<String, dynamic> json) {
+    final tagName = json['tag_name']?.toString().trim() ?? '';
+    final revision = json['target_commitish']?.toString().trim() ?? '';
+    final htmlUrl = Uri.tryParse(json['html_url']?.toString() ?? '');
+    if (tagName.isEmpty ||
+        htmlUrl == null ||
+        htmlUrl.scheme != 'https' ||
+        htmlUrl.host != 'github.com') {
+      throw const FormatException('FLS Release 信息无效');
+    }
+    return PanelRelease(
+      tagName: tagName,
+      name: json['name']?.toString().trim().isNotEmpty == true
+          ? json['name'].toString().trim()
+          : tagName,
+      body: json['body']?.toString() ?? '',
+      publishedAt: DateTime.tryParse(json['published_at']?.toString() ?? ''),
+      revision: revision,
+      htmlUrl: htmlUrl,
+    );
+  }
+
+  PanelRelease withRevision(String value) => PanelRelease(
+    tagName: tagName,
+    name: name,
+    body: body,
+    publishedAt: publishedAt,
+    revision: value,
+    htmlUrl: htmlUrl,
+  );
+}
+
+class GithubMirrorOption {
+  const GithubMirrorOption({required this.name, required this.prefix});
+
+  final String name;
+  final String prefix;
+}
+
+class GithubMirrorTestResult {
+  const GithubMirrorTestResult({
+    required this.mirror,
+    required this.name,
+    required this.latency,
+    this.error,
+  });
+
+  final String mirror;
+  final String name;
+  final Duration? latency;
+  final String? error;
+
+  bool get available => latency != null && error == null;
+}
+
+const builtinGithubMirrors = [
+  GithubMirrorOption(name: 'EdgeOne', prefix: 'https://edgeone.gh-proxy.org/'),
+  GithubMirrorOption(name: 'gh-proxy.org', prefix: 'https://gh-proxy.org/'),
+  GithubMirrorOption(name: 'gh-proxy.net', prefix: 'https://gh-proxy.net/'),
+  GithubMirrorOption(name: 'gh-proxy CDN', prefix: 'https://cdn.gh-proxy.org/'),
+  GithubMirrorOption(name: 'gh-proxy.com', prefix: 'https://gh-proxy.com/'),
+];
 
 class _FileModeSnapshot {
   const _FileModeSnapshot(this.path, this.mode);
@@ -96,14 +189,24 @@ RuntimeAsset? selectPythonRuntimeAsset(
 Uri applyGithubMirror(Uri original, String? mirror) {
   final value = mirror?.trim() ?? '';
   if (value.isEmpty) return original;
+  if (value.contains('%s')) {
+    final templated = Uri.tryParse(
+      value.replaceFirst('%s', original.toString()),
+    );
+    if (templated == null ||
+        !{'http', 'https'}.contains(templated.scheme) ||
+        templated.host.isEmpty ||
+        templated.userInfo.isNotEmpty) {
+      throw const FormatException('GitHub 加速源必须是有效的 HTTP 或 HTTPS 地址');
+    }
+    return templated;
+  }
   final parsed = Uri.tryParse(value);
   if (parsed == null ||
       !{'http', 'https'}.contains(parsed.scheme) ||
+      parsed.host.isEmpty ||
       parsed.userInfo.isNotEmpty) {
     throw const FormatException('GitHub 加速源必须是有效的 HTTP 或 HTTPS 地址');
-  }
-  if (value.contains('%s')) {
-    return Uri.parse(value.replaceFirst('%s', original.toString()));
   }
   return Uri.parse('${value.replaceFirst(RegExp(r'/+$'), '')}/$original');
 }
@@ -189,6 +292,196 @@ class LocalInstallManager {
     }
   }
 
+  Future<Map<RuntimeProfile, RuntimeAsset>> fetchRuntimeAssets({
+    required List<String> supportedAbis,
+    String? githubMirror,
+  }) async {
+    final cancellation = OperationCancellation();
+    final response = await _sendCancellable(
+      applyGithubMirror(_releaseUri, githubMirror),
+      cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) {
+      throw StateError('读取 PRoot Release 失败：HTTP ${response.statusCode}');
+    }
+    final value = jsonDecode(await _readCancellable(response, cancellation));
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('PRoot Release 格式无效');
+    }
+    final assets = <RuntimeProfile, RuntimeAsset>{};
+    for (final profile in RuntimeProfile.values) {
+      final asset = selectRuntimeAsset(value, supportedAbis, profile);
+      if (asset != null) assets[profile] = asset;
+    }
+    return assets;
+  }
+
+  Future<List<GithubMirrorTestResult>> testGithubMirrors({
+    String? customMirror,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final options = [
+      ...builtinGithubMirrors.map((option) => (option.name, option.prefix)),
+      if (customMirror?.trim().isNotEmpty == true)
+        ('自定义', customMirror!.trim()),
+    ];
+    final results = await Future.wait(
+      options.map((option) async {
+        final (name, mirror) = option;
+        final stopwatch = Stopwatch()..start();
+        try {
+          final response = await _client
+              .get(
+                applyGithubMirror(_releaseUri, mirror),
+                headers: const {'Accept': 'application/vnd.github+json'},
+              )
+              .timeout(timeout);
+          if (response.statusCode != 200) {
+            return GithubMirrorTestResult(
+              mirror: mirror,
+              name: name,
+              latency: null,
+              error: 'HTTP ${response.statusCode}',
+            );
+          }
+          final payload = jsonDecode(response.body);
+          if (payload is! Map<String, dynamic> || payload['assets'] is! List) {
+            return GithubMirrorTestResult(
+              mirror: mirror,
+              name: name,
+              latency: null,
+              error: '响应格式无效',
+            );
+          }
+          return GithubMirrorTestResult(
+            mirror: mirror,
+            name: name,
+            latency: stopwatch.elapsed,
+          );
+        } on TimeoutException {
+          return GithubMirrorTestResult(
+            mirror: mirror,
+            name: name,
+            latency: null,
+            error: '连接超时',
+          );
+        } on FormatException {
+          return GithubMirrorTestResult(
+            mirror: mirror,
+            name: name,
+            latency: null,
+            error: '响应格式无效',
+          );
+        } catch (error) {
+          return GithubMirrorTestResult(
+            mirror: mirror,
+            name: name,
+            latency: null,
+            error: error.toString(),
+          );
+        }
+      }),
+    );
+    results.sort((a, b) {
+      if (a.available != b.available) return a.available ? -1 : 1;
+      return (a.latency?.inMicroseconds ?? 1 << 62).compareTo(
+        b.latency?.inMicroseconds ?? 1 << 62,
+      );
+    });
+    return results;
+  }
+
+  Future<List<PanelRelease>> fetchPanelReleases({
+    String? githubMirror,
+    int limit = 10,
+  }) async {
+    if (limit <= 0) return const [];
+    final uri = _repoUri.replace(
+      path: '${_repoUri.path}/releases',
+      queryParameters: {'per_page': '50'},
+    );
+    final cancellation = OperationCancellation();
+    final response = await _sendCancellable(
+      applyGithubMirror(uri, githubMirror),
+      cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) {
+      throw StateError('读取 FLS 版本失败：HTTP ${response.statusCode}');
+    }
+    final value = jsonDecode(await _readCancellable(response, cancellation));
+    if (value is! List) throw const FormatException('FLS 版本列表格式无效');
+    final releases = <PanelRelease>[];
+    for (final item in value) {
+      if (item is! Map<String, dynamic> ||
+          item['draft'] == true ||
+          item['prerelease'] == true) {
+        continue;
+      }
+      try {
+        final release = PanelRelease.fromJson(item);
+        final revision = await _resolveReleaseRevision(
+          release,
+          githubMirror: githubMirror,
+        );
+        releases.add(release.withRevision(revision));
+      } on FormatException {
+        continue;
+      }
+      if (releases.length >= limit) break;
+    }
+    return releases;
+  }
+
+  Future<String> _resolveReleaseRevision(
+    PanelRelease release, {
+    String? githubMirror,
+  }) async {
+    if (RegExp(r'^[a-f0-9]{40}$').hasMatch(release.revision)) {
+      return release.revision;
+    }
+    final uri = Uri.https(
+      _repoUri.authority,
+      '${_repoUri.path}/commits/${Uri.encodeComponent(release.tagName)}',
+    );
+    final cancellation = OperationCancellation();
+    final response = await _sendCancellable(
+      applyGithubMirror(uri, githubMirror),
+      cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) {
+      throw StateError(
+        '读取 FLS 版本 ${release.tagName} 失败：HTTP ${response.statusCode}',
+      );
+    }
+    final value = jsonDecode(await _readCancellable(response, cancellation));
+    final sha = value is Map<String, dynamic> ? value['sha']?.toString() : null;
+    if (sha == null || !RegExp(r'^[a-f0-9]{40}$').hasMatch(sha)) {
+      throw const FormatException('FLS Release 对应的 commit SHA 无效');
+    }
+    return sha;
+  }
+
+  Future<String?> currentPanelVersion() async {
+    final base = await root;
+    final versionFile = File(p.join(base.path, 'panel-version'));
+    if (await versionFile.exists()) {
+      final value = (await versionFile.readAsString()).trim();
+      if (value.isNotEmpty) return value;
+    }
+    final revisionFile = File(p.join(base.path, 'panel-revision'));
+    if (!await revisionFile.exists()) return null;
+    final revision = (await revisionFile.readAsString()).trim();
+    if (revision.isEmpty) return null;
+    final shortRevision = revision.substring(
+      0,
+      revision.length < 7 ? revision.length : 7,
+    );
+    return 'commit $shortRevision';
+  }
+
   Future<http.StreamedResponse> _sendCancellable(
     Uri uri,
     OperationCancellation cancellation, {
@@ -226,6 +519,7 @@ class LocalInstallManager {
     required OperationCancellation cancellation,
     RuntimeProfile profile = RuntimeProfile.python,
     String? githubMirror,
+    void Function(DownloadProgress? progress)? onDownloadProgress,
   }) async {
     final response = await _sendCancellable(
       applyGithubMirror(_releaseUri, githubMirror),
@@ -258,7 +552,13 @@ class LocalInstallManager {
     if (await staging.exists()) await staging.delete(recursive: true);
 
     try {
-      await _downloadAndVerify(asset, archive, onProgress, cancellation);
+      await _downloadAndVerify(
+        asset,
+        archive,
+        onProgress,
+        cancellation,
+        onDownloadProgress: onDownloadProgress,
+      );
       onProgress(0);
       await _activateRuntimeArchive(
         archive,
@@ -538,31 +838,19 @@ class LocalInstallManager {
     required ValueChanged<double> onProgress,
     required OperationCancellation cancellation,
     String? githubMirror,
+    PanelRelease? release,
+    void Function(DownloadProgress? progress)? onDownloadProgress,
   }) async {
-    final branchResponse = await _sendCancellable(
-      applyGithubMirror(
-        Uri.https(_repoUri.authority, '${_repoUri.path}/commits/main'),
-        githubMirror,
-      ),
-      cancellation,
-      headers: const {'Accept': 'application/vnd.github+json'},
-    );
-    if (branchResponse.statusCode != 200) {
-      throw StateError('读取 FLS 版本失败：HTTP ${branchResponse.statusCode}');
-    }
-    final commit = jsonDecode(
-      await _readCancellable(branchResponse, cancellation),
-    );
-    cancellation.throwIfCancelled();
-    if (commit is! Map<String, dynamic> || commit['sha'] is! String) {
-      throw const FormatException('FLS 版本信息格式无效');
-    }
-    final sha = commit['sha'] as String;
+    final sha =
+        release?.revision ??
+        await _latestMainRevision(cancellation, githubMirror);
+    final version = release?.tagName ?? 'main';
     final base = await root;
     final installedRevision = File(p.join(base.path, 'panel-revision'));
     if (await hasProject() &&
         await installedRevision.exists() &&
-        (await installedRevision.readAsString()).trim() == sha) {
+        (await installedRevision.readAsString()).trim() == sha &&
+        (release == null || await currentPanelVersion() == version)) {
       onProgress(1);
       return;
     }
@@ -580,6 +868,7 @@ class LocalInstallManager {
         archive,
         onProgress,
         cancellation,
+        onDownloadProgress: onDownloadProgress,
       );
       await staging.create(recursive: true);
       onProgress(0);
@@ -600,6 +889,7 @@ class LocalInstallManager {
       cancellation.throwIfCancelled();
       await replaceDirectoryWithBackup(extracted, await project);
       await File(p.join(base.path, 'panel-revision')).writeAsString(sha);
+      await File(p.join(base.path, 'panel-version')).writeAsString(version);
       await Future.wait([
         (await data).create(recursive: true),
         (await logs).create(recursive: true),
@@ -609,6 +899,30 @@ class LocalInstallManager {
       if (await archive.exists()) await archive.delete();
       if (await staging.exists()) await staging.delete(recursive: true);
     }
+  }
+
+  Future<String> _latestMainRevision(
+    OperationCancellation cancellation,
+    String? githubMirror,
+  ) async {
+    final response = await _sendCancellable(
+      applyGithubMirror(
+        Uri.https(_repoUri.authority, '${_repoUri.path}/commits/main'),
+        githubMirror,
+      ),
+      cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) {
+      throw StateError('读取 FLS 版本失败：HTTP ${response.statusCode}');
+    }
+    final commit = jsonDecode(await _readCancellable(response, cancellation));
+    if (commit is! Map<String, dynamic> ||
+        commit['sha'] is! String ||
+        !RegExp(r'^[a-f0-9]{40}$').hasMatch(commit['sha'] as String)) {
+      throw const FormatException('FLS 版本信息格式无效');
+    }
+    return commit['sha'] as String;
   }
 
   Future<void> startPanel({required OperationCancellation cancellation}) async {
@@ -689,8 +1003,9 @@ class LocalInstallManager {
     RuntimeAsset asset,
     File destination,
     ValueChanged<double> onProgress,
-    OperationCancellation cancellation,
-  ) async {
+    OperationCancellation cancellation, {
+    void Function(DownloadProgress? progress)? onDownloadProgress,
+  }) async {
     final response = await _sendCancellable(asset.url, cancellation);
     if (response.statusCode != 200) {
       throw StateError('下载 PRoot 失败：HTTP ${response.statusCode}');
@@ -712,6 +1027,9 @@ class LocalInstallManager {
           throw const FormatException('PRoot 镜像超过 Release 声明大小');
         }
         onProgress((received / asset.size).clamp(0.0, 1.0).toDouble());
+        onDownloadProgress?.call(
+          DownloadProgress(receivedBytes: received, totalBytes: asset.size),
+        );
       }
       converter.close();
       await output.flush();
@@ -729,6 +1047,7 @@ class LocalInstallManager {
       await destination.delete();
       throw const FormatException('PRoot 镜像大小与 Release 元数据不一致');
     }
+    onDownloadProgress?.call(null);
   }
 
   Future<void> _makeExecutable(File file) async {
@@ -742,8 +1061,9 @@ class LocalInstallManager {
     Uri uri,
     File destination,
     ValueChanged<double> onProgress,
-    OperationCancellation cancellation,
-  ) async {
+    OperationCancellation cancellation, {
+    void Function(DownloadProgress? progress)? onDownloadProgress,
+  }) async {
     final response = await _sendCancellable(uri, cancellation);
     if (response.statusCode != 200) {
       throw StateError('下载 FLS 失败：HTTP ${response.statusCode}');
@@ -758,6 +1078,9 @@ class LocalInstallManager {
         if (total != null && total > 0) {
           onProgress((received / total).clamp(0.0, 1.0).toDouble());
         }
+        onDownloadProgress?.call(
+          DownloadProgress(receivedBytes: received, totalBytes: total),
+        );
       }
       await output.flush();
       await output.close();
@@ -766,6 +1089,7 @@ class LocalInstallManager {
       cancellation.throwIfCancelled();
       rethrow;
     }
+    onDownloadProgress?.call(null);
   }
 
   Future<void> _extractTarGz(

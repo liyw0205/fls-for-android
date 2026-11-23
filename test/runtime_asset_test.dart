@@ -64,6 +64,21 @@ void main() {
     expect(asset?.size, 125000000);
   });
 
+  test('download progress exposes byte totals and a clamped fraction', () {
+    expect(
+      const DownloadProgress(receivedBytes: 1024, totalBytes: 4096).fraction,
+      0.25,
+    );
+    expect(
+      const DownloadProgress(receivedBytes: 500, totalBytes: 0).fraction,
+      isNull,
+    );
+    expect(
+      const DownloadProgress(receivedBytes: 5000, totalBytes: 1000).fraction,
+      1,
+    );
+  });
+
   test('applies an optional GitHub mirror prefix or template', () {
     final original = Uri.parse('https://api.github.com/repos/liyw0205/fls');
     expect(

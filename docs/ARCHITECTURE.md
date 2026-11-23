@@ -37,6 +37,7 @@ directory (`<app files>/fls`):
 | `log/` | FLS panel/task logs | Bound to `/opt/fls/log`; never replaced by source sync |
 | `scripts/` | User scripts | Bound to `/opt/fls/scripts`; never replaced by source sync |
 | `panel-revision` | Installed FLS commit SHA | Written after a successful source replacement |
+| `panel-version` | Installed FLS Release tag | Written with `panel-revision` after a successful source replacement |
 
 The runtime rootfs itself acts as the container image. The Android-native PRoot
 and loader are packaged under `jniLibs` so Android's package manager installs
@@ -55,8 +56,9 @@ forward independently.
    shared libraries, and Python paths before activation.
 4. Replace `runtime/` by directory rename, rolling back the previous directory
    if activation fails.
-5. Resolve `main` to a commit SHA, download that immutable source archive, check
-   for `fls-manager.py` and `fls_manager/`, then replace only `project/`.
+5. Resolve the selected FLS Release tag to a commit SHA, download that immutable
+   source archive, check for `fls-manager.py` and `fls_manager/`, then replace
+   only `project/`.
 6. Start the panel only after both runtime and source checks pass.
 
 Local panel updates intentionally do not upgrade or replace the runtime.
