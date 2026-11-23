@@ -968,15 +968,20 @@ class OnlineScriptsManager {
       throw FormatException('脚本来源超过 ${maximumBytes ~/ (1024 * 1024)} MB');
     }
     final bytes = <int>[];
-    await for (final chunk in response.stream.timeout(
-      const Duration(seconds: 45),
-    )) {
-      cancellation.throwIfCancelled();
-      if (bytes.length + chunk.length > maximumBytes) {
-        throw FormatException('脚本来源超过 ${maximumBytes ~/ (1024 * 1024)} MB');
+    try {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 45),
+      )) {
+        cancellation.throwIfCancelled();
+        if (bytes.length + chunk.length > maximumBytes) {
+          throw FormatException('脚本来源超过 ${maximumBytes ~/ (1024 * 1024)} MB');
+        }
+        bytes.addAll(chunk);
+        onProgress?.call(bytes.length, total);
       }
-      bytes.addAll(chunk);
-      onProgress?.call(bytes.length, total);
+    } catch (_) {
+      cancellation.throwIfCancelled();
+      rethrow;
     }
     return bytes;
   }
@@ -1040,14 +1045,19 @@ class OnlineScriptsManager {
     OperationCancellation cancellation,
   ) async {
     final bytes = <int>[];
-    await for (final chunk in response.stream.timeout(
-      const Duration(seconds: 30),
-    )) {
-      cancellation.throwIfCancelled();
-      if (bytes.length + chunk.length > maximumBytes) {
-        throw const FormatException('GitHub 仓库信息超过限制');
+    try {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 30),
+      )) {
+        cancellation.throwIfCancelled();
+        if (bytes.length + chunk.length > maximumBytes) {
+          throw const FormatException('GitHub 仓库信息超过限制');
+        }
+        bytes.addAll(chunk);
       }
-      bytes.addAll(chunk);
+    } catch (_) {
+      cancellation.throwIfCancelled();
+      rethrow;
     }
     return utf8.decode(bytes);
   }

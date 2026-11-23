@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:fls_for_android/services/operation_cancellation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -190,6 +192,99 @@ void main() {
     expect(refreshed.changes?.added, 1);
     expect(refreshed.changes?.removed, 1);
     expect(refreshed.changes?.updated, 1);
+  });
+
+  test(
+    'raw installation reports byte progress for streamed downloads',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('fls-script-install-');
+      addTearDown(() => temp.delete(recursive: true));
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _TestPathProvider(temp.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+
+      final client = MockClient.streaming((request, _) async {
+        expect(request.url, Uri.parse('https://raw.example/checkin.py'));
+        final chunks = [
+          Future<List<int>>.delayed(
+            const Duration(milliseconds: 10),
+            () => [1],
+          ),
+          Future<List<int>>.delayed(
+            const Duration(milliseconds: 10),
+            () => [2, 3],
+          ),
+          Future<List<int>>.delayed(
+            const Duration(milliseconds: 10),
+            () => [4],
+          ),
+        ];
+        return http.StreamedResponse(
+          Stream.fromFutures(chunks),
+          200,
+          contentLength: 4,
+        );
+      });
+      final manager = OnlineScriptsManager(client: client);
+      addTearDown(manager.close);
+      final installManager = _RuntimeReadyInstallManager();
+      final progress = <(int, int?)>[];
+
+      await manager.installOrUpdateNative(
+        script: _rawScript(),
+        installManager: installManager,
+        overwriteExisting: false,
+        cancellation: OperationCancellation(),
+        onStatus: (_) {},
+        onProgress: (received, total) => progress.add((received, total)),
+      );
+
+      final installed = File(
+        '${(await installManager.scripts).path}/checkin.py',
+      );
+      expect(await installed.readAsBytes(), [1, 2, 3, 4]);
+      expect(progress, [(1, 4), (3, 4), (4, 4)]);
+    },
+  );
+
+  test('cancelling an aborted download preserves the installed file', () async {
+    final temp = await Directory.systemTemp.createTemp('fls-script-cancel-');
+    addTearDown(() => temp.delete(recursive: true));
+    final previousPathProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _TestPathProvider(temp.path);
+    addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+
+    final installManager = _RuntimeReadyInstallManager();
+    final scripts = await installManager.scripts;
+    await scripts.create(recursive: true);
+    final installed = File('${scripts.path}/checkin.py');
+    await installed.writeAsString('existing version');
+    final client = _AbortableBodyClient();
+    final manager = OnlineScriptsManager(client: client);
+    addTearDown(manager.close);
+    final cancellation = OperationCancellation();
+
+    await expectLater(
+      manager.installOrUpdateNative(
+        script: _rawScript(),
+        installManager: installManager,
+        overwriteExisting: true,
+        cancellation: cancellation,
+        onStatus: (_) {},
+        onProgress: (_, _) => cancellation.cancel(),
+      ),
+      throwsA(isA<OperationCancelled>()),
+    );
+
+    expect(client.requestAborted, isTrue);
+    expect(await installed.readAsString(), 'existing version');
+    expect(
+      await scripts
+          .list()
+          .where((entity) => p.basename(entity.path).startsWith('.fls-script-'))
+          .isEmpty,
+      isTrue,
+    );
   });
 
   test('online script identifiers reject paths and whitespace', () {
@@ -386,6 +481,50 @@ void main() {
       expect(jsonDecode(await stateFile.readAsString())['revision'], head);
     },
   );
+}
+
+OnlineScript _rawScript() => OnlineScript.fromJson({
+  'id': 'daily_checkin',
+  'name': 'Daily check-in',
+  'type': 'raw',
+  'link': 'https://raw.example/checkin.py',
+  'link_name': 'checkin.py',
+});
+
+class _RuntimeReadyInstallManager extends LocalInstallManager {
+  @override
+  Future<bool> hasRuntime({RuntimeProfile? profile}) async => true;
+}
+
+class _AbortableBodyClient extends http.BaseClient {
+  final _body = StreamController<List<int>>();
+  bool requestAborted = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final abortable = request as http.AbortableRequest;
+    final abortTrigger = abortable.abortTrigger;
+    if (abortTrigger != null) {
+      abortTrigger.then((_) {
+        requestAborted = true;
+        if (_body.isClosed) return;
+        _body.addError(http.RequestAbortedException(request.url));
+        unawaited(_body.close());
+      });
+    }
+    _body.add([1, 2]);
+    return http.StreamedResponse(
+      _body.stream,
+      200,
+      contentLength: 8,
+      request: request,
+    );
+  }
+
+  @override
+  void close() {
+    if (!_body.isClosed) unawaited(_body.close());
+  }
 }
 
 class _TestPathProvider extends PathProviderPlatform {
