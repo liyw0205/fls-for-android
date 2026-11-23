@@ -152,13 +152,16 @@ class _LocalSetupViewState extends State<LocalSetupView>
   };
 
   Color get _serviceStateColor => switch (_serviceStatus.state) {
-    LocalPanelState.running => const Color(0xFF147D72),
+    LocalPanelState.running => Theme.of(context).colorScheme.tertiary,
     LocalPanelState.retrying ||
     LocalPanelState.starting ||
-    LocalPanelState.stopping => const Color(0xFF9A6700),
+    LocalPanelState.stopping =>
+      Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFFF7AD31)
+          : const Color(0xFF9A6700),
     LocalPanelState.crashed ||
     LocalPanelState.failed ||
-    LocalPanelState.interrupted => const Color(0xFFB54732),
+    LocalPanelState.interrupted => Theme.of(context).colorScheme.error,
     _ => Theme.of(context).colorScheme.onSurfaceVariant,
   };
 
@@ -548,16 +551,21 @@ class _LocalSetupViewState extends State<LocalSetupView>
       ],
       if (_error != null) ...[
         Material(
-          color: const Color(0xFFFFF0EC),
+          color: colorScheme.errorContainer,
           borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.error_outline, color: Color(0xFFB54732)),
+                Icon(Icons.error_outline, color: colorScheme.onErrorContainer),
                 const SizedBox(width: 10),
-                Expanded(child: Text(_error!)),
+                Expanded(
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: colorScheme.onErrorContainer),
+                  ),
+                ),
               ],
             ),
           ),
@@ -642,7 +650,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
                 Icon(
                   _panelReady ? Icons.check_circle : Icons.circle_outlined,
                   color: _panelReady
-                      ? const Color(0xFF147D72)
+                      ? colorScheme.tertiary
                       : colorScheme.outline,
                 ),
             ],

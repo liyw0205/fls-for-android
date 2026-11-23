@@ -287,12 +287,12 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                         width: 42,
                         height: 42,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE4F2EE),
+                          color: Theme.of(context).colorScheme.primaryContainer,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.dns_outlined,
-                          color: Color(0xFF147D72),
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                       title: Row(
@@ -311,7 +311,7 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                             const Icon(
                               Icons.star,
                               size: 16,
-                              color: Color(0xFFB7791F),
+                              color: Color(0xFFF59E0B),
                             ),
                         ],
                       ),
@@ -382,13 +382,13 @@ class _EmptyPanels extends StatelessWidget {
             width: 72,
             height: 72,
             decoration: BoxDecoration(
-              color: const Color(0xFFE4F2EE),
-              borderRadius: BorderRadius.circular(16),
+              color: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.dns_outlined,
               size: 34,
-              color: Color(0xFF147D72),
+              color: Theme.of(context).colorScheme.primary,
             ),
           ),
           const SizedBox(height: 18),
