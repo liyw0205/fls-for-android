@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:fls_for_android/features/online_scripts_view.dart';
 import 'package:fls_for_android/services/local_install_manager.dart';
 import 'package:fls_for_android/services/online_scripts_manager.dart';
+import 'package:fls_for_android/services/operation_cancellation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -49,9 +53,71 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
   });
+
+  testWidgets('script detail shows progress, cancellation and log controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    String? clipboardText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          clipboardText = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    final manager = await _pumpScriptsView(tester);
+    await tester.tap(find.text('Daily check-in'));
+    await tester.pump();
+    await _pumpUntilVisible(tester, find.text('脚本文档'));
+
+    expect(find.text('安装脚本'), findsOneWidget);
+    expect(find.text('Script instructions'), findsOneWidget);
+    await tester.tap(find.text('安装脚本'));
+    await tester.pump();
+    expect(find.text('安装在线脚本？'), findsOneWidget);
+    await tester.tap(find.text('确认安装'));
+    await tester.pump();
+    await manager.installStarted.future;
+    await tester.pump();
+
+    expect(find.textContaining('0.5 MB / 1.0 MB'), findsOneWidget);
+    expect(find.textContaining('50%'), findsOneWidget);
+    expect(find.text('下载脚本'), findsOneWidget);
+    expect(find.byTooltip('暂停自动滚动'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('取消'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('已取消'), findsOneWidget);
+    expect(find.text('操作已取消'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('暂停自动滚动'));
+    await tester.pump();
+    expect(find.byTooltip('恢复自动滚动'), findsOneWidget);
+    await tester.tap(find.byTooltip('复制日志'));
+    await tester.pump();
+    expect(clipboardText, 'download started');
+    expect(find.text('安装日志已复制'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
-Future<void> _pumpScriptsView(
+Future<_TestOnlineScriptsManager> _pumpScriptsView(
   WidgetTester tester, {
   TextScaler textScaler = TextScaler.noScaling,
   bool offlineAfterCache = false,
@@ -89,6 +155,7 @@ Future<void> _pumpScriptsView(
         .toList();
     fail('Online catalog did not load. Visible text: $visibleText');
   }
+  return manager;
 }
 
 Future<void> _pumpUntilVisible(WidgetTester tester, Finder finder) async {
@@ -101,6 +168,8 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
   _TestOnlineScriptsManager({required this.offline});
 
   final bool offline;
+  final Completer<void> installStarted = Completer<void>();
+  final Completer<void> installGate = Completer<void>();
 
   static final _scripts = [
     OnlineScript(
@@ -141,8 +210,34 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
       _snapshot;
 
   @override
+  Future<String> fetchDocument(OnlineScript script) async =>
+      '# Script instructions\n\nInstall safely.';
+
+  @override
   Future<bool> hasInstallTarget(
     OnlineScript script,
     LocalInstallManager installManager,
   ) async => false;
+
+  @override
+  Future<void> installOrUpdateNative({
+    required OnlineScript script,
+    required LocalInstallManager installManager,
+    required bool overwriteExisting,
+    required OperationCancellation cancellation,
+    required OnlineScriptsStatusCallback onStatus,
+    OnlineScriptsLogCallback? onLog,
+    OnlineScriptsProgressCallback? onProgress,
+  }) async {
+    onStatus('下载脚本');
+    onProgress?.call(524288, 1048576);
+    onLog?.call('download started');
+    installStarted.complete();
+    await Future.any<void>([
+      installGate.future,
+      cancellation.whenCancelled.then<void>(
+        (_) => throw const OperationCancelled(),
+      ),
+    ]);
+  }
 }
