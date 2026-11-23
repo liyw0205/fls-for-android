@@ -15,19 +15,22 @@ class OnlineScriptsView extends StatefulWidget {
     required this.installManager,
     required this.onOpenEnvironment,
     required this.onBusyChanged,
+    this.manager,
   });
 
   final bool runtimeAvailable;
   final LocalInstallManager installManager;
   final VoidCallback onOpenEnvironment;
   final ValueChanged<bool> onBusyChanged;
+  final OnlineScriptsManager? manager;
 
   @override
   State<OnlineScriptsView> createState() => _OnlineScriptsViewState();
 }
 
 class _OnlineScriptsViewState extends State<OnlineScriptsView> {
-  final _manager = OnlineScriptsManager();
+  late final OnlineScriptsManager _manager;
+  late final bool _ownsManager;
   final _searchController = TextEditingController();
   List<OnlineScript> _scripts = const [];
   OnlineScriptsCatalogSnapshot? _catalog;
@@ -40,13 +43,15 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
   @override
   void initState() {
     super.initState();
+    _ownsManager = widget.manager == null;
+    _manager = widget.manager ?? OnlineScriptsManager();
     _loadCatalog();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
-    _manager.close();
+    if (_ownsManager) _manager.close();
     super.dispose();
   }
 
