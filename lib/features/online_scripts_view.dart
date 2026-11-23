@@ -517,7 +517,10 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
 
   void _appendInstallLog(String line) {
     setState(() {
-      final lines = [..._installLog.split('\n'), ...line.split('\n')];
+      final lines = [
+        if (_installLog.isNotEmpty) ..._installLog.split('\n'),
+        ...line.split('\n'),
+      ];
       _installLog = lines.length > 300
           ? lines.skip(lines.length - 300).join('\n')
           : lines.join('\n');
