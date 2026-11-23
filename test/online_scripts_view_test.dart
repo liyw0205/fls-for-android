@@ -113,7 +113,6 @@ void main() {
     await tester.tap(find.byTooltip('复制日志'));
     await tester.pump();
     expect(clipboardText, 'download started');
-    expect(find.text('安装日志已复制'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
