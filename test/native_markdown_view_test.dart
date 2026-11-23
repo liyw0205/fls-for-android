@@ -87,6 +87,11 @@ void main() {}
   testWidgets('supports heading anchors and only opens HTTPS links', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final openedLinks = <Uri>[];
     await tester.pumpWidget(
       MaterialApp(
@@ -125,9 +130,12 @@ Target content.
     expect(openedLinks, hasLength(1));
     expect(find.text('仅支持打开 HTTPS 链接'), findsOneWidget);
 
+    final targetHeading = _selectableText('Details');
+    final topBeforeJump = tester.getTopLeft(targetHeading).dy;
     await tester.tap(_selectableText('Jump to the details'));
     await tester.pumpAndSettle();
-    expect(tester.getTopLeft(_selectableText('Details')).dy, lessThan(300));
+    expect(tester.getTopLeft(targetHeading).dy, lessThan(topBeforeJump));
+    expect(find.text('未找到文档章节'), findsNothing);
   });
 }
 
