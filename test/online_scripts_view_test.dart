@@ -103,8 +103,9 @@ void main() {
     await tester.tap(find.text('取消'));
     await tester.pump();
     await tester.pump();
+    await _pumpUntilVisible(tester, find.text('已取消'));
     expect(find.text('已取消'), findsOneWidget);
-    expect(find.text('操作已取消'), findsOneWidget);
+    expect(find.text('操作已取消'), findsNothing);
 
     await tester.tap(find.byTooltip('暂停自动滚动'));
     await tester.pump();

@@ -500,8 +500,12 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _installError = error.toString();
-          if (cancellation.isCancelled) _installStatus = '已取消';
+          if (cancellation.isCancelled) {
+            _installStatus = '已取消';
+            _installError = null;
+          } else {
+            _installError = error.toString();
+          }
         });
       }
     } finally {
@@ -694,6 +698,15 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                     onPressed: widget.onOpenEnvironment,
                     icon: const Icon(Icons.inventory_2_outlined),
                     label: const Text('先安装本机运行环境'),
+                  ),
+                ],
+                if (!_installing &&
+                    !_checkingUpdate &&
+                    _installStatus == '已取消') ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _installStatus,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 ],
                 if (_installing || _checkingUpdate) ...[
