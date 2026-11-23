@@ -8,6 +8,7 @@ import '../services/local_install_manager.dart';
 import '../services/local_file_bridge.dart';
 import '../services/local_panel_host.dart';
 import '../services/operation_cancellation.dart';
+import '../widgets/native_markdown_view.dart';
 import 'app_update_view.dart';
 import 'remote_web_view.dart';
 import 'online_scripts_view.dart';
@@ -388,7 +389,9 @@ class _LocalSetupViewState extends State<LocalSetupView>
                         if (release.body.trim().isNotEmpty)
                           Align(
                             alignment: Alignment.centerLeft,
-                            child: SelectableText(release.body.trim()),
+                            child: NativeMarkdownView(
+                              data: release.body.trim(),
+                            ),
                           )
                         else
                           const Align(

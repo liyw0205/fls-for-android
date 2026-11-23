@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/local_install_manager.dart';
 import '../services/online_scripts_manager.dart';
 import '../services/operation_cancellation.dart';
+import '../widgets/native_markdown_view.dart';
 
 class OnlineScriptsView extends StatefulWidget {
   const OnlineScriptsView({
@@ -649,7 +650,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   )
                 else
-                  _MarkdownText(_document),
+                  NativeMarkdownView(data: _document),
               ]),
             ),
           ),
@@ -662,95 +663,6 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
 
   String _formatMegabytes(int bytes) =>
       (bytes / (1024 * 1024)).toStringAsFixed(1);
-}
-
-class _MarkdownText extends StatelessWidget {
-  const _MarkdownText(this.markdown);
-
-  final String markdown;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final lines = markdown.replaceAll('\r\n', '\n').split('\n');
-    final blocks = <Widget>[];
-    final code = <String>[];
-    var inCode = false;
-    for (final line in lines) {
-      if (line.trimLeft().startsWith('```')) {
-        if (inCode) {
-          blocks.add(_codeBlock(context, code.join('\n')));
-          code.clear();
-        }
-        inCode = !inCode;
-        continue;
-      }
-      if (inCode) {
-        code.add(line);
-        continue;
-      }
-      final heading = RegExp(r'^(#{1,4})\s+(.+)$').firstMatch(line);
-      if (heading != null) {
-        final level = heading.group(1)!.length;
-        blocks.add(
-          Padding(
-            padding: EdgeInsets.only(top: level == 1 ? 12 : 8, bottom: 4),
-            child: Text(
-              heading.group(2)!,
-              style:
-                  (level <= 2
-                          ? theme.textTheme.titleMedium
-                          : theme.textTheme.titleSmall)
-                      ?.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ),
-        );
-      } else if (RegExp(r'^\s*[-*+]\s+').hasMatch(line)) {
-        final content = line.replaceFirst(RegExp(r'^\s*[-*+]\s+'), '');
-        blocks.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 4, top: 2, bottom: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('•  '),
-                Expanded(child: SelectableText(content)),
-              ],
-            ),
-          ),
-        );
-      } else if (line.trim().isEmpty) {
-        blocks.add(const SizedBox(height: 4));
-      } else {
-        blocks.add(SelectableText(line, style: theme.textTheme.bodyMedium));
-      }
-    }
-    if (code.isNotEmpty) blocks.add(_codeBlock(context, code.join('\n')));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: blocks,
-    );
-  }
-
-  Widget _codeBlock(BuildContext context, String text) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
-        border: Border.all(color: colors.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText(
-        text,
-        style: Theme.of(
-          context,
-        ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-      ),
-    );
-  }
 }
 
 class _InlineNotice extends StatelessWidget {

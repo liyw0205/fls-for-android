@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_update_manager.dart';
+import '../widgets/native_markdown_view.dart';
 
 class AppUpdateView extends StatefulWidget {
   const AppUpdateView({super.key, this.manager});
@@ -196,7 +197,7 @@ class _AppUpdateViewState extends State<AppUpdateView> {
         ] else if (info.latest.body.isNotEmpty) ...[
           Text('更新日志', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
-          SelectableText(info.latest.body),
+          NativeMarkdownView(data: info.latest.body),
         ] else ...[
           Text(
             '此版本没有附带变更说明。',

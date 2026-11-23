@@ -1,7 +1,7 @@
 name: fls_for_android
 description: "FLS Android client and private local panel runtime."
 publish_to: 'none'
-version: 0.1.11+12
+version: 0.1.12+13
 
 environment:
   sdk: ^3.12.2
@@ -11,7 +11,9 @@ dependencies:
     sdk: flutter
   archive: ^4.0.7
   crypto: ^3.0.7
+  flutter_markdown_plus: ^1.0.12
   http: ^1.6.0
+  markdown: ^7.3.1
   package_info_plus: ^9.0.0
   path: ^1.9.1
   path_provider: ^2.1.5
