@@ -27,7 +27,7 @@ void main() {
     expect(find.text('Daily check-in'), findsOneWidget);
     expect(find.text('Weather tools'), findsOneWidget);
     await tester.tap(find.text('仓库'));
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(find.text('Daily check-in'), findsNothing);
     expect(find.text('Weather tools'), findsOneWidget);
@@ -113,7 +113,13 @@ Future<void> _pumpScriptsView(
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  for (
+    var frame = 0;
+    frame < 20 && find.text('Daily check-in').evaluate().isEmpty;
+    frame++
+  ) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 class _TestPathProvider extends PathProviderPlatform {
