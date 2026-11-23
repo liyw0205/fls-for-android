@@ -120,6 +120,14 @@ Future<void> _pumpScriptsView(
   ) {
     await tester.pump(const Duration(milliseconds: 100));
   }
+  if (find.text('Daily check-in').evaluate().isEmpty) {
+    final visibleText = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((text) => text.data)
+        .whereType<String>()
+        .toList();
+    fail('Online catalog did not load. Visible text: $visibleText');
+  }
 }
 
 class _TestPathProvider extends PathProviderPlatform {
