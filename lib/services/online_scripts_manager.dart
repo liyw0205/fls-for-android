@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
@@ -15,6 +16,15 @@ typedef OnlineScriptsStatusCallback = void Function(String status);
 typedef OnlineScriptsLogCallback = void Function(String log);
 typedef OnlineScriptsProgressCallback =
     void Function(int receivedBytes, int? totalBytes);
+
+enum OnlineScriptUpdateState { notInstalled, upToDate, updateAvailable }
+
+class OnlineScriptUpdateResult {
+  const OnlineScriptUpdateResult({required this.state, this.remoteRevision});
+
+  final OnlineScriptUpdateState state;
+  final String? remoteRevision;
+}
 
 class OnlineScript {
   const OnlineScript({
@@ -187,6 +197,7 @@ class OnlineScriptsManager {
     );
     final journal = <_FileBackup>[];
     var targetCreated = false;
+    String? remoteRevision;
 
     try {
       await staging.create(recursive: true);
@@ -226,12 +237,9 @@ class OnlineScriptsManager {
         }
       } else {
         final repoInfo = await _repositoryInfo(script.link, cancellation);
-        final archiveUri = Uri.https(
-          'api.github.com',
-          '/repos/${repoInfo.owner}/${repoInfo.repository}/zipball/${Uri.encodeComponent(repoInfo.branch)}',
-        );
+        remoteRevision = repoInfo.commitSha;
         final bytes = await _downloadBytes(
-          archiveUri,
+          _repositoryArchiveUri(repoInfo),
           cancellation: cancellation,
           headers: const {'Accept': 'application/vnd.github+json'},
           maximumBytes: _maxDownloadBytes,
@@ -289,6 +297,9 @@ class OnlineScriptsManager {
           throw StateError('在线脚本依赖安装失败，退出码：$exitCode');
         }
       }
+      if (remoteRevision != null) {
+        await _saveInstallState(script, installManager, remoteRevision);
+      }
       onStatus('安装完成');
     } catch (_) {
       if (targetCreated || journal.isNotEmpty) {
@@ -304,6 +315,101 @@ class OnlineScriptsManager {
     } finally {
       if (await staging.exists()) await staging.delete(recursive: true);
       if (await backup.exists()) await backup.delete(recursive: true);
+    }
+  }
+
+  Future<OnlineScriptUpdateResult> checkForUpdate({
+    required OnlineScript script,
+    required LocalInstallManager installManager,
+    required OperationCancellation cancellation,
+    required OnlineScriptsStatusCallback onStatus,
+    OnlineScriptsProgressCallback? onProgress,
+  }) async {
+    cancellation.throwIfCancelled();
+    final targetPath = await _targetPath(script, installManager);
+    final targetType = await FileSystemEntity.type(
+      targetPath,
+      followLinks: false,
+    );
+    if (targetType == FileSystemEntityType.notFound) {
+      return const OnlineScriptUpdateResult(
+        state: OnlineScriptUpdateState.notInstalled,
+      );
+    }
+    if (targetType == FileSystemEntityType.link ||
+        (script.type == 'raw' && targetType != FileSystemEntityType.file) ||
+        (script.type == 'repo' &&
+            targetType != FileSystemEntityType.directory)) {
+      throw StateError('本机脚本目标类型异常，无法检查更新。');
+    }
+
+    if (script.type == 'raw') {
+      onStatus('下载远端脚本并比对');
+      final remoteBytes = await _downloadBytes(
+        script.link,
+        cancellation: cancellation,
+        headers: const {'Accept': '*/*'},
+        maximumBytes: _maxDownloadBytes,
+        onProgress: onProgress,
+      );
+      cancellation.throwIfCancelled();
+      final localFile = File(targetPath);
+      final localLength = await localFile.length();
+      final remoteRevision = sha256.convert(remoteBytes).toString();
+      final installedRevision = localLength == remoteBytes.length
+          ? await _fileSha256(localFile)
+          : '';
+      return OnlineScriptUpdateResult(
+        state: installedRevision == remoteRevision
+            ? OnlineScriptUpdateState.upToDate
+            : OnlineScriptUpdateState.updateAvailable,
+        remoteRevision: remoteRevision,
+      );
+    }
+
+    onStatus('读取脚本仓库版本');
+    final repository = await _repositoryInfo(script.link, cancellation);
+    final installedState = await _readInstallState(script, installManager);
+    if (installedState != null) {
+      return OnlineScriptUpdateResult(
+        state: installedState == repository.commitSha
+            ? OnlineScriptUpdateState.upToDate
+            : OnlineScriptUpdateState.updateAvailable,
+        remoteRevision: repository.commitSha,
+      );
+    }
+
+    onStatus('首次检查，下载仓库进行比对');
+    final bytes = await _downloadBytes(
+      _repositoryArchiveUri(repository),
+      cancellation: cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+      maximumBytes: _maxDownloadBytes,
+      onProgress: onProgress,
+    );
+    cancellation.throwIfCancelled();
+    final root = await installManager.root;
+    final staging = Directory(p.join(root.path, '.fls-check-${_randomId()}'));
+    try {
+      await staging.create(recursive: true);
+      final extracted = Directory(p.join(staging.path, 'repository'));
+      await _extractRepository(bytes, extracted, cancellation);
+      final matches = await _repositoryMatchesInstalled(
+        extracted,
+        Directory(targetPath),
+        cancellation,
+      );
+      if (matches) {
+        await _saveInstallState(script, installManager, repository.commitSha);
+      }
+      return OnlineScriptUpdateResult(
+        state: matches
+            ? OnlineScriptUpdateState.upToDate
+            : OnlineScriptUpdateState.updateAvailable,
+        remoteRevision: repository.commitSha,
+      );
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
     }
   }
 
@@ -375,7 +481,145 @@ class OnlineScriptsManager {
         branch.split('/').any((part) => part == '..' || part.isEmpty)) {
       throw const FormatException('脚本仓库默认分支无效');
     }
-    return _GithubRepository(owner, repository, branch);
+    final commitResponse = await _send(
+      Uri(
+        scheme: 'https',
+        host: 'api.github.com',
+        pathSegments: ['repos', owner, repository, 'commits', branch],
+      ),
+      cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+    );
+    if (commitResponse.statusCode != 200) {
+      await commitResponse.stream.drain<void>();
+      throw StateError('读取脚本仓库提交版本失败：HTTP ${commitResponse.statusCode}');
+    }
+    final commitBody = await _readLimited(
+      commitResponse,
+      1024 * 1024,
+      cancellation,
+    );
+    final commitValue = jsonDecode(commitBody);
+    final commitSha = commitValue is Map<String, dynamic>
+        ? commitValue['sha']?.toString() ?? ''
+        : '';
+    if (!RegExp(r'^[a-f0-9]{40}$').hasMatch(commitSha)) {
+      throw const FormatException('脚本仓库提交版本无效');
+    }
+    return _GithubRepository(owner, repository, branch, commitSha);
+  }
+
+  Uri _repositoryArchiveUri(_GithubRepository repository) => Uri(
+    scheme: 'https',
+    host: 'api.github.com',
+    pathSegments: [
+      'repos',
+      repository.owner,
+      repository.repository,
+      'zipball',
+      repository.commitSha,
+    ],
+  );
+
+  Future<bool> _repositoryMatchesInstalled(
+    Directory extracted,
+    Directory installed,
+    OperationCancellation cancellation,
+  ) async {
+    final remoteFiles = <String>{};
+    await for (final entity in extracted.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      cancellation.throwIfCancelled();
+      if (entity is! File) continue;
+      final relative = p.relative(entity.path, from: extracted.path);
+      remoteFiles.add(relative);
+      final localFile = File(p.join(installed.path, relative));
+      if (await FileSystemEntity.type(localFile.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return false;
+      }
+      if (await entity.length() != await localFile.length() ||
+          await _fileSha256(entity) != await _fileSha256(localFile)) {
+        return false;
+      }
+    }
+    final installedFiles = <String>{};
+    await for (final entity in installed.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      cancellation.throwIfCancelled();
+      if (entity is Link) return false;
+      if (entity is File) {
+        installedFiles.add(p.relative(entity.path, from: installed.path));
+      }
+    }
+    return remoteFiles.length == installedFiles.length &&
+        remoteFiles.containsAll(installedFiles);
+  }
+
+  Future<String> _fileSha256(File file) async =>
+      (await sha256.bind(file.openRead()).first).toString();
+
+  Future<String?> _readInstallState(
+    OnlineScript script,
+    LocalInstallManager installManager,
+  ) async {
+    final file = await _installStateFile(script, installManager);
+    if (!await file.exists()) return null;
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! Map<String, dynamic> ||
+          value['type'] != script.type ||
+          value['link'] != script.link.toString() ||
+          value['link_name'] != script.linkName) {
+        return null;
+      }
+      final revision = value['revision']?.toString() ?? '';
+      return RegExp(r'^[a-f0-9]{40}$').hasMatch(revision) ? revision : null;
+    } on FormatException {
+      return null;
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  Future<void> _saveInstallState(
+    OnlineScript script,
+    LocalInstallManager installManager,
+    String revision,
+  ) async {
+    final root = await installManager.root;
+    final directory = Directory(p.join(root.path, 'script-state'));
+    await directory.create(recursive: true);
+    final destination = File(p.join(directory.path, '${script.id}.json'));
+    final temporary = File(
+      p.join(directory.path, '${script.id}.${_randomId()}.tmp'),
+    );
+    try {
+      await temporary.writeAsString(
+        jsonEncode({
+          'type': script.type,
+          'link': script.link.toString(),
+          'link_name': script.linkName,
+          'revision': revision,
+        }),
+        flush: true,
+      );
+      await temporary.rename(destination.path);
+    } finally {
+      if (await temporary.exists()) await temporary.delete();
+    }
+  }
+
+  Future<File> _installStateFile(
+    OnlineScript script,
+    LocalInstallManager installManager,
+  ) async {
+    final root = await installManager.root;
+    return File(p.join(root.path, 'script-state', '${script.id}.json'));
   }
 
   Future<void> _extractRepository(
@@ -603,11 +847,17 @@ class OnlineScriptsManager {
 }
 
 class _GithubRepository {
-  const _GithubRepository(this.owner, this.repository, this.branch);
+  const _GithubRepository(
+    this.owner,
+    this.repository,
+    this.branch,
+    this.commitSha,
+  );
 
   final String owner;
   final String repository;
   final String branch;
+  final String commitSha;
 }
 
 class _FileBackup {

@@ -26,6 +26,7 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
   final _manager = OnlineScriptsManager();
   final _searchController = TextEditingController();
   List<OnlineScript> _scripts = const [];
+  final Map<String, bool?> _installedById = {};
   bool _loading = true;
   String? _error;
   String _query = '';
@@ -55,6 +56,7 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
         _scripts = scripts;
         _loading = false;
       });
+      _refreshInstalledStates(scripts);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -62,6 +64,29 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _refreshInstalledStates(List<OnlineScript> scripts) async {
+    final states = await Future.wait(
+      scripts.map((script) async {
+        try {
+          return await _manager.hasInstallTarget(script, widget.installManager);
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+    if (!mounted) return;
+    setState(() {
+      _installedById
+        ..clear()
+        ..addEntries(
+          List.generate(
+            scripts.length,
+            (index) => MapEntry(scripts[index].id, states[index]),
+          ),
+        );
+    });
   }
 
   List<OnlineScript> get _filteredScripts {
@@ -177,8 +202,8 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text(
-                      '${scripts[index].type.toUpperCase()} · ${scripts[index].linkName}',
-                      maxLines: 1,
+                      '${scripts[index].type.toUpperCase()} · ${scripts[index].linkName} · ${_installedLabel(scripts[index])}',
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                     trailing: const Icon(Icons.chevron_right),
@@ -192,6 +217,13 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
       ],
     );
   }
+
+  String _installedLabel(OnlineScript script) =>
+      switch (_installedById[script.id]) {
+        true => '已安装',
+        false => '未安装',
+        null => '状态未知',
+      };
 }
 
 class _OnlineScriptDetailPage extends StatefulWidget {
@@ -220,7 +252,10 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   String _document = '';
   String? _documentError;
   bool _documentLoading = true;
+  bool? _installed;
   bool _installing = false;
+  bool _checkingUpdate = false;
+  OnlineScriptUpdateState? _updateState;
   String _installStatus = '';
   String _installLog = '';
   int _downloadedBytes = 0;
@@ -232,6 +267,21 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   void initState() {
     super.initState();
     _loadDocument();
+    _loadInstallState();
+  }
+
+  Future<void> _loadInstallState() async {
+    try {
+      final installed = await widget.manager.hasInstallTarget(
+        widget.script,
+        widget.installManager,
+      );
+      if (!mounted) return;
+      setState(() => _installed = installed);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _installError = error.toString());
+    }
   }
 
   @override
@@ -309,7 +359,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   }
 
   Future<void> _installOrUpdate() async {
-    if (!widget.runtimeAvailable || _installing) return;
+    if (!widget.runtimeAvailable || _installing || _checkingUpdate) return;
     final overwrite = await widget.manager.hasInstallTarget(
       widget.script,
       widget.installManager,
@@ -353,7 +403,11 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
         },
       );
       if (!mounted) return;
-      setState(() => _installStatus = '安装完成');
+      setState(() {
+        _installStatus = '安装完成';
+        _installed = true;
+        _updateState = OnlineScriptUpdateState.upToDate;
+      });
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('脚本已安装或更新')));
@@ -368,6 +422,55 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
       widget.onBusyChanged(false);
       _cancellation = null;
       if (mounted) setState(() => _installing = false);
+    }
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_installed != true || _checkingUpdate || _installing) return;
+    final cancellation = OperationCancellation();
+    _cancellation = cancellation;
+    setState(() {
+      _checkingUpdate = true;
+      _installError = null;
+      _installStatus = '准备检查更新';
+      _downloadedBytes = 0;
+      _downloadTotalBytes = null;
+    });
+    try {
+      final result = await widget.manager.checkForUpdate(
+        script: widget.script,
+        installManager: widget.installManager,
+        cancellation: cancellation,
+        onStatus: (status) {
+          if (mounted) setState(() => _installStatus = status);
+        },
+        onProgress: (receivedBytes, totalBytes) {
+          if (!mounted) return;
+          setState(() {
+            _downloadedBytes = receivedBytes;
+            _downloadTotalBytes = totalBytes;
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _updateState = result.state;
+        _installStatus = switch (result.state) {
+          OnlineScriptUpdateState.notInstalled => '尚未安装',
+          OnlineScriptUpdateState.upToDate => '已是最新版本',
+          OnlineScriptUpdateState.updateAvailable => '有可用更新',
+        };
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _installError = error.toString();
+          if (cancellation.isCancelled) _installStatus = '已取消';
+        });
+      }
+    } finally {
+      _cancellation = null;
+      if (mounted) setState(() => _checkingUpdate = false);
     }
   }
 
@@ -404,8 +507,19 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                if (_installed == true) ...[
+                  OutlinedButton.icon(
+                    onPressed: _installing || _checkingUpdate
+                        ? null
+                        : _checkForUpdate,
+                    icon: const Icon(Icons.system_update_alt),
+                    label: Text(_checkingUpdate ? _installStatus : '检查更新'),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 FilledButton.icon(
-                  onPressed: _installing || !widget.runtimeAvailable
+                  onPressed:
+                      _installing || _checkingUpdate || !widget.runtimeAvailable
                       ? null
                       : _installOrUpdate,
                   icon: _installing
@@ -415,8 +529,32 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.download),
-                  label: Text(_installing ? _installStatus : '安装 / 更新'),
+                  label: Text(
+                    _installing
+                        ? _installStatus
+                        : _installed == true
+                        ? '更新脚本'
+                        : '安装脚本',
+                  ),
                 ),
+                if (_installed == true) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    switch (_updateState) {
+                      OnlineScriptUpdateState.upToDate => '脚本已是最新版本',
+                      OnlineScriptUpdateState.updateAvailable => '发现上游更新',
+                      OnlineScriptUpdateState.notInstalled => '本机尚未安装',
+                      null => '本机已安装，可检查上游更新',
+                    },
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color:
+                          _updateState ==
+                              OnlineScriptUpdateState.updateAvailable
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
                 if (!widget.runtimeAvailable) ...[
                   const SizedBox(height: 8),
                   TextButton.icon(
@@ -425,7 +563,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                     label: const Text('先安装本机运行环境'),
                   ),
                 ],
-                if (_installing) ...[
+                if (_installing || _checkingUpdate) ...[
                   const SizedBox(height: 8),
                   LinearProgressIndicator(
                     value:
