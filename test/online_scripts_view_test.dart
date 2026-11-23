@@ -91,6 +91,7 @@ Future<void> _pumpScriptsView(
     client.close();
   });
 
+  await tester.runAsync(manager.fetchCatalogSnapshot);
   await tester.pumpWidget(
     MaterialApp(
       home: MediaQuery(
