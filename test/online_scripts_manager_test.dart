@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:fls_for_android/services/local_install_manager.dart';
 import 'package:fls_for_android/services/operation_cancellation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -15,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fls_for_android/services/online_scripts_manager.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   final oversizedArchive = Archive();
@@ -515,6 +517,134 @@ void main() {
       expect(jsonDecode(await stateFile.readAsString())['revision'], head);
     },
   );
+
+  test(
+    'repository update preserves local files and rolls back dependency failure',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('fls-script-repo-');
+      addTearDown(() => temp.delete(recursive: true));
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _TestPathProvider(temp.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+
+      const firstRevision = 'c0123456789abcdef0123456789abcdef0123456';
+      const secondRevision = 'e0123456789abcdef0123456789abcdef0123456';
+      var revision = firstRevision;
+      var archiveBytes = _repositoryArchive({
+        'tracked.py': 'version one',
+        'added-v1.py': 'kept from version one',
+      });
+      final client = MockClient((request) async {
+        if (request.url.path == '/repos/example/repo') {
+          return http.Response(jsonEncode({'default_branch': 'main'}), 200);
+        }
+        if (request.url.path == '/repos/example/repo/commits/main') {
+          return http.Response(jsonEncode({'sha': revision}), 200);
+        }
+        if (request.url.path.startsWith('/repos/example/repo/zipball/')) {
+          return http.Response.bytes(archiveBytes, 200);
+        }
+        fail('Unexpected request: ${request.url}');
+      });
+      final manager = OnlineScriptsManager(client: client);
+      addTearDown(manager.close);
+      final installManager = _RuntimeReadyInstallManager();
+      final scripts = await installManager.scripts;
+      final target = Directory(p.join(scripts.path, 'example-repo'));
+      await target.create(recursive: true);
+      await File(
+        p.join(target.path, 'tracked.py'),
+      ).writeAsString('old version');
+      await File(p.join(target.path, 'local.py')).writeAsString('local change');
+
+      await manager.installOrUpdateNative(
+        script: _repositoryScript(),
+        installManager: installManager,
+        overwriteExisting: true,
+        cancellation: OperationCancellation(),
+        onStatus: (_) {},
+      );
+
+      expect(
+        await File(p.join(target.path, 'tracked.py')).readAsString(),
+        'version one',
+      );
+      expect(
+        await File(p.join(target.path, 'local.py')).readAsString(),
+        'local change',
+      );
+      expect(
+        await File(p.join(target.path, 'added-v1.py')).readAsString(),
+        'kept from version one',
+      );
+
+      revision = secondRevision;
+      archiveBytes = _repositoryArchive({
+        'tracked.py': 'version two',
+        'added-v2.py': 'must be rolled back',
+      });
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const localPanelChannel = MethodChannel('top.fls/local_panel');
+      const commandEventChannel = MethodChannel('top.fls/container_command');
+      final calls = <String>[];
+      messenger.setMockMethodCallHandler(localPanelChannel, (call) async {
+        calls.add(call.method);
+        if (call.method == 'runContainerCommand') return 23;
+        return null;
+      });
+      messenger.setMockMethodCallHandler(commandEventChannel, (call) async {
+        calls.add('event:${call.method}');
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(localPanelChannel, null);
+        messenger.setMockMethodCallHandler(commandEventChannel, null);
+      });
+
+      await expectLater(
+        manager.installOrUpdateNative(
+          script: _repositoryScript(
+            installCommand: 'python -m pip install example-dependency',
+          ),
+          installManager: installManager,
+          overwriteExisting: true,
+          cancellation: OperationCancellation(),
+          onStatus: (_) {},
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('退出码：23'),
+          ),
+        ),
+      );
+
+      expect(calls, contains('runContainerCommand'));
+      expect(calls, isNot(contains('start')));
+      expect(
+        await File(p.join(target.path, 'tracked.py')).readAsString(),
+        'version one',
+      );
+      expect(
+        await File(p.join(target.path, 'local.py')).readAsString(),
+        'local change',
+      );
+      expect(
+        await File(p.join(target.path, 'added-v1.py')).readAsString(),
+        'kept from version one',
+      );
+      expect(await File(p.join(target.path, 'added-v2.py')).exists(), isFalse);
+      final stateFile = File(
+        '${(await installManager.root).path}/script-state/example_repo.json',
+      );
+      expect(
+        jsonDecode(await stateFile.readAsString())['revision'],
+        firstRevision,
+      );
+    },
+  );
 }
 
 OnlineScript _rawScript() => OnlineScript.fromJson({
@@ -588,6 +718,26 @@ Future<void> _expectRepositoryArchiveRejected(
         .isEmpty,
     isTrue,
   );
+}
+
+OnlineScript _repositoryScript({String installCommand = ''}) =>
+    OnlineScript.fromJson({
+      'id': 'example_repo',
+      'name': 'Example repository',
+      'type': 'repo',
+      'link': 'https://github.com/example/repo',
+      'link_name': 'example-repo',
+      'install': installCommand,
+    });
+
+List<int> _repositoryArchive(Map<String, String> files) {
+  final archive = Archive();
+  for (final entry in files.entries) {
+    archive.addFile(
+      ArchiveFile.string('repo-checkout/${entry.key}', entry.value),
+    );
+  }
+  return ZipEncoder().encode(archive);
 }
 
 class _RuntimeReadyInstallManager extends LocalInstallManager {
