@@ -867,7 +867,9 @@ class OnlineScriptsManager {
       if (segments.first != root) {
         throw const FormatException('脚本仓库压缩包结构无效');
       }
-      if (entry.isSymbolicLink) continue;
+      if (entry.isSymbolicLink) {
+        throw const FormatException('脚本仓库包含符号链接');
+      }
       if (!entry.isFile) continue;
       extractedSize += entry.size;
       if (extractedSize > _maxExtractedBytes) {

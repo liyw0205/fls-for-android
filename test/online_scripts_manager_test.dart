@@ -17,6 +17,40 @@ import 'package:fls_for_android/services/online_scripts_manager.dart';
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  final oversizedArchive = Archive();
+  for (var index = 0; index <= 20000; index++) {
+    oversizedArchive.addFile(ArchiveFile.noData('repo-checkout/file-$index'));
+  }
+
+  final unsafeArchives = <(String, Archive, String)>[
+    (
+      'absolute paths',
+      Archive()..addFile(ArchiveFile.string('/outside.py', 'unsafe')),
+      '绝对路径',
+    ),
+    (
+      'traversal paths',
+      Archive()..addFile(
+        ArchiveFile.string('repo-checkout/../../outside.py', 'unsafe'),
+      ),
+      '越界路径',
+    ),
+    (
+      'symbolic links',
+      Archive()..addFile(
+        ArchiveFile.symlink('repo-checkout/link.py', '../../outside.py'),
+      ),
+      '符号链接',
+    ),
+    ('too many entries', oversizedArchive, '文件数量超过限制'),
+  ];
+
+  for (final (description, archive, expectedError) in unsafeArchives) {
+    test('repository install rejects archive $description', () async {
+      await _expectRepositoryArchiveRejected(archive, expectedError);
+    });
+  }
+
   test(
     'catalog validates HTTPS sources and ignores duplicate or invalid rows',
     () async {
@@ -490,6 +524,71 @@ OnlineScript _rawScript() => OnlineScript.fromJson({
   'link': 'https://raw.example/checkin.py',
   'link_name': 'checkin.py',
 });
+
+Future<void> _expectRepositoryArchiveRejected(
+  Archive archive,
+  String expectedError,
+) async {
+  final temp = await Directory.systemTemp.createTemp('fls-script-archive-');
+  addTearDown(() => temp.delete(recursive: true));
+  final previousPathProvider = PathProviderPlatform.instance;
+  PathProviderPlatform.instance = _TestPathProvider(temp.path);
+  addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+
+  const head = 'd0123456789abcdef0123456789abcdef0123456';
+  final archiveBytes = ZipEncoder().encode(archive);
+  final client = MockClient((request) async {
+    if (request.url.path == '/repos/example/repo') {
+      return http.Response(jsonEncode({'default_branch': 'main'}), 200);
+    }
+    if (request.url.path == '/repos/example/repo/commits/main') {
+      return http.Response(jsonEncode({'sha': head}), 200);
+    }
+    if (request.url.path == '/repos/example/repo/zipball/$head') {
+      return http.Response.bytes(archiveBytes, 200);
+    }
+    fail('Unexpected request: ${request.url}');
+  });
+  final manager = OnlineScriptsManager(client: client);
+  addTearDown(manager.close);
+  final installManager = _RuntimeReadyInstallManager();
+
+  await expectLater(
+    manager.installOrUpdateNative(
+      script: OnlineScript.fromJson({
+        'id': 'example_repo',
+        'name': 'Example repository',
+        'type': 'repo',
+        'link': 'https://github.com/example/repo',
+        'link_name': 'example-repo',
+      }),
+      installManager: installManager,
+      overwriteExisting: false,
+      cancellation: OperationCancellation(),
+      onStatus: (_) {},
+    ),
+    throwsA(
+      isA<FormatException>().having(
+        (error) => error.message,
+        'message',
+        contains(expectedError),
+      ),
+    ),
+  );
+
+  final scripts = await installManager.scripts;
+  expect(
+    await Directory(p.join(scripts.path, 'example-repo')).exists(),
+    isFalse,
+  );
+  expect(
+    await scripts
+        .list()
+        .where((entity) => p.basename(entity.path).startsWith('.fls-script-'))
+        .isEmpty,
+    isTrue,
+  );
+}
 
 class _RuntimeReadyInstallManager extends LocalInstallManager {
   @override
