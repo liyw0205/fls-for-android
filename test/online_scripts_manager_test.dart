@@ -8,10 +8,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fls_for_android/services/online_scripts_manager.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   test(
     'catalog validates HTTPS sources and ignores duplicate or invalid rows',
     () async {
@@ -64,6 +67,130 @@ void main() {
       expect(catalog.single.installCommand, 'python -m pip install requests');
     },
   );
+
+  test('catalog revalidates cache with ETag and Last-Modified', () async {
+    const modifiedAt = 'Wed, 21 Oct 2015 07:28:00 GMT';
+    final body = jsonEncode([
+      {
+        'id': 'daily_checkin',
+        'name': 'Daily check-in',
+        'type': 'raw',
+        'link': 'https://example.com/checkin.py',
+      },
+    ]);
+    var requestCount = 0;
+    final client = MockClient((request) async {
+      requestCount++;
+      if (requestCount == 1) {
+        return http.Response(
+          body,
+          200,
+          headers: {'etag': '"catalog-v1"', 'last-modified': modifiedAt},
+        );
+      }
+      expect(request.headers['If-None-Match'], '"catalog-v1"');
+      expect(request.headers['If-Modified-Since'], modifiedAt);
+      return http.Response('', 304);
+    });
+    final manager = OnlineScriptsManager(
+      client: client,
+      catalogUri: Uri.parse('https://catalog.example/index.json'),
+    );
+    addTearDown(manager.close);
+
+    final initial = await manager.fetchCatalogSnapshot();
+    final revalidated = await manager.fetchCatalogSnapshot();
+
+    expect(initial.scripts, hasLength(1));
+    expect(initial.fromCache, isFalse);
+    expect(revalidated.scripts, hasLength(1));
+    expect(revalidated.fromCache, isTrue);
+    expect(revalidated.refreshError, isNull);
+    expect(revalidated.changes, isNull);
+    expect(revalidated.lastSyncedAt, initial.lastSyncedAt);
+    expect(requestCount, 2);
+  });
+
+  test('catalog falls back to cached rows when refresh is offline', () async {
+    final body = jsonEncode([
+      {
+        'id': 'daily_checkin',
+        'name': 'Daily check-in',
+        'type': 'raw',
+        'link': 'https://example.com/checkin.py',
+      },
+    ]);
+    var requestCount = 0;
+    final client = MockClient((request) async {
+      requestCount++;
+      if (requestCount == 1) return http.Response(body, 200);
+      throw const SocketException('offline');
+    });
+    final manager = OnlineScriptsManager(
+      client: client,
+      catalogUri: Uri.parse('https://catalog.example/index.json'),
+    );
+    addTearDown(manager.close);
+
+    await manager.fetchCatalogSnapshot();
+    final immediateCache = await manager.readCachedCatalog();
+    final fallback = await manager.fetchCatalogSnapshot();
+
+    expect(immediateCache?.scripts.single.id, 'daily_checkin');
+    expect(immediateCache?.fromCache, isTrue);
+    expect(fallback.scripts.single.id, 'daily_checkin');
+    expect(fallback.fromCache, isTrue);
+    expect(fallback.refreshError, contains('offline'));
+    expect(fallback.lastSyncedAt, immediateCache?.lastSyncedAt);
+  });
+
+  test('catalog reports added, removed, and changed scripts', () async {
+    final previous = jsonEncode([
+      {
+        'id': 'kept',
+        'name': 'Old name',
+        'type': 'raw',
+        'link': 'https://example.com/old.py',
+      },
+      {
+        'id': 'removed',
+        'name': 'Removed',
+        'type': 'raw',
+        'link': 'https://example.com/removed.py',
+      },
+    ]);
+    final current = jsonEncode([
+      {
+        'id': 'kept',
+        'name': 'New name',
+        'type': 'raw',
+        'link': 'https://example.com/old.py',
+      },
+      {
+        'id': 'added',
+        'name': 'Added',
+        'type': 'raw',
+        'link': 'https://example.com/added.py',
+      },
+    ]);
+    var requestCount = 0;
+    final client = MockClient((request) async {
+      requestCount++;
+      return http.Response(requestCount == 1 ? previous : current, 200);
+    });
+    final manager = OnlineScriptsManager(
+      client: client,
+      catalogUri: Uri.parse('https://catalog.example/index.json'),
+    );
+    addTearDown(manager.close);
+
+    await manager.fetchCatalogSnapshot();
+    final refreshed = await manager.fetchCatalogSnapshot();
+
+    expect(refreshed.changes?.added, 1);
+    expect(refreshed.changes?.removed, 1);
+    expect(refreshed.changes?.updated, 1);
+  });
 
   test('online script identifiers reject paths and whitespace', () {
     expect(

@@ -7,6 +7,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'local_install_manager.dart';
 import 'local_panel_host.dart';
@@ -79,6 +80,38 @@ class OnlineScript {
   }
 }
 
+class OnlineScriptsCatalogSnapshot {
+  const OnlineScriptsCatalogSnapshot({
+    required this.scripts,
+    required this.lastCheckedAt,
+    this.lastSyncedAt,
+    this.fromCache = false,
+    this.refreshError,
+    this.changes,
+  });
+
+  final List<OnlineScript> scripts;
+  final DateTime? lastCheckedAt;
+  final DateTime? lastSyncedAt;
+  final bool fromCache;
+  final String? refreshError;
+  final OnlineScriptsCatalogChanges? changes;
+}
+
+class OnlineScriptsCatalogChanges {
+  const OnlineScriptsCatalogChanges({
+    required this.added,
+    required this.removed,
+    required this.updated,
+  });
+
+  final int added;
+  final int removed;
+  final int updated;
+
+  bool get hasChanges => added + removed + updated > 0;
+}
+
 class OnlineScriptInstallConflict implements Exception {
   const OnlineScriptInstallConflict();
 }
@@ -94,6 +127,7 @@ class OnlineScriptsManager {
   );
 
   static const _maxDownloadBytes = 100 * 1024 * 1024;
+  static const _maxCatalogBytes = 5 * 1024 * 1024;
   static const _maxExtractedBytes = 300 * 1024 * 1024;
   static const _maxArchiveEntries = 20000;
 
@@ -101,13 +135,110 @@ class OnlineScriptsManager {
   final Uri catalogUri;
   final bool _ownsClient;
 
-  Future<List<OnlineScript>> fetchCatalog() async {
-    final body = await _fetchText(
-      catalogUri,
-      headers: const {'Accept': 'application/json'},
-      maximumBytes: 5 * 1024 * 1024,
-      errorLabel: '在线脚本目录',
+  Future<List<OnlineScript>> fetchCatalog() async =>
+      (await fetchCatalogSnapshot()).scripts;
+
+  Future<OnlineScriptsCatalogSnapshot?> readCachedCatalog() async {
+    final preferences = await _getPreferences();
+    if (preferences == null) return null;
+    final cached = _readCachedCatalog(preferences.getString(_catalogCacheKey));
+    if (cached == null) return null;
+    return OnlineScriptsCatalogSnapshot(
+      scripts: _parseCatalog(cached.body),
+      lastCheckedAt: cached.checkedAt,
+      lastSyncedAt: cached.syncedAt,
+      fromCache: true,
     );
+  }
+
+  Future<OnlineScriptsCatalogSnapshot> fetchCatalogSnapshot() async {
+    final preferences = await _getPreferences();
+    final cached = preferences == null
+        ? null
+        : _readCachedCatalog(preferences.getString(_catalogCacheKey));
+    final request = http.Request('GET', catalogUri)
+      ..headers['Accept'] = 'application/json';
+    if (cached?.etag case final etag?) {
+      request.headers['If-None-Match'] = etag;
+    }
+    if (cached?.lastModified case final lastModified?) {
+      request.headers['If-Modified-Since'] = lastModified;
+    }
+
+    try {
+      final response = await _client
+          .send(request)
+          .timeout(const Duration(seconds: 30));
+      final checkedAt = DateTime.now().toUtc();
+      if (response.statusCode == 304) {
+        await response.stream.drain<void>();
+        if (cached == null) {
+          throw StateError('在线脚本目录返回了无缓存的 HTTP 304');
+        }
+        if (preferences != null) {
+          await _writeCachedCatalog(
+            preferences,
+            cached.copyWith(checkedAt: checkedAt),
+          );
+        }
+        return OnlineScriptsCatalogSnapshot(
+          scripts: _parseCatalog(cached.body),
+          lastCheckedAt: checkedAt,
+          lastSyncedAt: cached.syncedAt,
+          fromCache: true,
+        );
+      }
+      if (response.statusCode != 200) {
+        await response.stream.drain<void>();
+        throw StateError('读取在线脚本目录失败：HTTP ${response.statusCode}');
+      }
+      if ((response.contentLength ?? 0) > _maxCatalogBytes) {
+        await response.stream.drain<void>();
+        throw const FormatException('在线脚本目录超过 5 MB');
+      }
+      final bodyBytes = <int>[];
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 30),
+      )) {
+        if (bodyBytes.length + chunk.length > _maxCatalogBytes) {
+          throw const FormatException('在线脚本目录超过 5 MB');
+        }
+        bodyBytes.addAll(chunk);
+      }
+      final body = utf8.decode(bodyBytes);
+      final scripts = _parseCatalog(body);
+      final changes = cached == null
+          ? null
+          : _compareCatalogs(_parseCatalog(cached.body), scripts);
+      final nextCache = _CachedOnlineScriptsCatalog(
+        body: body,
+        etag: response.headers['etag'],
+        lastModified: response.headers['last-modified'],
+        syncedAt: checkedAt,
+        checkedAt: checkedAt,
+      );
+      if (preferences != null) {
+        await _writeCachedCatalog(preferences, nextCache);
+      }
+      return OnlineScriptsCatalogSnapshot(
+        scripts: scripts,
+        lastCheckedAt: checkedAt,
+        lastSyncedAt: checkedAt,
+        changes: changes,
+      );
+    } catch (error) {
+      if (cached == null) rethrow;
+      return OnlineScriptsCatalogSnapshot(
+        scripts: _parseCatalog(cached.body),
+        lastCheckedAt: cached.checkedAt,
+        lastSyncedAt: cached.syncedAt,
+        fromCache: true,
+        refreshError: error.toString(),
+      );
+    }
+  }
+
+  List<OnlineScript> _parseCatalog(String body) {
     final value = jsonDecode(body);
     if (value is! List) throw const FormatException('在线脚本目录格式无效');
     final items = <OnlineScript>[];
@@ -122,6 +253,94 @@ class OnlineScriptsManager {
       }
     }
     return items;
+  }
+
+  OnlineScriptsCatalogChanges _compareCatalogs(
+    List<OnlineScript> previous,
+    List<OnlineScript> current,
+  ) {
+    final oldById = {for (final script in previous) script.id: script};
+    final newById = {for (final script in current) script.id: script};
+    var updated = 0;
+    for (final entry in oldById.entries) {
+      final currentScript = newById[entry.key];
+      if (currentScript != null &&
+          _catalogFingerprint(entry.value) !=
+              _catalogFingerprint(currentScript)) {
+        updated++;
+      }
+    }
+    return OnlineScriptsCatalogChanges(
+      added: newById.keys.where((id) => !oldById.containsKey(id)).length,
+      removed: oldById.keys.where((id) => !newById.containsKey(id)).length,
+      updated: updated,
+    );
+  }
+
+  String _catalogFingerprint(OnlineScript script) => jsonEncode([
+    script.name,
+    script.type,
+    script.link.toString(),
+    script.linkName,
+    script.installCommand,
+    script.docLink?.toString(),
+  ]);
+
+  String get _catalogCacheKey =>
+      'online_scripts_catalog_${sha256.convert(utf8.encode(catalogUri.toString())).toString().substring(0, 20)}';
+
+  Future<SharedPreferences?> _getPreferences() async {
+    try {
+      return await SharedPreferences.getInstance();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _CachedOnlineScriptsCatalog? _readCachedCatalog(String? value) {
+    if (value == null) return null;
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! Map<String, dynamic>) return null;
+      final body = decoded['body'];
+      final syncedAt = DateTime.tryParse(
+        decoded['synced_at']?.toString() ?? '',
+      );
+      final checkedAt = DateTime.tryParse(
+        decoded['checked_at']?.toString() ?? '',
+      );
+      if (body is! String || syncedAt == null || checkedAt == null) return null;
+      _parseCatalog(body);
+      return _CachedOnlineScriptsCatalog(
+        body: body,
+        etag: decoded['etag']?.toString(),
+        lastModified: decoded['last_modified']?.toString(),
+        syncedAt: syncedAt,
+        checkedAt: checkedAt,
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<void> _writeCachedCatalog(
+    SharedPreferences preferences,
+    _CachedOnlineScriptsCatalog cache,
+  ) async {
+    try {
+      await preferences.setString(
+        _catalogCacheKey,
+        jsonEncode({
+          'body': cache.body,
+          'etag': cache.etag,
+          'last_modified': cache.lastModified,
+          'synced_at': cache.syncedAt.toIso8601String(),
+          'checked_at': cache.checkedAt.toIso8601String(),
+        }),
+      );
+    } catch (_) {
+      // Catalog rendering must keep working if local cache storage is unavailable.
+    }
   }
 
   Future<String> fetchDocument(OnlineScript script) async {
@@ -865,4 +1084,29 @@ class _FileBackup {
 
   final File destination;
   final File? backup;
+}
+
+class _CachedOnlineScriptsCatalog {
+  const _CachedOnlineScriptsCatalog({
+    required this.body,
+    required this.etag,
+    required this.lastModified,
+    required this.syncedAt,
+    required this.checkedAt,
+  });
+
+  final String body;
+  final String? etag;
+  final String? lastModified;
+  final DateTime syncedAt;
+  final DateTime checkedAt;
+
+  _CachedOnlineScriptsCatalog copyWith({DateTime? checkedAt}) =>
+      _CachedOnlineScriptsCatalog(
+        body: body,
+        etag: etag,
+        lastModified: lastModified,
+        syncedAt: syncedAt,
+        checkedAt: checkedAt ?? this.checkedAt,
+      );
 }

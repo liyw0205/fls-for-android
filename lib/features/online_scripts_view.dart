@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/local_install_manager.dart';
 import '../services/online_scripts_manager.dart';
 import '../services/operation_cancellation.dart';
 import '../widgets/native_markdown_view.dart';
+
+enum _OnlineScriptTypeFilter { all, raw, repo }
 
 class OnlineScriptsView extends StatefulWidget {
   const OnlineScriptsView({
@@ -27,10 +30,12 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
   final _manager = OnlineScriptsManager();
   final _searchController = TextEditingController();
   List<OnlineScript> _scripts = const [];
+  OnlineScriptsCatalogSnapshot? _catalog;
   final Map<String, bool?> _installedById = {};
   bool _loading = true;
   String? _error;
   String _query = '';
+  _OnlineScriptTypeFilter _typeFilter = _OnlineScriptTypeFilter.all;
 
   @override
   void initState() {
@@ -51,13 +56,23 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
       _error = null;
     });
     try {
-      final scripts = await _manager.fetchCatalog();
+      final cached = await _manager.readCachedCatalog();
+      if (!mounted) return;
+      if (cached != null && _catalog == null) {
+        setState(() {
+          _catalog = cached;
+          _scripts = cached.scripts;
+        });
+        _refreshInstalledStates(cached.scripts);
+      }
+      final catalog = await _manager.fetchCatalogSnapshot();
       if (!mounted) return;
       setState(() {
-        _scripts = scripts;
+        _catalog = catalog;
+        _scripts = catalog.scripts;
         _loading = false;
       });
-      _refreshInstalledStates(scripts);
+      _refreshInstalledStates(catalog.scripts);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -92,13 +107,17 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
 
   List<OnlineScript> get _filteredScripts {
     final query = _query.trim().toLowerCase();
-    if (query.isEmpty) return _scripts;
     return _scripts
         .where(
           (script) =>
-              script.name.toLowerCase().contains(query) ||
-              script.id.toLowerCase().contains(query) ||
-              script.linkName.toLowerCase().contains(query),
+              (_typeFilter == _OnlineScriptTypeFilter.all ||
+                  script.type == _typeFilter.name) &&
+              (query.isEmpty ||
+                  script.name.toLowerCase().contains(query) ||
+                  script.id.toLowerCase().contains(query) ||
+                  script.linkName.toLowerCase().contains(query) ||
+                  script.link.host.toLowerCase().contains(query) ||
+                  script.link.path.toLowerCase().contains(query)),
         )
         .toList();
   }
@@ -146,6 +165,27 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
           ],
         ),
         const SizedBox(height: 8),
+        SegmentedButton<_OnlineScriptTypeFilter>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(
+              value: _OnlineScriptTypeFilter.all,
+              label: Text('全部'),
+            ),
+            ButtonSegment(
+              value: _OnlineScriptTypeFilter.raw,
+              label: Text('单文件'),
+            ),
+            ButtonSegment(
+              value: _OnlineScriptTypeFilter.repo,
+              label: Text('仓库'),
+            ),
+          ],
+          selected: {_typeFilter},
+          onSelectionChanged: (selection) =>
+              setState(() => _typeFilter = selection.first),
+        ),
+        const SizedBox(height: 8),
         if (!widget.runtimeAvailable)
           _InlineNotice(
             icon: Icons.inventory_2_outlined,
@@ -159,23 +199,53 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
             text: '由 APP 直接拉取并安装到本机容器；面板可以保持停止。',
           ),
         const SizedBox(height: 8),
-        if (_loading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 28),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_error != null)
+        if (_loading && _scripts.isNotEmpty)
+          const LinearProgressIndicator(minHeight: 2),
+        if (_error != null)
           _InlineNotice(
             icon: Icons.cloud_off_outlined,
             text: '读取在线脚本目录失败：$_error',
             action: '重试',
             onPressed: _loadCatalog,
           )
+        else if (_catalog?.refreshError != null)
+          _InlineNotice(
+            icon: Icons.cloud_off_outlined,
+            text:
+                '目录暂不可用，正在显示缓存（缓存同步于 ${_formatCatalogTime(_catalog!.lastSyncedAt)}，上次成功检查 ${_formatCatalogTime(_catalog!.lastCheckedAt)}）：${_catalog!.refreshError}',
+            action: '重试',
+            onPressed: _loadCatalog,
+          )
+        else if (_catalog?.changes case final changes? when changes.hasChanges)
+          _InlineNotice(
+            icon: Icons.sync,
+            text:
+                '目录已更新：新增 ${changes.added}，更新 ${changes.updated}，移除 ${changes.removed}',
+          )
+        else if (_catalog?.lastCheckedAt case final checkedAt?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+            child: Text(
+              '目录上次检查：${_formatCatalogTime(checkedAt)}',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        if (_loading && _scripts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_error != null && scripts.isEmpty)
+          const SizedBox.shrink()
         else if (scripts.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 28),
             child: Text(
-              _query.isEmpty ? '在线脚本目录为空' : '没有匹配的脚本',
+              _query.isEmpty && _typeFilter == _OnlineScriptTypeFilter.all
+                  ? '在线脚本目录为空'
+                  : '没有匹配的脚本',
               textAlign: TextAlign.center,
               style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
@@ -225,6 +295,17 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
         false => '未安装',
         null => '状态未知',
       };
+
+  String _formatCatalogTime(DateTime? value) {
+    if (value == null) return '未知';
+    final local = value.toLocal();
+    final year = local.year.toString().padLeft(4, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
+  }
 }
 
 class _OnlineScriptDetailPage extends StatefulWidget {
@@ -250,6 +331,7 @@ class _OnlineScriptDetailPage extends StatefulWidget {
 }
 
 class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
+  final _installLogScrollController = ScrollController();
   String _document = '';
   String? _documentError;
   bool _documentLoading = true;
@@ -259,6 +341,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   OnlineScriptUpdateState? _updateState;
   String _installStatus = '';
   String _installLog = '';
+  bool _autoScrollInstallLog = true;
   int _downloadedBytes = 0;
   int? _downloadTotalBytes;
   String? _installError;
@@ -288,6 +371,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   @override
   void dispose() {
     _cancellation?.cancel();
+    _installLogScrollController.dispose();
     super.dispose();
   }
 
@@ -373,6 +457,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
       _installError = null;
       _installStatus = '准备本机容器';
       _installLog = '';
+      _autoScrollInstallLog = true;
       _downloadedBytes = 0;
       _downloadTotalBytes = null;
     });
@@ -395,12 +480,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
         },
         onLog: (line) {
           if (!mounted || line.isEmpty) return;
-          setState(() {
-            final lines = [..._installLog.split('\n'), line];
-            _installLog = lines.length > 300
-                ? lines.skip(lines.length - 300).join('\n')
-                : lines.join('\n');
-          });
+          _appendInstallLog(line);
         },
       );
       if (!mounted) return;
@@ -423,6 +503,53 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
       widget.onBusyChanged(false);
       _cancellation = null;
       if (mounted) setState(() => _installing = false);
+    }
+  }
+
+  void _appendInstallLog(String line) {
+    setState(() {
+      final lines = [..._installLog.split('\n'), ...line.split('\n')];
+      _installLog = lines.length > 300
+          ? lines.skip(lines.length - 300).join('\n')
+          : lines.join('\n');
+    });
+    if (!_autoScrollInstallLog) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_autoScrollInstallLog ||
+          !_installLogScrollController.hasClients) {
+        return;
+      }
+      _installLogScrollController.jumpTo(
+        _installLogScrollController.position.maxScrollExtent,
+      );
+    });
+  }
+
+  void _toggleInstallLogAutoScroll() {
+    setState(() => _autoScrollInstallLog = !_autoScrollInstallLog);
+    if (!_autoScrollInstallLog) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _installLogScrollController.hasClients) {
+        _installLogScrollController.jumpTo(
+          _installLogScrollController.position.maxScrollExtent,
+        );
+      }
+    });
+  }
+
+  Future<void> _copyInstallLog() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: _installLog));
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('安装日志已复制')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('复制安装日志失败')));
     }
   }
 
@@ -608,8 +735,30 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                 ],
                 if (_installLog.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  Text('安装日志', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '安装日志',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _autoScrollInstallLog ? '暂停自动滚动' : '恢复自动滚动',
+                        onPressed: _toggleInstallLogAutoScroll,
+                        icon: Icon(
+                          _autoScrollInstallLog
+                              ? Icons.pause
+                              : Icons.play_arrow,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '复制日志',
+                        onPressed: _copyInstallLog,
+                        icon: const Icon(Icons.copy),
+                      ),
+                    ],
+                  ),
                   Container(
                     width: double.infinity,
                     constraints: const BoxConstraints(maxHeight: 260),
@@ -619,11 +768,15 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: colorScheme.outlineVariant),
                     ),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        _installLog,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontFamily: 'monospace',
+                    child: Scrollbar(
+                      controller: _installLogScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _installLogScrollController,
+                        child: SelectableText(
+                          _installLog,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(fontFamily: 'monospace'),
                         ),
                       ),
                     ),
