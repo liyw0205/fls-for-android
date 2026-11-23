@@ -8,6 +8,7 @@ import '../services/local_install_manager.dart';
 import '../services/local_file_bridge.dart';
 import '../services/local_panel_host.dart';
 import '../services/operation_cancellation.dart';
+import 'app_update_view.dart';
 import 'remote_web_view.dart';
 import 'online_scripts_view.dart';
 import '../models/panel_server.dart';
@@ -720,6 +721,12 @@ class _LocalSetupViewState extends State<LocalSetupView>
     );
   }
 
+  void _openAppUpdates() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const AppUpdateView()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return CustomScrollView(
@@ -728,6 +735,11 @@ class _LocalSetupViewState extends State<LocalSetupView>
           pinned: true,
           title: const Text('本机面板'),
           actions: [
+            IconButton(
+              tooltip: '检查 APP 更新',
+              onPressed: _openAppUpdates,
+              icon: const Icon(Icons.system_update_alt),
+            ),
             IconButton(
               tooltip: '刷新本机状态',
               onPressed: _refreshStatus,
@@ -788,8 +800,9 @@ class _LocalSetupViewState extends State<LocalSetupView>
       if (_tab == _LocalTab.environment) ..._environmentContent(context),
       if (_tab == _LocalTab.scripts)
         OnlineScriptsView(
-          panelRunning: _panelReady,
-          onStartPanel: _startPanel,
+          runtimeAvailable: _runtimeInstalled,
+          installManager: _manager,
+          onOpenEnvironment: () => _selectTab(_LocalTab.environment),
           onBusyChanged: (busy) {
             if (mounted) setState(() => _scriptInstalling = busy);
           },
@@ -809,7 +822,7 @@ class _LocalSetupViewState extends State<LocalSetupView>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _installing ? _phase : '正在本机面板安装在线脚本',
+                  _installing ? _phase : '正在本机容器安装在线脚本',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 12),

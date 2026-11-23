@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
 
-import '../models/panel_server.dart';
+import '../services/local_install_manager.dart';
 import '../services/online_scripts_manager.dart';
-import 'remote_web_view.dart';
+import '../services/operation_cancellation.dart';
 
 class OnlineScriptsView extends StatefulWidget {
   const OnlineScriptsView({
     super.key,
-    required this.panelRunning,
-    required this.onStartPanel,
+    required this.runtimeAvailable,
+    required this.installManager,
+    required this.onOpenEnvironment,
     required this.onBusyChanged,
   });
 
-  final bool panelRunning;
-  final VoidCallback onStartPanel;
+  final bool runtimeAvailable;
+  final LocalInstallManager installManager;
+  final VoidCallback onOpenEnvironment;
   final ValueChanged<bool> onBusyChanged;
 
   @override
@@ -75,30 +77,15 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
         .toList();
   }
 
-  PanelServer get _localServer =>
-      const PanelServer(name: '本机 FLS', url: 'http://127.0.0.1:5700');
-
-  void _openPanel() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => RemoteWebView(
-          server: _localServer,
-          initialPath: 'online-scripts',
-          pageTitle: '本机面板',
-        ),
-      ),
-    );
-  }
-
   void _openScript(OnlineScript script) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => _OnlineScriptDetailPage(
           manager: _manager,
-          server: _localServer,
+          installManager: widget.installManager,
           script: script,
-          panelRunning: widget.panelRunning,
-          onOpenPanel: _openPanel,
+          runtimeAvailable: widget.runtimeAvailable,
+          onOpenEnvironment: widget.onOpenEnvironment,
           onBusyChanged: widget.onBusyChanged,
         ),
       ),
@@ -133,17 +120,17 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
           ],
         ),
         const SizedBox(height: 8),
-        if (!widget.panelRunning)
+        if (!widget.runtimeAvailable)
           _InlineNotice(
-            icon: Icons.power_settings_new,
-            text: '启动本机 FLS 后即可安装或更新脚本。',
-            action: '启动',
-            onPressed: widget.onStartPanel,
+            icon: Icons.inventory_2_outlined,
+            text: '安装本机运行环境后即可管理脚本，无需启动面板。',
+            action: '安装环境',
+            onPressed: widget.onOpenEnvironment,
           )
         else
           _InlineNotice(
             icon: Icons.info_outline,
-            text: '安装前会同步本机脚本目录；已有脚本会先请求确认覆盖。',
+            text: '由 APP 直接拉取并安装到本机容器；面板可以保持停止。',
           ),
         const SizedBox(height: 8),
         if (_loading)
@@ -210,18 +197,18 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
 class _OnlineScriptDetailPage extends StatefulWidget {
   const _OnlineScriptDetailPage({
     required this.manager,
-    required this.server,
+    required this.installManager,
     required this.script,
-    required this.panelRunning,
-    required this.onOpenPanel,
+    required this.runtimeAvailable,
+    required this.onOpenEnvironment,
     required this.onBusyChanged,
   });
 
   final OnlineScriptsManager manager;
-  final PanelServer server;
+  final LocalInstallManager installManager;
   final OnlineScript script;
-  final bool panelRunning;
-  final VoidCallback onOpenPanel;
+  final bool runtimeAvailable;
+  final VoidCallback onOpenEnvironment;
   final ValueChanged<bool> onBusyChanged;
 
   @override
@@ -236,12 +223,21 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   bool _installing = false;
   String _installStatus = '';
   String _installLog = '';
+  int _downloadedBytes = 0;
+  int? _downloadTotalBytes;
   String? _installError;
+  OperationCancellation? _cancellation;
 
   @override
   void initState() {
     super.initState();
     _loadDocument();
+  }
+
+  @override
+  void dispose() {
+    _cancellation?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadDocument() async {
@@ -273,11 +269,11 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
             children: [
               Text(
                 overwrite
-                    ? '本机面板检测到已有目标文件。确认后将由面板覆盖并更新“${widget.script.name}”。'
-                    : '将由本机 FLS 拉取并执行“${widget.script.name}”的安装流程。',
+                    ? '本机脚本目录中已存在目标。确认后 APP 会覆盖同名文件并更新“${widget.script.name}”；目录中其他未被本次脚本覆盖的文件会保留。'
+                    : 'APP 会直接拉取“${widget.script.name}”并安装到本机容器，不会启动 FLS 面板。',
               ),
               const SizedBox(height: 12),
-              const Text('任务不会自动导入或启用。'),
+              const Text('任务不会自动导入或启用。仅继续运行你信任来源提供的依赖安装命令。'),
               if (widget.script.installCommand.trim().isNotEmpty) ...[
                 const SizedBox(height: 12),
                 const Text('安装命令'),
@@ -313,63 +309,73 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
   }
 
   Future<void> _installOrUpdate() async {
-    if (!widget.panelRunning || _installing) return;
-    var overwrite = false;
-    if (!await _confirmInstall(overwrite: false)) return;
+    if (!widget.runtimeAvailable || _installing) return;
+    final overwrite = await widget.manager.hasInstallTarget(
+      widget.script,
+      widget.installManager,
+    );
+    if (!await _confirmInstall(overwrite: overwrite)) return;
+    final cancellation = OperationCancellation();
+    _cancellation = cancellation;
     setState(() {
       _installing = true;
       _installError = null;
-      _installStatus = '连接本机 FLS';
+      _installStatus = '准备本机容器';
       _installLog = '';
+      _downloadedBytes = 0;
+      _downloadTotalBytes = null;
     });
     widget.onBusyChanged(true);
     try {
-      try {
-        await widget.manager.installOrUpdate(
-          server: widget.server,
-          script: widget.script,
-          onStatus: (status) {
-            if (mounted) setState(() => _installStatus = status);
-          },
-          onLog: (log) {
-            if (mounted && log != _installLog) {
-              setState(() => _installLog = log);
-            }
-          },
-        );
-      } on OnlineScriptInstallConfirmation {
-        overwrite = true;
-      }
-      if (overwrite && mounted && await _confirmInstall(overwrite: true)) {
-        await widget.manager.installOrUpdate(
-          server: widget.server,
-          script: widget.script,
-          overwriteExisting: true,
-          onStatus: (status) {
-            if (mounted) setState(() => _installStatus = status);
-          },
-          onLog: (log) {
-            if (mounted && log != _installLog) {
-              setState(() => _installLog = log);
-            }
-          },
-        );
-      } else if (overwrite) {
-        setState(() => _installStatus = '已取消更新');
-      }
+      await widget.manager.installOrUpdateNative(
+        script: widget.script,
+        installManager: widget.installManager,
+        overwriteExisting: overwrite,
+        cancellation: cancellation,
+        onStatus: (status) {
+          if (mounted) setState(() => _installStatus = status);
+        },
+        onProgress: (receivedBytes, totalBytes) {
+          if (!mounted) return;
+          setState(() {
+            _downloadedBytes = receivedBytes;
+            _downloadTotalBytes = totalBytes;
+          });
+        },
+        onLog: (line) {
+          if (!mounted || line.isEmpty) return;
+          setState(() {
+            final lines = [..._installLog.split('\n'), line];
+            _installLog = lines.length > 300
+                ? lines.skip(lines.length - 300).join('\n')
+                : lines.join('\n');
+          });
+        },
+      );
       if (!mounted) return;
-      if (!overwrite || _installStatus != '已取消更新') {
-        setState(() => _installStatus = '安装完成');
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('在线脚本已安装或更新')));
-      }
+      setState(() => _installStatus = '安装完成');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('脚本已安装或更新')));
     } catch (error) {
-      if (mounted) setState(() => _installError = error.toString());
+      if (mounted) {
+        setState(() {
+          _installError = error.toString();
+          if (cancellation.isCancelled) _installStatus = '已取消';
+        });
+      }
     } finally {
       widget.onBusyChanged(false);
+      _cancellation = null;
       if (mounted) setState(() => _installing = false);
     }
+  }
+
+  void _cancelInstall() {
+    final cancellation = _cancellation;
+    if (cancellation == null || cancellation.isCancelled) return;
+    cancellation.cancel();
+    setState(() => _installStatus = '正在取消');
   }
 
   @override
@@ -399,7 +405,7 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: _installing || !widget.panelRunning
+                  onPressed: _installing || !widget.runtimeAvailable
                       ? null
                       : _installOrUpdate,
                   icon: _installing
@@ -411,16 +417,42 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                       : const Icon(Icons.download),
                   label: Text(_installing ? _installStatus : '安装 / 更新'),
                 ),
-                if (!widget.panelRunning) ...[
+                if (!widget.runtimeAvailable) ...[
                   const SizedBox(height: 8),
-                  Text(
-                    '请先启动本机面板。',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  TextButton.icon(
+                    onPressed: widget.onOpenEnvironment,
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    label: const Text('先安装本机运行环境'),
                   ),
                 ],
                 if (_installing) ...[
                   const SizedBox(height: 8),
-                  const LinearProgressIndicator(),
+                  LinearProgressIndicator(
+                    value:
+                        _downloadTotalBytes == null || _downloadTotalBytes! <= 0
+                        ? null
+                        : (_downloadedBytes / _downloadTotalBytes!).clamp(
+                            0.0,
+                            1.0,
+                          ),
+                  ),
+                  if (_downloadedBytes > 0) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _downloadTotalBytes == null
+                          ? '${_formatMegabytes(_downloadedBytes)} MB / -- MB'
+                          : '${_formatMegabytes(_downloadedBytes)} MB / ${_formatMegabytes(_downloadTotalBytes!)} MB  ${((_downloadedBytes / _downloadTotalBytes!) * 100).round()}%',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: cancellationCancelled ? null : _cancelInstall,
+                      icon: const Icon(Icons.close),
+                      label: const Text('取消'),
+                    ),
+                  ),
                 ],
                 if (_installError != null) ...[
                   const SizedBox(height: 8),
@@ -428,11 +460,12 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
                     _installError!,
                     style: TextStyle(color: colorScheme.error),
                   ),
-                  TextButton.icon(
-                    onPressed: widget.onOpenPanel,
-                    icon: const Icon(Icons.open_in_browser),
-                    label: const Text('打开本机面板并登录'),
-                  ),
+                  if (!widget.runtimeAvailable)
+                    TextButton.icon(
+                      onPressed: widget.onOpenEnvironment,
+                      icon: const Icon(Icons.inventory_2_outlined),
+                      label: const Text('安装本机运行环境'),
+                    ),
                 ],
                 if (_installLog.isNotEmpty) ...[
                   const SizedBox(height: 8),
@@ -486,6 +519,11 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
       ),
     );
   }
+
+  bool get cancellationCancelled => _cancellation?.isCancelled ?? true;
+
+  String _formatMegabytes(int bytes) =>
+      (bytes / (1024 * 1024)).toStringAsFixed(1);
 }
 
 class _MarkdownText extends StatelessWidget {

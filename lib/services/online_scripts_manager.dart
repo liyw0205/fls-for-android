@@ -1,15 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:path/path.dart' as p;
 
-import '../models/panel_server.dart';
+import 'local_install_manager.dart';
+import 'local_panel_host.dart';
+import 'operation_cancellation.dart';
 
-typedef OnlineScriptsCookieLoader = Future<String> Function(Uri serverUri);
 typedef OnlineScriptsStatusCallback = void Function(String status);
 typedef OnlineScriptsLogCallback = void Function(String log);
+typedef OnlineScriptsProgressCallback =
+    void Function(int receivedBytes, int? totalBytes);
 
 class OnlineScript {
   const OnlineScript({
@@ -64,60 +69,25 @@ class OnlineScript {
   }
 }
 
-class OnlineScriptInstallStatus {
-  const OnlineScriptInstallStatus({
-    required this.installId,
-    required this.running,
-    required this.status,
-    required this.log,
-    this.error = '',
-  });
-
-  final String installId;
-  final bool running;
-  final String status;
-  final String log;
-  final String error;
-
-  factory OnlineScriptInstallStatus.fromJson(Map<String, dynamic> json) {
-    final installId = json['install_id']?.toString() ?? '';
-    if (installId.isEmpty || json['running'] is! bool) {
-      throw const FormatException('在线脚本安装状态无效');
-    }
-    return OnlineScriptInstallStatus(
-      installId: installId,
-      running: json['running'] as bool,
-      status: json['status']?.toString() ?? '状态未知',
-      log: json['log']?.toString() ?? '',
-      error: (json['install_error'] ?? json['error'])?.toString() ?? '',
-    );
-  }
-}
-
-class OnlineScriptInstallConfirmation implements Exception {
-  const OnlineScriptInstallConfirmation(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
+class OnlineScriptInstallConflict implements Exception {
+  const OnlineScriptInstallConflict();
 }
 
 class OnlineScriptsManager {
-  OnlineScriptsManager({
-    http.Client? client,
-    this.cookieLoader,
-    Uri? catalogUri,
-  }) : _client = client ?? http.Client(),
-       _ownsClient = client == null,
-       catalogUri = catalogUri ?? defaultCatalogUri;
+  OnlineScriptsManager({http.Client? client, Uri? catalogUri})
+    : _client = client ?? http.Client(),
+      _ownsClient = client == null,
+      catalogUri = catalogUri ?? defaultCatalogUri;
 
   static final Uri defaultCatalogUri = Uri.parse(
     'https://cdn.jsdelivr.net/gh/liyw0205/fls-scripts@main/index.json',
   );
 
+  static const _maxDownloadBytes = 100 * 1024 * 1024;
+  static const _maxExtractedBytes = 300 * 1024 * 1024;
+  static const _maxArchiveEntries = 20000;
+
   final http.Client _client;
-  final OnlineScriptsCookieLoader? cookieLoader;
   final Uri catalogUri;
   final bool _ownsClient;
 
@@ -155,6 +125,399 @@ class OnlineScriptsManager {
     );
   }
 
+  Future<bool> hasInstallTarget(
+    OnlineScript script,
+    LocalInstallManager installManager,
+  ) async {
+    final targetPath = await _targetPath(script, installManager);
+    return await FileSystemEntity.type(targetPath, followLinks: false) !=
+        FileSystemEntityType.notFound;
+  }
+
+  Future<void> installOrUpdateNative({
+    required OnlineScript script,
+    required LocalInstallManager installManager,
+    required bool overwriteExisting,
+    required OperationCancellation cancellation,
+    required OnlineScriptsStatusCallback onStatus,
+    OnlineScriptsLogCallback? onLog,
+    OnlineScriptsProgressCallback? onProgress,
+  }) async {
+    cancellation.throwIfCancelled();
+    if (!await installManager.hasRuntime()) {
+      throw StateError('请先安装本机 Python 或 Full 运行环境。');
+    }
+
+    final runtime = await installManager.runtime;
+    final project = await installManager.project;
+    final data = await installManager.data;
+    final logs = await installManager.logs;
+    final scripts = await installManager.scripts;
+    await Future.wait([
+      project.create(recursive: true),
+      data.create(recursive: true),
+      logs.create(recursive: true),
+      scripts.create(recursive: true),
+      Directory(p.join(runtime.path, 'tmp')).create(recursive: true),
+    ]);
+
+    final targetPath = await _targetPath(script, installManager);
+    final targetType = await FileSystemEntity.type(
+      targetPath,
+      followLinks: false,
+    );
+    if (targetType != FileSystemEntityType.notFound && !overwriteExisting) {
+      throw const OnlineScriptInstallConflict();
+    }
+    if (targetType == FileSystemEntityType.link) {
+      throw StateError('脚本安装位置是符号链接，拒绝覆盖。');
+    }
+    if ((script.type == 'raw' &&
+            targetType == FileSystemEntityType.directory) ||
+        (script.type == 'repo' && targetType == FileSystemEntityType.file)) {
+      throw StateError('脚本安装位置与目标类型冲突，拒绝覆盖。');
+    }
+
+    final operationKey = _randomId();
+    final staging = Directory(
+      p.join(scripts.path, '.fls-script-$operationKey'),
+    );
+    final backup = Directory(
+      p.join(scripts.path, '.fls-script-backup-$operationKey'),
+    );
+    final journal = <_FileBackup>[];
+    var targetCreated = false;
+
+    try {
+      await staging.create(recursive: true);
+      onStatus('读取脚本来源');
+      if (script.type == 'raw') {
+        _safeRelativePath(script.linkName);
+        final content = await _downloadBytes(
+          script.link,
+          cancellation: cancellation,
+          headers: const {'Accept': '*/*'},
+          maximumBytes: _maxDownloadBytes,
+          onProgress: onProgress,
+        );
+        cancellation.throwIfCancelled();
+        final stagedFile = File(p.join(staging.path, 'payload'));
+        await stagedFile.writeAsBytes(content, flush: true);
+        final destination = File(targetPath);
+        await _validateParentChain(scripts, destination.parent);
+        await destination.parent.create(recursive: true);
+        await _backupAndCopy(
+          stagedFile,
+          destination,
+          script.linkName,
+          scripts,
+          backup,
+          journal,
+        );
+        targetCreated = true;
+        if (p.extension(destination.path).toLowerCase() == '.sh') {
+          final chmod = await Process.run('/system/bin/chmod', [
+            '755',
+            destination.path,
+          ]);
+          if (chmod.exitCode != 0) {
+            throw StateError('无法设置脚本执行权限：${chmod.stderr}');
+          }
+        }
+      } else {
+        final repoInfo = await _repositoryInfo(script.link, cancellation);
+        final archiveUri = Uri.https(
+          'api.github.com',
+          '/repos/${repoInfo.owner}/${repoInfo.repository}/zipball/${Uri.encodeComponent(repoInfo.branch)}',
+        );
+        final bytes = await _downloadBytes(
+          archiveUri,
+          cancellation: cancellation,
+          headers: const {'Accept': 'application/vnd.github+json'},
+          maximumBytes: _maxDownloadBytes,
+          onProgress: onProgress,
+        );
+        cancellation.throwIfCancelled();
+        onStatus('校验并解压脚本仓库');
+        final extracted = Directory(p.join(staging.path, 'repository'));
+        await _extractRepository(bytes, extracted, cancellation);
+        final repoTarget = Directory(targetPath);
+        final extractedFiles = extracted.list(
+          recursive: true,
+          followLinks: false,
+        );
+        await for (final entity in extractedFiles) {
+          cancellation.throwIfCancelled();
+          if (entity is! File) continue;
+          final relative = p.relative(entity.path, from: extracted.path);
+          final destination = File(p.join(repoTarget.path, relative));
+          await _validateParentChain(scripts, destination.parent);
+          await destination.parent.create(recursive: true);
+          await _backupAndCopy(
+            entity,
+            destination,
+            relative,
+            scripts,
+            backup,
+            journal,
+          );
+        }
+        targetCreated = true;
+      }
+
+      cancellation.throwIfCancelled();
+      if (script.installCommand.trim().isNotEmpty) {
+        onStatus('安装脚本依赖');
+        final runCommand = LocalPanelHost.runContainerCommand(
+          runtimeDir: runtime.path,
+          projectDir: project.path,
+          dataDir: data.path,
+          logDir: logs.path,
+          scriptsDir: scripts.path,
+          command: script.installCommand,
+          onOutput: (line) => onLog?.call(line),
+        );
+        final exitCode = await Future.any<int>([
+          runCommand,
+          cancellation.whenCancelled.then<int>((_) async {
+            await LocalPanelHost.cancelContainerCommand();
+            throw const OperationCancelled();
+          }),
+        ]);
+        cancellation.throwIfCancelled();
+        if (exitCode != 0) {
+          throw StateError('在线脚本依赖安装失败，退出码：$exitCode');
+        }
+      }
+      onStatus('安装完成');
+    } catch (_) {
+      if (targetCreated || journal.isNotEmpty) {
+        await _rollbackFiles(journal);
+        if (script.type == 'repo' && !overwriteExisting) {
+          final repoTarget = Directory(targetPath);
+          if (await repoTarget.exists()) {
+            await repoTarget.delete(recursive: true);
+          }
+        }
+      }
+      rethrow;
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
+      if (await backup.exists()) await backup.delete(recursive: true);
+    }
+  }
+
+  Future<String> _targetPath(
+    OnlineScript script,
+    LocalInstallManager installManager,
+  ) async {
+    final scripts = await installManager.scripts;
+    final relative = _safeRelativePath(script.linkName);
+    if (script.type == 'repo' && p.split(relative).length != 1) {
+      throw const FormatException('脚本仓库目录名无效');
+    }
+    final target = p.join(scripts.path, relative);
+    await _validateParentChain(scripts, Directory(p.dirname(target)));
+    return target;
+  }
+
+  String _safeRelativePath(String value) {
+    final normalized = value.replaceAll('\\', '/').trim();
+    final segments = normalized.split('/');
+    if (normalized.isEmpty ||
+        normalized.startsWith('/') ||
+        segments.any(
+          (segment) =>
+              segment.isEmpty ||
+              segment == '.' ||
+              segment == '..' ||
+              !RegExp(r'^[A-Za-z0-9._ -]{1,160}$').hasMatch(segment),
+        )) {
+      throw const FormatException('在线脚本路径包含不支持的字符');
+    }
+    return p.joinAll(segments);
+  }
+
+  Future<_GithubRepository> _repositoryInfo(
+    Uri uri,
+    OperationCancellation cancellation,
+  ) async {
+    if (uri.host != 'github.com') {
+      throw const FormatException('目前仅支持从 GitHub 安装仓库脚本');
+    }
+    final segments = uri.pathSegments.where((part) => part.isNotEmpty).toList();
+    if (segments.length != 2) {
+      throw const FormatException('GitHub 仓库地址格式无效');
+    }
+    final owner = segments[0];
+    final repository = segments[1].replaceFirst(RegExp(r'\.git$'), '');
+    if (![
+      owner,
+      repository,
+    ].every((part) => RegExp(r'^[A-Za-z0-9_.-]{1,100}$').hasMatch(part))) {
+      throw const FormatException('GitHub 仓库地址格式无效');
+    }
+    final response = await _send(
+      Uri.https('api.github.com', '/repos/$owner/$repository'),
+      cancellation,
+      headers: const {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) {
+      await response.stream.drain<void>();
+      throw StateError('读取脚本仓库失败：HTTP ${response.statusCode}');
+    }
+    final body = await _readLimited(response, 1024 * 1024, cancellation);
+    final value = jsonDecode(body);
+    final branch = value is Map<String, dynamic>
+        ? value['default_branch']?.toString() ?? ''
+        : '';
+    if (!RegExp(r'^[A-Za-z0-9._/-]{1,100}$').hasMatch(branch) ||
+        branch.split('/').any((part) => part == '..' || part.isEmpty)) {
+      throw const FormatException('脚本仓库默认分支无效');
+    }
+    return _GithubRepository(owner, repository, branch);
+  }
+
+  Future<void> _extractRepository(
+    List<int> bytes,
+    Directory destination,
+    OperationCancellation cancellation,
+  ) async {
+    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+    if (archive.files.length > _maxArchiveEntries) {
+      throw const FormatException('脚本仓库文件数量超过限制');
+    }
+    String? root;
+    var extractedSize = 0;
+    for (final entry in archive.files) {
+      cancellation.throwIfCancelled();
+      final name = entry.name.replaceAll('\\', '/');
+      if (name.startsWith('/')) {
+        throw const FormatException('脚本仓库包含绝对路径');
+      }
+      final segments = name.split('/');
+      if (segments.any((part) => part == '..')) {
+        throw const FormatException('脚本仓库包含越界路径');
+      }
+      if (segments.isEmpty || segments.first.isEmpty) continue;
+      root ??= segments.first;
+      if (segments.first != root) {
+        throw const FormatException('脚本仓库压缩包结构无效');
+      }
+      if (entry.isSymbolicLink) continue;
+      if (!entry.isFile) continue;
+      extractedSize += entry.size;
+      if (extractedSize > _maxExtractedBytes) {
+        throw const FormatException('脚本仓库解压后超过 300 MB');
+      }
+      final relative = segments.skip(1).toList();
+      if (relative.isEmpty) continue;
+      final path = _safeRelativePath(relative.join('/'));
+      final file = File(p.join(destination.path, path));
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(entry.content, flush: false);
+    }
+    if (root == null || extractedSize == 0) {
+      throw const FormatException('脚本仓库中没有可安装的文件');
+    }
+  }
+
+  Future<void> _backupAndCopy(
+    File source,
+    File destination,
+    String relativePath,
+    Directory scriptsRoot,
+    Directory backupRoot,
+    List<_FileBackup> journal,
+  ) async {
+    final relative = _safeRelativePath(relativePath);
+    await _validateParentChain(scriptsRoot, destination.parent);
+    final type = await FileSystemEntity.type(
+      destination.path,
+      followLinks: false,
+    );
+    if (type == FileSystemEntityType.link ||
+        type == FileSystemEntityType.directory) {
+      throw StateError('脚本目标路径与已有文件类型冲突：${destination.path}');
+    }
+    File? backup;
+    if (type == FileSystemEntityType.file) {
+      backup = File(p.join(backupRoot.path, relative));
+      await backup.parent.create(recursive: true);
+      await destination.copy(backup.path);
+    }
+    journal.add(_FileBackup(destination, backup));
+    await source.copy(destination.path);
+  }
+
+  Future<void> _validateParentChain(
+    Directory scriptsRoot,
+    Directory targetParent,
+  ) async {
+    final relative = p.relative(targetParent.path, from: scriptsRoot.path);
+    if (relative == '..' || relative.startsWith('../')) {
+      throw StateError('脚本安装路径超出本机脚本目录，拒绝安装。');
+    }
+    var parent = scriptsRoot.path;
+    final rootType = await FileSystemEntity.type(parent, followLinks: false);
+    if (rootType == FileSystemEntityType.link ||
+        (rootType != FileSystemEntityType.notFound &&
+            rootType != FileSystemEntityType.directory)) {
+      throw StateError('本机脚本目录不是安全目录，拒绝安装。');
+    }
+    if (relative == '.') return;
+    for (final segment in p.split(relative)) {
+      parent = p.join(parent, segment);
+      final type = await FileSystemEntity.type(parent, followLinks: false);
+      if (type == FileSystemEntityType.link ||
+          (type != FileSystemEntityType.notFound &&
+              type != FileSystemEntityType.directory)) {
+        throw StateError('脚本安装路径包含符号链接或非目录，拒绝安装。');
+      }
+    }
+  }
+
+  Future<void> _rollbackFiles(List<_FileBackup> journal) async {
+    for (final item in journal.reversed) {
+      if (await item.destination.exists()) await item.destination.delete();
+      final backup = item.backup;
+      if (backup != null && await backup.exists()) {
+        await backup.copy(item.destination.path);
+      }
+    }
+  }
+
+  Future<List<int>> _downloadBytes(
+    Uri uri, {
+    required OperationCancellation cancellation,
+    required Map<String, String> headers,
+    required int maximumBytes,
+    OnlineScriptsProgressCallback? onProgress,
+  }) async {
+    final response = await _send(uri, cancellation, headers: headers);
+    if (response.statusCode != 200) {
+      await response.stream.drain<void>();
+      throw StateError('下载脚本来源失败：HTTP ${response.statusCode}');
+    }
+    final total = response.contentLength;
+    if (total != null && total > maximumBytes) {
+      await response.stream.drain<void>();
+      throw FormatException('脚本来源超过 ${maximumBytes ~/ (1024 * 1024)} MB');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response.stream.timeout(
+      const Duration(seconds: 45),
+    )) {
+      cancellation.throwIfCancelled();
+      if (bytes.length + chunk.length > maximumBytes) {
+        throw FormatException('脚本来源超过 ${maximumBytes ~/ (1024 * 1024)} MB');
+      }
+      bytes.addAll(chunk);
+      onProgress?.call(bytes.length, total);
+    }
+    return bytes;
+  }
+
   Future<String> _fetchText(
     Uri uri, {
     required Map<String, String> headers,
@@ -189,217 +552,67 @@ class OnlineScriptsManager {
     return utf8.decode(bytes);
   }
 
-  Future<String> _cookieHeader(Uri serverUri) async {
-    final loader = cookieLoader;
-    if (loader != null) return loader(serverUri);
-    final cookies = await WebViewCookieManager().getCookies(domain: serverUri);
-    return cookies
-        .where((cookie) => cookie.name.isNotEmpty)
-        .map((cookie) => '${cookie.name}=${cookie.value}')
-        .join('; ');
-  }
-
-  Future<String> _csrfToken(Uri serverUri, String cookieHeader) async {
-    final response = await _client
-        .get(
-          _endpoint(serverUri, 'online-scripts'),
-          headers: {'Accept': 'text/html', 'Cookie': cookieHeader},
-        )
-        .timeout(const Duration(seconds: 30));
-    if (response.statusCode == 401 ||
-        response.statusCode == 403 ||
-        (response.statusCode >= 300 && response.statusCode < 400)) {
-      throw StateError('本机面板登录已失效，请先打开本机面板并登录。');
-    }
-    if (response.statusCode != 200) {
-      throw StateError('读取本机面板安全令牌失败：HTTP ${response.statusCode}');
-    }
-    final match = RegExp(
-      r'''<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']''',
-      caseSensitive: false,
-    ).firstMatch(response.body);
-    if (match == null) throw StateError('本机面板未返回安全令牌，请重新登录。');
-    return match.group(1)!;
-  }
-
-  Future<String> installOrUpdate({
-    required PanelServer server,
-    required OnlineScript script,
-    required OnlineScriptsStatusCallback onStatus,
-    OnlineScriptsLogCallback? onLog,
-    bool overwriteExisting = false,
+  Future<http.StreamedResponse> _send(
+    Uri uri,
+    OperationCancellation cancellation, {
+    Map<String, String> headers = const {},
   }) async {
-    final serverUri = Uri.parse(server.url);
-    final cookieHeader = await _cookieHeader(serverUri);
-    if (cookieHeader.isEmpty) {
-      throw StateError('请先打开本机面板并登录，再安装在线脚本。');
+    cancellation.throwIfCancelled();
+    final request = http.AbortableRequest(
+      'GET',
+      uri,
+      abortTrigger: cancellation.whenCancelled,
+    )..headers.addAll(headers);
+    try {
+      return await _client.send(request).timeout(const Duration(seconds: 45));
+    } catch (_) {
+      cancellation.throwIfCancelled();
+      rethrow;
     }
-    final csrf = await _csrfToken(serverUri, cookieHeader);
-    await _refreshSource(serverUri, cookieHeader, csrf, onStatus);
-
-    final requestId = _requestId();
-    final response = await _client
-        .post(
-          _endpoint(
-            serverUri,
-            'api/online-scripts/install/${Uri.encodeComponent(script.id)}',
-          ),
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Cookie': cookieHeader,
-            'X-CSRF-Token': csrf,
-          },
-          body: jsonEncode({
-            'request_id': requestId,
-            'import_task': false,
-            'enable_task': false,
-            'force': overwriteExisting,
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
-    final payload = _jsonMap(response.body);
-    if (response.statusCode == 409 && payload['confirm_required'] == true) {
-      throw OnlineScriptInstallConfirmation(
-        payload['msg']?.toString() ?? '目标脚本已存在，确认后会覆盖并更新。',
-      );
-    }
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw StateError('本机面板登录已失效，请重新登录后重试。');
-    }
-    final installId = (payload['install_id'] ?? payload['request_id'])
-        ?.toString();
-    if ((response.statusCode < 200 || response.statusCode >= 300) ||
-        payload['ok'] != true ||
-        installId == null ||
-        installId.isEmpty) {
-      throw StateError(payload['msg']?.toString() ?? '本机面板未接受安装请求');
-    }
-
-    onStatus('安装任务已受理');
-    for (var attempt = 0; attempt < 1860; attempt++) {
-      final statusResponse = await _client
-          .get(
-            _endpoint(
-              serverUri,
-              'api/online-scripts/log/${Uri.encodeComponent(installId)}',
-            ).replace(queryParameters: const {'lines': '300'}),
-            headers: {'Accept': 'application/json', 'Cookie': cookieHeader},
-          )
-          .timeout(const Duration(seconds: 30));
-      if (statusResponse.statusCode == 401 ||
-          statusResponse.statusCode == 403) {
-        throw StateError('查询安装状态时登录已失效。');
-      }
-      final state = _jsonMap(statusResponse.body);
-      if (statusResponse.statusCode >= 400 && state['ok'] != true) {
-        throw StateError(state['error']?.toString() ?? '读取在线脚本安装状态失败');
-      }
-      final current = OnlineScriptInstallStatus.fromJson(state);
-      onStatus(current.status);
-      onLog?.call(current.log);
-      if (!current.running) {
-        if (current.error.isNotEmpty || current.status != '已完成') {
-          throw StateError(
-            current.error.isNotEmpty
-                ? current.error
-                : '在线脚本安装${current.status}',
-          );
-        }
-        return installId;
-      }
-      await Future<void>.delayed(const Duration(seconds: 1));
-    }
-    throw StateError('在线脚本安装仍在后台运行，稍后可在本机面板日志中查看。');
   }
 
-  Future<void> _refreshSource(
-    Uri serverUri,
-    String cookieHeader,
-    String csrf,
-    OnlineScriptsStatusCallback onStatus,
+  Future<String> _readLimited(
+    http.StreamedResponse response,
+    int maximumBytes,
+    OperationCancellation cancellation,
   ) async {
-    final requestId = _requestId();
-    onStatus('同步本机在线脚本目录');
-    final response = await _client
-        .post(
-          _endpoint(serverUri, 'api/online-scripts/refresh'),
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Cookie': cookieHeader,
-            'X-CSRF-Token': csrf,
-          },
-          body: jsonEncode({'request_id': requestId, 'proxy_id': ''}),
-        )
-        .timeout(const Duration(seconds: 30));
-    final payload = _jsonMap(response.body);
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw StateError('同步脚本目录时本机面板登录已失效。');
-    }
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        payload['ok'] != true) {
-      throw StateError(payload['error']?.toString() ?? '本机在线脚本目录同步未启动');
-    }
-    for (var attempt = 0; attempt < 300; attempt++) {
-      final statusResponse = await _client
-          .get(
-            _endpoint(
-              serverUri,
-              'api/online-scripts/refresh-status/${Uri.encodeComponent(requestId)}',
-            ),
-            headers: {'Accept': 'application/json', 'Cookie': cookieHeader},
-          )
-          .timeout(const Duration(seconds: 30));
-      final state = _jsonMap(statusResponse.body);
-      if (statusResponse.statusCode >= 400 || state['ok'] == false) {
-        throw StateError(state['error']?.toString() ?? '读取脚本目录同步状态失败');
+    final bytes = <int>[];
+    await for (final chunk in response.stream.timeout(
+      const Duration(seconds: 30),
+    )) {
+      cancellation.throwIfCancelled();
+      if (bytes.length + chunk.length > maximumBytes) {
+        throw const FormatException('GitHub 仓库信息超过限制');
       }
-      final running = state['running'] == true;
-      final status = state['status']?.toString() ?? '同步中';
-      onStatus(status);
-      if (!running) {
-        if (status != '已完成' && status != '部分完成') {
-          throw StateError(
-            state['error']?.toString().trim().isNotEmpty == true
-                ? state['error'].toString()
-                : '本机在线脚本目录同步$status',
-          );
-        }
-        return;
-      }
-      await Future<void>.delayed(const Duration(seconds: 1));
+      bytes.addAll(chunk);
     }
-    throw StateError('同步本机在线脚本目录超时');
+    return utf8.decode(bytes);
   }
 
-  String _requestId() {
+  String _randomId() {
     final random = Random.secure();
     return List<int>.generate(
-      16,
+      12,
       (_) => random.nextInt(256),
     ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
-  }
-
-  Map<String, dynamic> _jsonMap(String body) {
-    final value = jsonDecode(body);
-    if (value is! Map<String, dynamic>) {
-      throw const FormatException('本机 FLS 返回了无效 JSON');
-    }
-    return value;
-  }
-
-  Uri _endpoint(Uri base, String relativePath) {
-    final prefix = base.path.replaceFirst(RegExp(r'/+$'), '');
-    return base.replace(
-      path: '$prefix/$relativePath',
-      query: null,
-      fragment: null,
-    );
   }
 
   void close() {
     if (_ownsClient) _client.close();
   }
+}
+
+class _GithubRepository {
+  const _GithubRepository(this.owner, this.repository, this.branch);
+
+  final String owner;
+  final String repository;
+  final String branch;
+}
+
+class _FileBackup {
+  const _FileBackup(this.destination, this.backup);
+
+  final File destination;
+  final File? backup;
 }

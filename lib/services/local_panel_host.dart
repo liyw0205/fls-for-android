@@ -52,6 +52,12 @@ class LocalPanelStatus {
 
 class LocalPanelHost {
   static const _channel = MethodChannel('top.fls/local_panel');
+  static const _commandEvents = EventChannel('top.fls/container_command');
+
+  static Stream<String> get containerCommandOutput => _commandEvents
+      .receiveBroadcastStream()
+      .where((event) => event is String)
+      .cast<String>();
 
   static Future<List<String>> supportedAbis() async {
     final values = await _channel.invokeListMethod<String>('supportedAbis');
@@ -75,6 +81,34 @@ class LocalPanelHost {
         }) ??
         false;
   }
+
+  static Future<int> runContainerCommand({
+    required String runtimeDir,
+    required String projectDir,
+    required String dataDir,
+    required String logDir,
+    required String scriptsDir,
+    required String command,
+    required ValueChanged<String> onOutput,
+  }) async {
+    final subscription = containerCommandOutput.listen(onOutput);
+    try {
+      return await _channel.invokeMethod<int>('runContainerCommand', {
+            'runtimeDir': runtimeDir,
+            'projectDir': projectDir,
+            'dataDir': dataDir,
+            'logDir': logDir,
+            'scriptsDir': scriptsDir,
+            'command': command,
+          }) ??
+          -1;
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  static Future<void> cancelContainerCommand() =>
+      _channel.invokeMethod<void>('cancelContainerCommand');
 
   static Future<void> stop() async {
     await _channel.invokeMethod<void>('stop');

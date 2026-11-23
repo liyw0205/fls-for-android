@@ -6,18 +6,29 @@ import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var pendingFileResult: MethodChannel.Result? = null
     private var pendingExportPath: String? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var containerCommandProcess: Process? = null
+    @Volatile private var containerCommandSink: EventChannel.EventSink? = null
+    private var containerCommandRunning = false
+    private var containerCommandCancelled = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -92,9 +103,24 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "readServiceLog" -> result.success(readServiceLog())
+                    "runContainerCommand" -> runContainerCommand(call.arguments, result)
+                    "cancelContainerCommand" -> cancelContainerCommand(result)
                     else -> result.notImplemented()
                 }
             }
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, COMMAND_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(
+                    arguments: Any?,
+                    events: EventChannel.EventSink,
+                ) {
+                    containerCommandSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    containerCommandSink = null
+                }
+            })
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -123,6 +149,158 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun runContainerCommand(
+        rawArguments: Any?,
+        result: MethodChannel.Result,
+    ) {
+        val args = rawArguments as? Map<*, *>
+        if (args == null || REQUIRED_PATHS.any { args[it] !is String }) {
+            result.error("invalid_args", "在线脚本运行目录参数无效", null)
+            return
+        }
+        val command = args["command"] as? String
+        if (command.isNullOrBlank() || command.length > MAX_SCRIPT_COMMAND_LENGTH) {
+            result.error("invalid_args", "在线脚本安装命令无效", null)
+            return
+        }
+        synchronized(this) {
+            if (containerCommandRunning) {
+                result.error("command_busy", "另一个本机容器命令正在运行", null)
+                return
+            }
+            containerCommandRunning = true
+            containerCommandCancelled = false
+        }
+
+        val paths = REQUIRED_PATHS.associateWith { args[it] as String }
+        Thread {
+            var temporaryDirectory: File? = null
+            var process: Process? = null
+            try {
+                val runtime = File(paths.getValue("runtimeDir"))
+                val rootfs = File(runtime, "rootfs")
+                val proot = File(applicationInfo.nativeLibraryDir, "libdaidai_proot.so")
+                val loader = File(applicationInfo.nativeLibraryDir, "libproot_loader.so")
+                val project = File(paths.getValue("projectDir"))
+                val data = File(paths.getValue("dataDir"))
+                val log = File(paths.getValue("logDir"))
+                val scripts = File(paths.getValue("scriptsDir"))
+                if (!rootfs.isDirectory || !proot.canExecute() || !loader.canExecute()) {
+                    throw IllegalStateException("本机容器运行环境不完整，请先修复或重新安装环境")
+                }
+                listOf(project, data, log, scripts).forEach { it.mkdirs() }
+                temporaryDirectory = File(
+                    runtime,
+                    "tmp-fls-script-${System.currentTimeMillis()}",
+                ).apply { mkdirs() }
+
+                val processCommand = mutableListOf(
+                    proot.absolutePath,
+                    "--kill-on-exit",
+                    "--link2symlink",
+                    "-k", "4.14.0",
+                    "-0",
+                    "-r", rootfs.absolutePath,
+                    "-b", "/dev",
+                    "-b", "/proc",
+                    "-b", "/sys",
+                    "-b", "${project.absolutePath}:/opt/fls",
+                    "-b", "${data.absolutePath}:/opt/fls/data",
+                    "-b", "${log.absolutePath}:/opt/fls/log",
+                    "-b", "${scripts.absolutePath}:/opt/fls/scripts",
+                    "-w", "/opt/fls/scripts",
+                    "/bin/sh",
+                    "-lc",
+                    command,
+                )
+                val builder = ProcessBuilder(processCommand)
+                    .directory(filesDir)
+                    .redirectErrorStream(true)
+                builder.environment().apply {
+                    put("HOME", "/root")
+                    put(
+                        "PATH",
+                        "/opt/fls-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    )
+                    put("LD_LIBRARY_PATH", applicationInfo.nativeLibraryDir)
+                    put("PROOT_LOADER", loader.absolutePath)
+                    put("PROOT_TMP_DIR", temporaryDirectory.absolutePath)
+                    put("FLS_BASE_DIR", "/opt/fls")
+                    put("FLS_PYTHON", "/opt/fls-venv/bin/python")
+                    put("LANG", "C.UTF-8")
+                    put("LC_ALL", "C.UTF-8")
+                }
+                val activeProcess = synchronized(this) {
+                    if (containerCommandCancelled) {
+                        throw IllegalStateException("在线脚本安装已取消")
+                    }
+                    builder.start().also {
+                        process = it
+                        containerCommandProcess = it
+                    }
+                }
+                val reader = Thread {
+                    try {
+                        BufferedReader(InputStreamReader(activeProcess.inputStream)).use { input ->
+                            while (true) {
+                                val line = input.readLine() ?: break
+                                mainHandler.post { containerCommandSink?.success(line) }
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // The command may be cancelled while output is being read.
+                    }
+                }.apply { name = "fls-script-command-output" }
+                reader.start()
+
+                if (!activeProcess.waitFor(SCRIPT_COMMAND_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
+                    activeProcess.destroyForcibly()
+                    reader.join(2_000)
+                    throw IllegalStateException("在线脚本依赖安装超时")
+                }
+                reader.join(2_000)
+                val exitCode = activeProcess.exitValue()
+                runOnUiThread {
+                    if (exitCode == 0) result.success(exitCode)
+                    else result.error("command_failed", "安装命令退出码：$exitCode", exitCode)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("command_failed", error.message ?: "运行在线脚本命令失败", null)
+                }
+            } finally {
+                synchronized(this) {
+                    if (containerCommandProcess === process) containerCommandProcess = null
+                    containerCommandRunning = false
+                    containerCommandCancelled = false
+                }
+                temporaryDirectory?.deleteRecursively()
+            }
+        }.apply { name = "fls-script-command" }.start()
+    }
+
+    private fun cancelContainerCommand(result: MethodChannel.Result) {
+        val activeProcess = synchronized(this) {
+            containerCommandCancelled = true
+            containerCommandProcess
+        }
+        if (activeProcess == null) {
+            result.success(null)
+            return
+        }
+        Thread {
+            try {
+                activeProcess.destroyForcibly()
+                activeProcess.waitFor()
+                runOnUiThread { result.success(null) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("cancel_failed", error.message ?: "取消本机命令失败", null)
+                }
+            }
+        }.apply { name = "fls-script-command-cancel" }.start()
     }
 
     private fun notificationsGranted(): Boolean =
@@ -275,7 +453,10 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "top.fls/local_panel"
+        private const val COMMAND_CHANNEL = "top.fls/container_command"
         private const val FILE_CHANNEL = "top.fls/file_bridge"
+        private const val MAX_SCRIPT_COMMAND_LENGTH = 64 * 1024
+        private const val SCRIPT_COMMAND_TIMEOUT_MINUTES = 20L
         private const val REQUEST_PICK_CONTAINER = 5701
         private const val REQUEST_SAVE_CONTAINER = 5702
         private const val REQUEST_NOTIFICATIONS = 5703
