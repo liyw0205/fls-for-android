@@ -115,6 +115,30 @@ void main() {
     expect(clipboardText, 'download started');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('catalog refreshes install state when returning from details', (
+    tester,
+  ) async {
+    final manager = await _pumpScriptsView(tester);
+
+    await tester.tap(find.text('Daily check-in'));
+    await tester.pumpAndSettle();
+    await _pumpUntilVisible(tester, find.text('安装脚本'));
+    await tester.tap(find.text('安装脚本'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认安装'));
+    await tester.pump();
+    await manager.installStarted.future;
+    manager.installGate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('更新脚本'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('RAW · checkin.py · 已安装'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<_TestOnlineScriptsManager> _pumpScriptsView(
@@ -170,6 +194,7 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
   final bool offline;
   final Completer<void> installStarted = Completer<void>();
   final Completer<void> installGate = Completer<void>();
+  bool installed = false;
 
   static final _scripts = [
     OnlineScript(
@@ -217,7 +242,7 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
   Future<bool> hasInstallTarget(
     OnlineScript script,
     LocalInstallManager installManager,
-  ) async => false;
+  ) async => installed && script.id == 'daily_checkin';
 
   @override
   Future<void> installOrUpdateNative({
@@ -239,5 +264,6 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
         (_) => throw const OperationCancelled(),
       ),
     ]);
+    installed = true;
   }
 }

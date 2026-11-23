@@ -127,8 +127,8 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
         .toList();
   }
 
-  void _openScript(OnlineScript script) {
-    Navigator.of(context).push(
+  Future<void> _openScript(OnlineScript script) async {
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => _OnlineScriptDetailPage(
           manager: _manager,
@@ -140,6 +140,8 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
         ),
       ),
     );
+    if (!mounted) return;
+    await _refreshInstalledStates(_scripts);
   }
 
   @override
