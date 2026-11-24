@@ -8,7 +8,6 @@ import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_tasks_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/testing.dart';
 
 void main() {
   testWidgets('renders task details and keeps environment values hidden', (
@@ -20,7 +19,7 @@ void main() {
         cookie: 'fls_native_session=detail-session',
         csrfToken: 'detail-csrf',
       ),
-      client: MockClient((request) async {
+      client: panelMockClient((request) async {
         if (request.url.path == '/api/task/daily/log') {
           return utf8Response(
             '{"ok":true,"task_id":"daily","running":false,"lines":200,"log":"log line"}',

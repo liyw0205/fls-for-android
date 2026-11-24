@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 
 http.Response utf8Response(
   String body,
@@ -38,3 +39,20 @@ Future<void> pumpUntil(WidgetTester tester, bool Function() condition) async {
   }
   throw TestFailure('Timed out waiting for the expected state');
 }
+
+http.Client panelMockClient(
+  Future<http.Response> Function(http.Request request) handler,
+) => http_testing.MockClient.streaming((baseRequest, _) async {
+  final request = baseRequest as http.Request;
+  final response = await handler(request);
+  return http.StreamedResponse(
+    Stream<List<int>>.value(response.bodyBytes),
+    response.statusCode,
+    contentLength: response.contentLength,
+    request: request,
+    headers: response.headers,
+    isRedirect: response.isRedirect,
+    persistentConnection: response.persistentConnection,
+    reasonPhrase: response.reasonPhrase,
+  );
+});

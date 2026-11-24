@@ -8,7 +8,6 @@ import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_tasks_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/testing.dart';
 
 void main() {
   testWidgets('creates a task from the native form with a session', (
@@ -21,7 +20,7 @@ void main() {
         cookie: 'fls_native_session=form-session',
         csrfToken: 'form-csrf',
       ),
-      client: MockClient((request) async {
+      client: panelMockClient((request) async {
         expect(request.headers['cookie'], 'fls_native_session=form-session');
         if (request.url.path == '/api/tasks/form-options') {
           return utf8Response(
@@ -90,7 +89,7 @@ void main() {
         cookie: 'fls_native_session=form-session',
         csrfToken: 'form-csrf',
       ),
-      client: MockClient((request) async {
+      client: panelMockClient((request) async {
         if (request.url.path == '/api/tasks/form-options') {
           return utf8Response(
             '{"ok":true,"collections":[],"proxies":[],"notifications":[]}',

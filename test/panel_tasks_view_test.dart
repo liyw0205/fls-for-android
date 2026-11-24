@@ -42,7 +42,7 @@ void main() {
     tester,
   ) async {
     final credentials = _MemoryCredentials()..value = session;
-    final client = MockClient((request) async {
+    final client = panelMockClient((request) async {
       expect(request.headers['cookie'], session.cookie);
       expect(request.headers['x-token'], isNull);
       final dashboard = _dashboardResponse(request);
@@ -80,7 +80,7 @@ void main() {
   ) async {
     final credentials = _MemoryCredentials();
     var statusRequested = false;
-    final client = MockClient((request) async {
+    final client = panelMockClient((request) async {
       if (request.url.path == '/api/auth/session') {
         expect(request.headers['x-token'], isNull);
         expect(jsonDecode(request.body), {
@@ -133,7 +133,7 @@ void main() {
     tester,
   ) async {
     final credentials = _MemoryCredentials();
-    final client = MockClient((request) async {
+    final client = panelMockClient((request) async {
       if (request.url.path.endsWith('/api/auth/session')) {
         return utf8Response(
           '{"ok":true,"authenticated":false,"requires_verification":true,"verification_type":"totp","csrf_token":"csrf-pending"}',
@@ -193,7 +193,7 @@ void main() {
   ) async {
     final credentials = _MemoryCredentials()..value = session;
     var postCount = 0;
-    final client = MockClient((request) async {
+    final client = panelMockClient((request) async {
       expect(request.headers['cookie'], session.cookie);
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
