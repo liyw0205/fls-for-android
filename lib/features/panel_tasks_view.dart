@@ -703,7 +703,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
         ).showSnackBar(const SnackBar(content: Text('请先创建任务合集')));
         return null;
       }
-      return showDialog<PanelCollection>(
+      return await showDialog<PanelCollection>(
         context: context,
         builder: (dialogContext) => SimpleDialog(
           title: const Text('加入任务合集'),
