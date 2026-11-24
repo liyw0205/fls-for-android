@@ -64,8 +64,11 @@ void main() {
     await tester.pumpAndSettle();
 
     final saveButton = find.widgetWithText(FilledButton, '保存');
+    final nameField = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.labelText == '合集名称',
+    );
     expect(tester.widget<FilledButton>(saveButton).onPressed, isNull);
-    await tester.enterText(find.byType(TextField).first, '新建合集');
+    await tester.enterText(nameField, '新建合集');
     await tester.pump();
     expect(tester.widget<FilledButton>(saveButton).onPressed, isNotNull);
     await tester.tap(saveButton);
