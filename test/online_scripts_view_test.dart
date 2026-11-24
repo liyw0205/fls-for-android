@@ -103,6 +103,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('refreshing the catalog cancels an active update check', (
+    tester,
+  ) async {
+    final manager = await _pumpScriptsView(tester, installed: true);
+    await _pumpUntilVisible(tester, find.byTooltip('检查更新'));
+    manager.updateGate = Completer<void>();
+
+    await tester.tap(find.byTooltip('检查更新'));
+    await tester.pump();
+    await _pumpUntilVisible(tester, find.byTooltip('取消检查更新'));
+    await tester.tap(find.byTooltip('刷新目录'));
+    await tester.pumpAndSettle();
+
+    expect(manager.updateCheckCount, 1);
+    expect(find.text('RAW · checkin.py · 已安装'), findsOneWidget);
+    expect(find.byTooltip('检查更新'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('script detail shows progress, cancellation and log controls', (
     tester,
   ) async {

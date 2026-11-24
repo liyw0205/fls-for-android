@@ -64,6 +64,7 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
   }
 
   Future<void> _loadCatalog() async {
+    _updateCancellation?.cancel();
     setState(() {
       _loading = true;
       _error = null;
