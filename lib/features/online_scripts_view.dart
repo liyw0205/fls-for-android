@@ -716,6 +716,9 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
       if (!mounted) return;
       setState(() {
         _updateState = result.state;
+        if (result.state == OnlineScriptUpdateState.notInstalled) {
+          _installed = false;
+        }
         _installStatus = switch (result.state) {
           OnlineScriptUpdateState.notInstalled => '尚未安装',
           OnlineScriptUpdateState.upToDate => '已是最新版本',
@@ -725,8 +728,12 @@ class _OnlineScriptDetailPageState extends State<_OnlineScriptDetailPage> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _installError = error.toString();
-          if (cancellation.isCancelled) _installStatus = '已取消';
+          if (cancellation.isCancelled) {
+            _installError = null;
+            _installStatus = '已取消';
+          } else {
+            _installError = error.toString();
+          }
         });
       }
     } finally {

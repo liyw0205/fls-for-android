@@ -157,6 +157,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('detail update check handles cancellation and missing install', (
+    tester,
+  ) async {
+    final manager = await _pumpScriptsView(tester, installed: true);
+    await tester.tap(find.text('Daily check-in'));
+    await tester.pump();
+    await _pumpUntilVisible(tester, find.text('检查更新'));
+
+    manager.updateGate = Completer<void>();
+    await tester.tap(find.text('检查更新'));
+    await tester.pump();
+    expect(find.text('下载远端脚本并比对'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilVisible(tester, find.text('已取消'));
+
+    expect(find.text('操作已取消'), findsNothing);
+    expect(find.text('检查更新'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    manager.updateGate = null;
+    manager.updateResult = OnlineScriptUpdateState.notInstalled;
+    await tester.tap(find.text('检查更新'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('安装脚本'), findsOneWidget);
+    expect(find.text('检查更新'), findsNothing);
+    expect(find.text('更新脚本'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('catalog refreshes install state when returning from details', (
     tester,
   ) async {
