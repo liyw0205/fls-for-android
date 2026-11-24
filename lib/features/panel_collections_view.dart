@@ -687,51 +687,76 @@ Future<(String, String)?> _editDialog(
   String name = '',
   String remark = '',
 }) async {
-  final nameController = TextEditingController(text: name);
-  final remarkController = TextEditingController(text: remark);
-  final result = await showDialog<(String, String)>(
+  return showDialog<(String, String)>(
     context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: Text(name.isEmpty ? '新建合集' : '编辑合集'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                autofocus: true,
-                onChanged: (_) => setDialogState(() {}),
-                decoration: const InputDecoration(labelText: '合集名称'),
-              ),
-              TextField(
-                controller: remarkController,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: '备注'),
-              ),
-            ],
+    builder: (_) => _CollectionEditDialog(name: name, remark: remark),
+  );
+}
+
+class _CollectionEditDialog extends StatefulWidget {
+  const _CollectionEditDialog({required this.name, required this.remark});
+
+  final String name;
+  final String remark;
+
+  @override
+  State<_CollectionEditDialog> createState() => _CollectionEditDialogState();
+}
+
+class _CollectionEditDialogState extends State<_CollectionEditDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _remarkController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.name);
+    _remarkController = TextEditingController(text: widget.remark);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _remarkController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.name.isEmpty ? '新建合集' : '编辑合集'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameController,
+            autofocus: true,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: '合集名称'),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: nameController.text.trim().isEmpty
-                ? null
-                : () => Navigator.pop(context, (
-                    nameController.text.trim(),
-                    remarkController.text.trim(),
-                  )),
-            child: const Text('保存'),
+          TextField(
+            controller: _remarkController,
+            minLines: 2,
+            maxLines: 4,
+            decoration: const InputDecoration(labelText: '备注'),
           ),
         ],
       ),
     ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: _nameController.text.trim().isEmpty
+            ? null
+            : () => Navigator.pop(context, (
+                _nameController.text.trim(),
+                _remarkController.text.trim(),
+              )),
+        child: const Text('保存'),
+      ),
+    ],
   );
-  nameController.dispose();
-  remarkController.dispose();
-  return result;
 }
