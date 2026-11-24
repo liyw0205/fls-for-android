@@ -323,6 +323,87 @@ void main() {
     );
   });
 
+  test(
+    'cancelling a dependency command stops PRoot and restores the script',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'fls-script-command-cancel-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _TestPathProvider(temp.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+
+      final client = MockClient((request) async {
+        expect(request.url, Uri.parse('https://raw.example/checkin.py'));
+        return http.Response('new version', 200);
+      });
+      final manager = OnlineScriptsManager(client: client);
+      addTearDown(manager.close);
+      final installManager = _RuntimeReadyInstallManager();
+      final scripts = await installManager.scripts;
+      await scripts.create(recursive: true);
+      final installed = File('${scripts.path}/checkin.py');
+      await installed.writeAsString('old version');
+
+      final commandStarted = Completer<void>();
+      final commandResult = Completer<int>();
+      final calls = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const localPanelChannel = MethodChannel('top.fls/local_panel');
+      const commandEventChannel = MethodChannel('top.fls/container_command');
+      messenger.setMockMethodCallHandler(localPanelChannel, (call) async {
+        calls.add(call.method);
+        if (call.method == 'runContainerCommand') {
+          commandStarted.complete();
+          return commandResult.future;
+        }
+        if (call.method == 'cancelContainerCommand') {
+          commandResult.completeError(
+            PlatformException(code: 'command_cancelled'),
+          );
+        }
+        return null;
+      });
+      messenger.setMockMethodCallHandler(commandEventChannel, (call) async {
+        calls.add('event:${call.method}');
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(localPanelChannel, null);
+        messenger.setMockMethodCallHandler(commandEventChannel, null);
+      });
+
+      final cancellation = OperationCancellation();
+      final operation = manager.installOrUpdateNative(
+        script: _rawScript(installCommand: 'python -m pip install requests'),
+        installManager: installManager,
+        overwriteExisting: true,
+        cancellation: cancellation,
+        onStatus: (_) {},
+      );
+      await commandStarted.future;
+      cancellation.cancel();
+
+      await expectLater(operation, throwsA(isA<OperationCancelled>()));
+
+      expect(calls, contains('runContainerCommand'));
+      expect(calls, contains('cancelContainerCommand'));
+      expect(calls, isNot(contains('start')));
+      expect(await installed.readAsString(), 'old version');
+      expect(
+        await scripts
+            .list()
+            .where(
+              (entity) => p.basename(entity.path).startsWith('.fls-script-'),
+            )
+            .isEmpty,
+        isTrue,
+      );
+    },
+  );
+
   test('online script identifiers reject paths and whitespace', () {
     expect(
       () => OnlineScript.fromJson({
@@ -647,12 +728,13 @@ void main() {
   );
 }
 
-OnlineScript _rawScript() => OnlineScript.fromJson({
+OnlineScript _rawScript({String installCommand = ''}) => OnlineScript.fromJson({
   'id': 'daily_checkin',
   'name': 'Daily check-in',
   'type': 'raw',
   'link': 'https://raw.example/checkin.py',
   'link_name': 'checkin.py',
+  'install': installCommand,
 });
 
 Future<void> _expectRepositoryArchiveRejected(

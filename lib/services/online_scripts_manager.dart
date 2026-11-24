@@ -530,6 +530,7 @@ class OnlineScriptsManager {
           }
         }
       }
+      if (cancellation.isCancelled) throw const OperationCancelled();
       rethrow;
     } finally {
       if (await staging.exists()) await staging.delete(recursive: true);
