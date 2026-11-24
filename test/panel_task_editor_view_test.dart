@@ -67,12 +67,12 @@ void main() {
       ),
     );
     await tester.tap(find.text('打开编辑器'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('任务名称'));
 
     await tester.enterText(find.byType(TextFormField).at(0), '每日签到');
     await tester.enterText(find.byType(TextFormField).at(2), 'python daily.py');
     await tester.tap(find.text('保存任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('打开编辑器'));
 
     expect(created, isTrue);
     expect(find.text('打开编辑器'), findsOneWidget);
@@ -135,19 +135,19 @@ void main() {
       ),
     );
     await tester.tap(find.text('打开编辑器'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('任务名称'));
 
     await tester.enterText(find.byType(TextFormField).at(0), '每日签到');
     await tester.enterText(find.byType(TextFormField).at(2), 'python daily.py');
     await tester.tap(find.text('保存任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('任务已保存，调度器尚未重载。不要重复保存。'));
 
     expect(saveRequests, 1);
     expect(find.text('任务已保存，调度器尚未重载。不要重复保存。'), findsOneWidget);
     expect(find.text('重新加载调度器'), findsOneWidget);
 
     await tester.tap(find.text('重新加载调度器'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('打开编辑器'));
 
     expect(saveRequests, 1);
     expect(reloadRequests, 1);

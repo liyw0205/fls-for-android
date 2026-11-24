@@ -71,7 +71,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('主账号'));
 
     expect(find.text('主账号'), findsOneWidget);
     expect(find.text('python daily.py'), findsOneWidget);

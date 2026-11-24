@@ -59,17 +59,17 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('2026-11-25 12:00:00'));
 
     expect(find.text('2026-11-25 12:00:00'), findsOneWidget);
     expect(find.text('已完成'), findsOneWidget);
     expect(find.text('1 个任务已加入调度'), findsOneWidget);
     await tester.tap(find.text('任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('每日签到'));
     expect(find.text('每日签到'), findsOneWidget);
     expect(find.text('运行中的监控'), findsOneWidget);
     await tester.tap(find.text('运行中'));
-    await tester.pumpAndSettle();
+    await pumpUntil(tester, () => find.text('每日签到').evaluate().isEmpty);
     expect(find.text('运行中的监控'), findsOneWidget);
     expect(find.text('每日签到'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -110,21 +110,21 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('连接面板'));
     expect(find.text('连接面板'), findsOneWidget);
 
     await tester.tap(find.text('连接面板'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.widgetWithText(FilledButton, '连接'));
     await tester.enterText(find.byType(TextField), 'correct-token');
     await tester.tap(find.widgetWithText(FilledButton, '连接'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('已完成'));
 
     expect(statusRequested, isTrue);
     expect(credentials.value?.cookie, 'fls_native_session=new-session');
     expect(credentials.value?.csrfToken, 'csrf-new');
     expect(credentials.value.toString(), isNot(contains('correct-token')));
     await tester.tap(find.text('任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('每日签到'));
     expect(find.text('每日签到'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -167,23 +167,23 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('连接面板'));
     await tester.tap(find.text('连接面板'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.widgetWithText(FilledButton, '连接'));
     await tester.enterText(find.byType(TextField), 'correct-token');
     await tester.tap(find.widgetWithText(FilledButton, '连接'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('输入身份验证器代码'));
 
     expect(find.text('输入身份验证器代码'), findsOneWidget);
     expect(credentials.value, isNull);
     await tester.enterText(find.byType(TextField).last, '123456');
     await tester.tap(find.widgetWithText(FilledButton, '验证'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('已完成'));
 
     expect(credentials.value?.cookie, 'fls_native_session=pending-session');
     expect(credentials.value?.csrfToken, 'csrf-verified');
     await tester.tap(find.text('任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('每日签到'));
     expect(find.text('每日签到'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -216,15 +216,15 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('2026-11-25 12:00:00'));
     await tester.tap(find.text('任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('每日签到'));
     await tester.tap(find.byTooltip('任务操作').first);
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('立即运行'));
     await tester.tap(find.text('立即运行'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('确认'));
     await tester.tap(find.text('确认'));
-    await tester.pumpAndSettle();
+    await pumpUntil(tester, () => postCount == 1);
 
     expect(postCount, 1);
     expect(find.text('每日签到'), findsOneWidget);
@@ -277,11 +277,11 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('2026-11-25 12:00:00'));
     await tester.tap(find.text('任务'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('每日签到'));
     await tester.tap(find.text('每日签到'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('python /scripts/daily.py'));
 
     expect(find.text('python /scripts/daily.py'), findsOneWidget);
     expect(find.text('暂无运行记录'), findsOneWidget);
