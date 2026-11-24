@@ -53,6 +53,15 @@ void main() {
       await tester.pump();
       await _pumpUntilVisible(tester, find.text('检查更新'));
       expect(find.text('更新脚本'), findsOneWidget);
+      final checkButton = find.text('检查更新');
+      final installButton = find.text('更新脚本');
+      await tester.ensureVisible(checkButton);
+      final checkRect = tester.getRect(checkButton);
+      _expectWithinViewport(checkRect, size);
+      await tester.ensureVisible(installButton);
+      final installRect = tester.getRect(installButton);
+      _expectWithinViewport(installRect, size);
+      expect(checkRect.overlaps(installRect), isFalse);
       expect(tester.takeException(), isNull);
       await tester.pageBack();
       await tester.pumpAndSettle();
@@ -299,6 +308,13 @@ Future<void> _pumpUntilVisible(WidgetTester tester, Finder finder) async {
   for (var frame = 0; frame < 20 && finder.evaluate().isEmpty; frame++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
+}
+
+void _expectWithinViewport(Rect rect, Size size) {
+  expect(rect.left, greaterThanOrEqualTo(0));
+  expect(rect.top, greaterThanOrEqualTo(0));
+  expect(rect.right, lessThanOrEqualTo(size.width));
+  expect(rect.bottom, lessThanOrEqualTo(size.height));
 }
 
 class _TestOnlineScriptsManager extends OnlineScriptsManager {
