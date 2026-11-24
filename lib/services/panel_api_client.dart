@@ -194,16 +194,17 @@ class PanelApiClient {
           ? null
           : _decodeJson(text, response.statusCode, uri.path);
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        final errorRedactValues = [
+          ...redactValues,
+          if (cookie != null) cookie.split('=').last,
+        ];
         throw PanelApiException(
-          _errorMessage(decoded, response.statusCode, [
-            ...redactValues,
-            if (cookie != null) cookie.split('=').last,
-          ]),
+          _errorMessage(decoded, response.statusCode, errorRedactValues),
           statusCode: response.statusCode,
           path: uri.path,
           data: _errorMetadata(
             decoded,
-            [...redactValues, if (cookie != null) cookie.split('=').last],
+            errorRedactValues,
             includeTaskActionDetails: _isTaskActionPath(Uri.parse(path).path),
           ),
         );
