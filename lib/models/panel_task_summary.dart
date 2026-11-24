@@ -9,6 +9,7 @@ class PanelTaskSummary {
     required this.runCount,
     this.pid,
     this.processName,
+    this.collectionId = '',
   });
 
   final String id;
@@ -20,6 +21,7 @@ class PanelTaskSummary {
   final int runCount;
   final String? pid;
   final String? processName;
+  final String collectionId;
 
   factory PanelTaskSummary.fromJson(Object? value) {
     if (value is! Map<String, dynamic>) {
@@ -40,6 +42,7 @@ class PanelTaskSummary {
       runCount: _asInt(value['run_count']),
       pid: value['pid']?.toString(),
       processName: value['process_name']?.toString(),
+      collectionId: value['collection_id']?.toString() ?? '',
     );
   }
 

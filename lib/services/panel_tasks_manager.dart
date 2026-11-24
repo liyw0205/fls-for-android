@@ -1,3 +1,6 @@
+import 'dart:math';
+
+import '../models/panel_collection.dart';
 import '../models/panel_task_detail.dart';
 import '../models/panel_task_draft.dart';
 import '../models/panel_task_summary.dart';
@@ -7,6 +10,138 @@ class PanelTasksManager {
   const PanelTasksManager(this._api);
 
   final PanelApiClient _api;
+
+  Future<PanelCollectionPage> fetchCollections({
+    String query = '',
+    int page = 1,
+    int limit = 50,
+  }) async {
+    final queryString = Uri(
+      queryParameters: {'q': query, 'page': '$page', 'limit': '$limit'},
+    ).query;
+    const path = '/api/collections';
+    final payload = await _api.getJson('$path?$queryString');
+    try {
+      return PanelCollectionPage.fromJson(payload);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelCollectionTaskPage> fetchCollectionTasks(
+    String collectionId, {
+    String view = 'members',
+    String query = '',
+    int page = 1,
+    int limit = 50,
+  }) async {
+    if (!const {'members', 'available'}.contains(view)) {
+      throw ArgumentError.value(view, 'view', '合集任务视图无效');
+    }
+    final path = '/api/collection/${Uri.encodeComponent(collectionId)}';
+    final queryString = Uri(
+      queryParameters: {
+        'view': view,
+        'q': query,
+        'page': '$page',
+        'limit': '$limit',
+      },
+    ).query;
+    final payload = await _api.getJson('$path?$queryString');
+    try {
+      return PanelCollectionTaskPage.fromJson(payload);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<Map<String, dynamic>> saveCollection({
+    required String requestId,
+    required String name,
+    required String remark,
+    String collectionId = '',
+    String? collectionVersion,
+  }) async {
+    final payload = await _api.postJson('/api/collection/save', {
+      'request_id': requestId,
+      'collection_id': collectionId,
+      'name': name,
+      'remark': remark,
+      ...?collectionVersion == null
+          ? null
+          : {'collection_version': collectionVersion},
+    });
+    return _collectionMutationPayload(payload, '/api/collection/save');
+  }
+
+  Future<Map<String, dynamic>> addTasksToCollection({
+    required String collectionId,
+    required List<String> taskIds,
+    required Map<String, String> expectedCollections,
+    required String requestId,
+  }) async {
+    final path =
+        '/api/collection/add-task/${Uri.encodeComponent(collectionId)}';
+    final payload = await _api.postJson(path, {
+      'request_id': requestId,
+      'task_ids': taskIds,
+      'expected_collections': expectedCollections,
+    });
+    return _collectionMutationPayload(payload, path);
+  }
+
+  Future<Map<String, dynamic>> removeTaskFromCollection({
+    required String taskId,
+    required String collectionId,
+    required String requestId,
+  }) async {
+    final path =
+        '/api/task/action/clear_collection/${Uri.encodeComponent(taskId)}';
+    final payload = await _api.postJson(path, {
+      'request_id': requestId,
+      'expected_collection': collectionId,
+    });
+    return _collectionMutationPayload(payload, path);
+  }
+
+  Future<Map<String, dynamic>> deleteCollection({
+    required String collectionId,
+    required List<String> expectedMembers,
+    required String collectionVersion,
+    required String requestId,
+  }) async {
+    final path = '/api/collection/delete/${Uri.encodeComponent(collectionId)}';
+    final payload = await _api.postJson(path, {
+      'request_id': requestId,
+      'expected_members': expectedMembers,
+      'collection_version': collectionVersion,
+    });
+    return _collectionMutationPayload(payload, path);
+  }
+
+  static String newRequestId() {
+    final random = Random.secure();
+    return List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  Map<String, dynamic> _collectionMutationPayload(
+    Object? payload,
+    String path,
+  ) {
+    if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+      final message = payload is Map<String, dynamic>
+          ? payload['msg']?.toString()
+          : null;
+      throw PanelApiException(
+        message?.trim().isNotEmpty == true ? message!.trim() : '合集操作失败',
+        path: path,
+      );
+    }
+    return payload;
+  }
 
   Future<PanelTaskFormOptions> fetchTaskFormOptions() async {
     final payload = await _api.getJson('/api/tasks/form-options');

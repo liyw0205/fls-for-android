@@ -10,6 +10,7 @@ import '../services/panel_api_client.dart';
 import '../services/panel_credential_store.dart';
 import '../services/panel_dashboard_manager.dart';
 import '../services/panel_tasks_manager.dart';
+import 'panel_collections_view.dart';
 import 'panel_task_detail_view.dart';
 import 'panel_task_editor_view.dart';
 import 'remote_web_view.dart';
@@ -36,6 +37,7 @@ class PanelTasksView extends StatefulWidget {
 
 class _PanelTasksViewState extends State<PanelTasksView> {
   final _searchController = TextEditingController();
+  final _collectionsKey = GlobalKey<PanelCollectionsViewState>();
   PanelApiClient? _api;
   PanelDashboardManager? _dashboardManager;
   PanelTasksManager? _manager;
@@ -434,8 +436,10 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     if (_selectedPanelTab == 0) {
       await _refresh();
       await _refreshDashboard();
-    } else {
+    } else if (_selectedPanelTab == 1) {
       await _refresh();
+    } else {
+      await _collectionsKey.currentState?.refresh();
     }
   }
 
@@ -635,8 +639,10 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                 setState(() => _selectedPanelTab = index);
                 if (index == 0) {
                   unawaited(_refreshDashboard());
-                } else {
+                } else if (index == 1) {
                   unawaited(_refresh());
+                } else {
+                  unawaited(_collectionsKey.currentState?.refresh());
                 }
               },
               destinations: const [
@@ -649,6 +655,11 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   icon: Icon(Icons.checklist_outlined),
                   selectedIcon: Icon(Icons.checklist),
                   label: '任务',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.folder_outlined),
+                  selectedIcon: Icon(Icons.folder),
+                  label: '合集',
                 ),
               ],
             )
@@ -665,6 +676,17 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       return _buildConnectionError(context);
     }
     if (_selectedPanelTab == 0) return _buildDashboardBody(context);
+    if (_selectedPanelTab == 2) {
+      final manager = _manager;
+      if (manager == null) return _buildConnectionError(context);
+      return PanelCollectionsView(
+        key: _collectionsKey,
+        manager: manager,
+        onUnauthorized: (error) async {
+          await _expireSession(error);
+        },
+      );
+    }
 
     final visible = _visibleTasks;
     return Column(

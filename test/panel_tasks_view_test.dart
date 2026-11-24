@@ -75,6 +75,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('opens native collection list and member/available task views', (
+    tester,
+  ) async {
+    final credentials = _MemoryCredentials()..value = session;
+    final client = panelMockClient((request) async {
+      final dashboard = _dashboardResponse(request);
+      if (dashboard != null) return dashboard;
+      if (request.url.path == '/api/status') {
+        return utf8Response(jsonEncode(tasks), 200);
+      }
+      if (request.url.path == '/api/collections') {
+        return utf8Response(
+          '{"ok":true,"items":[{"id":"group-a","name":"每日合集","remark":"签到任务","member_count":1}],"page":1,"pages":1,"total":1}',
+          200,
+        );
+      }
+      if (request.url.path == '/api/collection/group-a') {
+        if (request.url.queryParameters['view'] == 'available') {
+          return utf8Response(
+            '{"ok":true,"collection":{"id":"group-a","name":"每日合集","remark":"签到任务","member_count":1},"collection_version":"revision-a","view":"available","items":[{"id":"new-task","name":"可加入任务","command":"python task.py","cron":"","enabled":true,"running":false,"run_count":0,"collection_id":""}],"page":1,"pages":1,"total":1}',
+            200,
+          );
+        }
+        return utf8Response(
+          '{"ok":true,"collection":{"id":"group-a","name":"每日合集","remark":"签到任务","member_count":1},"collection_version":"revision-a","view":"members","member_ids":["daily"],"items":[{"id":"daily","name":"已有任务","command":"python daily.py","cron":"","enabled":true,"running":false,"run_count":0,"collection_id":"group-a"}],"page":1,"pages":1,"total":1}',
+          200,
+        );
+      }
+      fail('Unexpected request: ${request.method} ${request.url}');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelTasksView(
+          server: server,
+          credentialStore: credentials,
+          client: client,
+        ),
+      ),
+    );
+    await pumpUntilFound(tester, find.text('2026-11-25 12:00:00'));
+    await tester.tap(find.text('合集'));
+    await pumpUntilFound(tester, find.text('每日合集'));
+    await tester.tap(find.text('每日合集'));
+    await pumpUntilFound(tester, find.text('已有任务'));
+    await tester.tap(find.text('添加任务'));
+    await pumpUntilFound(tester, find.text('可加入任务'));
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('stores only the verified server session after sign-in', (
     tester,
   ) async {
