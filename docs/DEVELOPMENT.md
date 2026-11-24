@@ -5,7 +5,8 @@
 - Flutter stable and Dart from the Flutter SDK
 - JDK 17 or newer
 - Android SDK Platform 35 and Android build tools
-- Android device or emulator for PRoot execution tests
+- Physical Android device for user-led PRoot acceptance. ADB and emulator
+  testing are not part of the development workflow.
 
 ## Local commands
 
@@ -20,11 +21,12 @@ flutter build apk --release --target-platform android-arm64
 Local mode currently requires ARM64 Android. Other ABIs can use remote panel
 mode but must fail local installation before downloading a runtime.
 
-## Required device checks
+## User-led device checks
 
 The CI build cannot prove that Termux-built PRoot works from this app's
-non-root Android sandbox. Before a public local-mode release, test on at least
-one ARM64 Android phone and one Android 14+ device:
+non-root Android sandbox. Device checks are performed manually by the user;
+they do not block unrelated code changes or CI verification. Before relying on
+local mode for a release, the user should test on an ARM64 Android device:
 
 1. Install with an empty app data directory; verify ABI selection, download
    progress, SHA-256 rejection, extraction and first boot.
@@ -58,7 +60,11 @@ Container management checks:
 
 Record device model, Android API, ABI, app version, exact action, result, and
 relevant service log for each run. Do not mark a test as passed based only on
-an APK build.
+an APK build. Unperformed checks remain pending; no ADB or emulator setup is
+expected from the development agent.
+
+See [the Goal roadmap](GOAL-ROADMAP.md) for the next code-sized development
+tasks and their automated acceptance criteria.
 
 ## Release boundaries
 

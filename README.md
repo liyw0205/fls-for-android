@@ -8,6 +8,10 @@ FLS panel remains the source of truth for its web UI and backend behavior.
 
 - Save multiple remote panel addresses and open the existing panel in Android
   WebView. Login and session cookies stay in the WebView data store.
+- Open remote and running local panels through the native overview and task
+  summary. The sign-in flow exchanges the administrator token for a panel
+  session; verified session cookies are stored per panel in Android secure
+  storage. WebView remains the fallback for domains that have not yet migrated.
 - Install either the ARM64 Python or Full PRoot runtime from the fixed
   [`proot-runtime` release](https://github.com/liyw0205/fls/releases/tag/proot-runtime),
   with optional GitHub mirror support.

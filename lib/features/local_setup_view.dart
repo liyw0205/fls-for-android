@@ -10,7 +10,7 @@ import '../services/local_panel_host.dart';
 import '../services/operation_cancellation.dart';
 import '../widgets/native_markdown_view.dart';
 import 'app_update_view.dart';
-import 'remote_web_view.dart';
+import 'panel_tasks_view.dart';
 import 'online_scripts_view.dart';
 import '../models/panel_server.dart';
 
@@ -717,8 +717,9 @@ class _LocalSetupViewState extends State<LocalSetupView>
   void _openLocalPanel() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const RemoteWebView(
+        builder: (_) => const PanelTasksView(
           server: PanelServer(name: '本机 FLS', url: 'http://127.0.0.1:5700'),
+          allowInsecureHttp: true,
         ),
       ),
     );

@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/panel_server.dart';
+import '../services/panel_credential_store.dart';
 import '../services/panel_store.dart';
+import 'panel_tasks_view.dart';
 import 'remote_data_sync_view.dart';
 import 'remote_web_view.dart';
 
@@ -16,6 +18,7 @@ class RemotePanelsView extends StatefulWidget {
 
 class _RemotePanelsViewState extends State<RemotePanelsView> {
   final _store = PanelStore();
+  final _credentialStore = const SecurePanelCredentialStore();
   List<PanelServer> _servers = const [];
   bool _loading = true;
   String _query = '';
@@ -128,7 +131,10 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
     }
     setState(() => _servers = next);
     await _store.save(next);
-    if (existing == null) _openPanel(server);
+    if (existing != null && existing.url != server.url) {
+      await _credentialStore.delete(existing.url);
+    }
+    if (existing == null) _openNativePanel(server);
   }
 
   Future<void> _addServer() => _editServer();
@@ -171,9 +177,16 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
     final next = _servers.where((item) => item.url != server.url).toList();
     setState(() => _servers = next);
     await _store.save(next);
+    await _credentialStore.delete(server.url);
   }
 
-  void _openPanel(PanelServer server) {
+  void _openNativePanel(PanelServer server) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => PanelTasksView(server: server)),
+    );
+  }
+
+  void _openWebPanel(PanelServer server) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => RemoteWebView(server: server)),
     );
@@ -325,10 +338,20 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                         onSelected: (value) {
                           if (value == 'favorite') _toggleFavorite(server);
                           if (value == 'edit') _editServer(server);
+                          if (value == 'native') _openNativePanel(server);
+                          if (value == 'web') _openWebPanel(server);
                           if (value == 'sync') unawaited(_syncPanel(server));
                           if (value == 'remove') _removeServer(server);
                         },
                         itemBuilder: (_) => [
+                          const PopupMenuItem(
+                            value: 'native',
+                            child: Text('原生面板'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'web',
+                            child: Text('Web 面板'),
+                          ),
                           PopupMenuItem(
                             value: 'favorite',
                             child: Text(server.isFavorite ? '取消收藏' : '收藏'),
@@ -344,7 +367,7 @@ class _RemotePanelsViewState extends State<RemotePanelsView> {
                           ),
                         ],
                       ),
-                      onTap: () => _openPanel(server),
+                      onTap: () => _openNativePanel(server),
                     ),
                   );
                 },
