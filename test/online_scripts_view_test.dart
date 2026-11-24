@@ -160,6 +160,11 @@ void main() {
   testWidgets('detail update check handles cancellation and missing install', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final manager = await _pumpScriptsView(tester, installed: true);
     await tester.tap(find.text('Daily check-in'));
     await tester.pump();
