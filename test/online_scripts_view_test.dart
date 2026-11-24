@@ -193,6 +193,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'unknown-length download shows bytes with indeterminate progress',
+    (tester) async {
+      final manager = await _pumpScriptsView(tester);
+      manager.installProgressTotalBytes = null;
+      await tester.tap(find.text('Daily check-in'));
+      await tester.pump();
+      await _pumpUntilVisible(tester, find.text('脚本文档'));
+      await tester.tap(find.text('安装脚本'));
+      await tester.pump();
+      await tester.tap(find.text('确认安装'));
+      await tester.pump();
+      await manager.installStarted.future;
+      await tester.pump();
+
+      expect(find.text('0.5 MB / -- MB'), findsOneWidget);
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator).last,
+            )
+            .value,
+        isNull,
+      );
+      expect(find.textContaining('%'), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('取消'));
+      await tester.pump();
+      await _pumpUntilVisible(tester, find.text('已取消'));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('detail update check handles cancellation and missing install', (
     tester,
   ) async {
@@ -322,6 +356,7 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
 
   final bool offline;
   bool installed;
+  int? installProgressTotalBytes = 1048576;
   final Completer<void> installStarted = Completer<void>();
   final Completer<void> installGate = Completer<void>();
   OnlineScriptUpdateState updateResult = OnlineScriptUpdateState.upToDate;
@@ -413,7 +448,7 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
     OnlineScriptsProgressCallback? onProgress,
   }) async {
     onStatus('下载脚本');
-    onProgress?.call(524288, 1048576);
+    onProgress?.call(524288, installProgressTotalBytes);
     onLog?.call('download started');
     installStarted.complete();
     await Future.any<void>([

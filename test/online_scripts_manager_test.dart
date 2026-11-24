@@ -283,6 +283,53 @@ void main() {
     },
   );
 
+  test(
+    'slow downloads without a content length report received bytes',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'fls-script-unknown-length-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _TestPathProvider(temp.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+
+      final chunks = [
+        Future<List<int>>.delayed(
+          const Duration(milliseconds: 20),
+          () => [1, 2],
+        ),
+        Future<List<int>>.delayed(
+          const Duration(milliseconds: 20),
+          () => [3, 4, 5],
+        ),
+      ];
+      final client = MockClient.streaming((request, _) async {
+        expect(request.url, Uri.parse('https://raw.example/checkin.py'));
+        return http.StreamedResponse(Stream.fromFutures(chunks), 200);
+      });
+      final manager = OnlineScriptsManager(client: client);
+      addTearDown(manager.close);
+      final installManager = _RuntimeReadyInstallManager();
+      final progress = <(int, int?)>[];
+
+      await manager.installOrUpdateNative(
+        script: _rawScript(),
+        installManager: installManager,
+        overwriteExisting: false,
+        cancellation: OperationCancellation(),
+        onStatus: (_) {},
+        onProgress: (received, total) => progress.add((received, total)),
+      );
+
+      final installed = File(
+        '${(await installManager.scripts).path}/checkin.py',
+      );
+      expect(await installed.readAsBytes(), [1, 2, 3, 4, 5]);
+      expect(progress, [(2, null), (5, null)]);
+    },
+  );
+
   test('cancelling an aborted download preserves the installed file', () async {
     final temp = await Directory.systemTemp.createTemp('fls-script-cancel-');
     addTearDown(() => temp.delete(recursive: true));
