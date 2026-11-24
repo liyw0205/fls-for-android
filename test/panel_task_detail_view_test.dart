@@ -71,18 +71,32 @@ void main() {
       ),
     );
     await pumpUntilFound(tester, find.text('主账号'));
-    await tester.scrollUntilVisible(
-      find.text('成功'),
-      240,
-      scrollable: find.byType(Scrollable).first,
-    );
-
     expect(find.text('主账号'), findsOneWidget);
     expect(find.text('python daily.py'), findsOneWidget);
-    expect(find.text('成功'), findsOneWidget);
+
+    await tester.tap(find.text('任务变量（1）'));
+    await tester.pumpAndSettle();
     expect(find.text('已隐藏'), findsOneWidget);
     expect(find.text('very-secret'), findsNothing);
 
+    await tester.scrollUntilVisible(
+      find.text('成功'),
+      240,
+      scrollable: find.descendant(
+        of: find.byType(ListView).first,
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(find.text('成功'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.byTooltip('显示变量值'),
+      -240,
+      scrollable: find.descendant(
+        of: find.byType(ListView).first,
+        matching: find.byType(Scrollable),
+      ),
+    );
     await tester.tap(find.byTooltip('显示变量值'));
     await tester.pumpAndSettle();
     expect(find.text('very-secret'), findsOneWidget);

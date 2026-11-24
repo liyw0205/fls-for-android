@@ -179,6 +179,7 @@ void main() {
     expect(find.text('输入身份验证器代码'), findsOneWidget);
     expect(credentials.value, isNull);
     await tester.enterText(find.byType(TextField).last, '123456');
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, '验证'));
     await pumpUntilFound(tester, find.text('已完成'));
 
@@ -288,7 +289,10 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('暂无运行记录'),
       240,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.descendant(
+        of: find.byType(ListView).last,
+        matching: find.byType(Scrollable),
+      ),
     );
 
     expect(find.text('python /scripts/daily.py'), findsOneWidget);
