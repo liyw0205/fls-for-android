@@ -1,8 +1,9 @@
+import 'panel_test_http.dart';
+
 import 'package:fls_for_android/services/panel_api_client.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_dashboard_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
@@ -21,19 +22,19 @@ void main() {
           expect(request.headers['cookie'], 'session=dashboard-session');
           expect(request.headers['x-token'], isNull);
           return switch (request.url.path) {
-            '/api/dashboard/runtime' => http.Response(
+            '/api/dashboard/runtime' => utf8Response(
               '{"ok":true,"current_time":"2026-11-25 12:00:00","timezone":"UTC+8","panel_uptime":"1 小时","system_cpu_percent":"12.0%","panel_cpu_current":"1.0%","panel_cpu_peak":"5.0%"}',
               200,
             ),
-            '/api/scheduler/status' => http.Response(
+            '/api/scheduler/status' => utf8Response(
               '{"ok":true,"status":"succeeded","status_label":"已完成","task_count":4,"scheduled_count":2,"error":""}',
               200,
             ),
-            '/api/scheduler/jobs' => http.Response(
+            '/api/scheduler/jobs' => utf8Response(
               '{"ok":true,"jobs":[{"id":"daily","next_run_time":"2026-11-26 08:00:00","trigger":"cron[hour=8]"}]}',
               200,
             ),
-            _ => http.Response('{}', 404),
+            _ => utf8Response('{}', 404),
           };
         }),
       );

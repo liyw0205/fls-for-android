@@ -1,12 +1,13 @@
 import 'dart:convert';
 
+import 'panel_test_http.dart';
+
 import 'package:fls_for_android/features/panel_task_detail_view.dart';
 import 'package:fls_for_android/services/panel_api_client.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_tasks_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
@@ -21,13 +22,13 @@ void main() {
       ),
       client: MockClient((request) async {
         if (request.url.path == '/api/task/daily/log') {
-          return http.Response(
+          return utf8Response(
             '{"ok":true,"task_id":"daily","running":false,"lines":200,"log":"log line"}',
             200,
           );
         }
         expect(request.url.path, '/api/task/daily');
-        return http.Response(
+        return utf8Response(
           jsonEncode({
             'ok': true,
             'task': {

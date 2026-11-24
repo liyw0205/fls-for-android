@@ -1,12 +1,13 @@
 import 'dart:convert';
 
+import 'panel_test_http.dart';
+
 import 'package:fls_for_android/features/panel_task_editor_view.dart';
 import 'package:fls_for_android/services/panel_api_client.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_tasks_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
@@ -23,7 +24,7 @@ void main() {
       client: MockClient((request) async {
         expect(request.headers['cookie'], 'fls_native_session=form-session');
         if (request.url.path == '/api/tasks/form-options') {
-          return http.Response(
+          return utf8Response(
             '{"ok":true,"collections":[{"id":"group-1","name":"签到"}],"proxies":[],"notifications":[]}',
             200,
           );
@@ -36,7 +37,7 @@ void main() {
         expect(body['task']['name'], '每日签到');
         expect(body['task']['command'], 'python daily.py');
         created = true;
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"created":true,"task":{"id":"task-id","name":"每日签到"}}',
           201,
         );
@@ -91,14 +92,14 @@ void main() {
       ),
       client: MockClient((request) async {
         if (request.url.path == '/api/tasks/form-options') {
-          return http.Response(
+          return utf8Response(
             '{"ok":true,"collections":[],"proxies":[],"notifications":[]}',
             200,
           );
         }
         if (request.url.path == '/api/tasks') {
           saveRequests++;
-          return http.Response(
+          return utf8Response(
             '{"ok":false,"saved":true,"reload_required":true,"task_id":"task-1","msg":"任务已保存，请重新加载调度器。"}',
             503,
           );
@@ -107,10 +108,7 @@ void main() {
         expect(request.method, 'POST');
         expect(request.headers['x-csrf-token'], 'form-csrf');
         reloadRequests++;
-        return http.Response(
-          '{"ok":true,"status":"succeeded","state":{}}',
-          200,
-        );
+        return utf8Response('{"ok":true,"status":"succeeded","state":{}}', 200);
       }),
     );
     addTearDown(api.close);

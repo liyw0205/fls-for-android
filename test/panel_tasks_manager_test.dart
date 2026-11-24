@@ -1,11 +1,12 @@
 import 'dart:convert';
 
+import 'panel_test_http.dart';
+
 import 'package:fls_for_android/models/panel_task_draft.dart';
 import 'package:fls_for_android/services/panel_api_client.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_tasks_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
@@ -18,7 +19,7 @@ void main() {
       ),
       client: MockClient((request) async {
         expect(request.url.path, '/api/tasks/form-options');
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"collections":[{"id":"group-1","name":"签到"}],"proxies":[{"id":"proxy-1","name":"家用","type":"http"}],"notifications":[{"id":"notify-1","name":"通知","channel":"serverj","channel_name":"Server 酱"}]}',
           200,
         );
@@ -48,7 +49,7 @@ void main() {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['request_id'], 'a' * 32);
         expect(body['task']['name'], '新任务');
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"created":true,"task":{"id":"${'a' * 32}","name":"新任务"}}',
           201,
         );
@@ -92,7 +93,7 @@ void main() {
         expect(request.url.path, '/api/tasks/daily');
         expect(request.headers['x-csrf-token'], 'detail-csrf');
         expect(jsonDecode(request.body)['expected_updated_at'], 'revision-1');
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"changed":true,"task":{"id":"daily"}}',
           200,
         );
@@ -126,7 +127,7 @@ void main() {
             'fls_native_session=detail-session',
           );
           expect(request.headers['x-csrf-token'], 'detail-csrf');
-          return http.Response(
+          return utf8Response(
             '{"ok":true,"status":"succeeded","state":{"task_count":3}}',
             200,
           );
@@ -157,7 +158,7 @@ void main() {
             'fls_native_session=detail-session',
           );
           expect(request.headers['x-token'], isNull);
-          return http.Response(
+          return utf8Response(
             jsonEncode({
               'ok': true,
               'task': {
@@ -198,7 +199,7 @@ void main() {
       client: MockClient((request) async {
         expect(request.url.pathSegments, ['api', 'task', 'daily', 'log']);
         expect(request.url.queryParameters['lines'], '120');
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"task_id":"daily","running":false,"lines":120,"log":"line one\\nline two"}',
           200,
         );

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'panel_test_http.dart';
+
 import 'package:fls_for_android/services/panel_api_client.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +16,7 @@ void main() {
       client: MockClient((request) async {
         requests.add(request);
         if (request.url.path == '/panel/api/auth/session') {
-          return http.Response(
+          return utf8Response(
             '{"ok":true,"authenticated":true,"requires_verification":false,"csrf_token":"csrf-1"}',
             200,
             headers: {
@@ -23,7 +25,7 @@ void main() {
             },
           );
         }
-        return http.Response('[{"id":"1","name":"Daily"}]', 200);
+        return utf8Response('[{"id":"1","name":"Daily"}]', 200);
       }),
     );
     addTearDown(client.close);
@@ -66,13 +68,13 @@ void main() {
         client: MockClient((request) async {
           requests.add(request);
           if (request.url.path.endsWith('/session')) {
-            return http.Response(
+            return utf8Response(
               '{"ok":true,"authenticated":false,"requires_verification":true,"verification_type":"totp","csrf_token":"csrf-pending"}',
               202,
               headers: {'set-cookie': 'fls_native_session=pending; HttpOnly'},
             );
           }
-          return http.Response(
+          return utf8Response(
             '{"ok":true,"authenticated":true,"csrf_token":"csrf-ready"}',
             200,
           );
@@ -104,7 +106,7 @@ void main() {
       ),
       client: MockClient((request) async {
         captured = request;
-        return http.Response('{"ok":true}', 200);
+        return utf8Response('{"ok":true}', 200);
       }),
     );
     addTearDown(client.close);
@@ -126,7 +128,7 @@ void main() {
         cookie: 'fls_native_session=signed-cookie',
         csrfToken: 'csrf-token',
       ),
-      client: MockClient((_) async => http.Response('{}', 200)),
+      client: MockClient((_) async => utf8Response('{}', 200)),
     );
     addTearDown(client.close);
 
@@ -156,7 +158,7 @@ void main() {
     final client = PanelApiClient(
       baseUrl: 'https://fls.example',
       client: MockClient(
-        (_) async => http.Response(
+        (_) async => utf8Response(
           jsonEncode({'ok': false, 'msg': 'Rejected secret-token'}),
           403,
         ),
@@ -182,7 +184,7 @@ void main() {
         csrfToken: 'csrf-token',
       ),
       client: MockClient(
-        (_) async => http.Response(
+        (_) async => utf8Response(
           '{"ok":false,"saved":true,"reload_required":true,"secret":"do-not-retain","msg":"任务已保存"}',
           503,
         ),
@@ -207,7 +209,7 @@ void main() {
     final client = PanelApiClient(
       baseUrl: 'https://fls.example',
       maxResponseBytes: 4,
-      client: MockClient((_) async => http.Response('{"large":true}', 200)),
+      client: MockClient((_) async => utf8Response('{"large":true}', 200)),
     );
     addTearDown(client.close);
 

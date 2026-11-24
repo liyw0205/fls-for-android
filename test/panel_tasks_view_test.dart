@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'panel_test_http.dart';
+
 import 'package:fls_for_android/features/panel_tasks_view.dart';
 import 'package:fls_for_android/models/panel_server.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
@@ -45,7 +47,7 @@ void main() {
       expect(request.headers['x-token'], isNull);
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
-      return http.Response(jsonEncode(tasks), 200);
+      return utf8Response(jsonEncode(tasks), 200);
     });
 
     await tester.pumpWidget(
@@ -85,7 +87,7 @@ void main() {
           'token': 'correct-token',
           'remember': true,
         });
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"authenticated":true,"requires_verification":false,"csrf_token":"csrf-new"}',
           200,
           headers: {'set-cookie': 'fls_native_session=new-session; HttpOnly'},
@@ -96,7 +98,7 @@ void main() {
       statusRequested = true;
       expect(request.headers['cookie'], 'fls_native_session=new-session');
       expect(request.headers['x-token'], isNull);
-      return http.Response(jsonEncode(tasks), 200);
+      return utf8Response(jsonEncode(tasks), 200);
     });
 
     await tester.pumpWidget(
@@ -133,7 +135,7 @@ void main() {
     final credentials = _MemoryCredentials();
     final client = MockClient((request) async {
       if (request.url.path.endsWith('/api/auth/session')) {
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"authenticated":false,"requires_verification":true,"verification_type":"totp","csrf_token":"csrf-pending"}',
           202,
           headers: {
@@ -145,7 +147,7 @@ void main() {
         expect(request.headers['cookie'], 'fls_native_session=pending-session');
         expect(request.headers['x-csrf-token'], 'csrf-pending');
         expect(jsonDecode(request.body), {'code': '123456'});
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"authenticated":true,"csrf_token":"csrf-verified"}',
           200,
         );
@@ -153,7 +155,7 @@ void main() {
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
       expect(request.url.path, '/api/status');
-      return http.Response(jsonEncode(tasks), 200);
+      return utf8Response(jsonEncode(tasks), 200);
     });
 
     await tester.pumpWidget(
@@ -200,9 +202,9 @@ void main() {
         expect(request.url.path, '/api/task/action/run/daily');
         expect(request.headers['x-csrf-token'], session.csrfToken);
         expect(request.headers['x-token'], isNull);
-        return http.Response('{"ok":true,"msg":"已提交"}', 200);
+        return utf8Response('{"ok":true,"msg":"已提交"}', 200);
       }
-      return http.Response(jsonEncode(tasks), 200);
+      return utf8Response(jsonEncode(tasks), 200);
     });
 
     await tester.pumpWidget(
@@ -235,10 +237,10 @@ void main() {
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
       if (request.url.path == '/api/status') {
-        return http.Response(jsonEncode(tasks), 200);
+        return utf8Response(jsonEncode(tasks), 200);
       }
       if (request.url.path == '/api/task/daily') {
-        return http.Response(
+        return utf8Response(
           jsonEncode({
             'ok': true,
             'task': {
@@ -258,12 +260,12 @@ void main() {
         );
       }
       if (request.url.path == '/api/task/daily/log') {
-        return http.Response(
+        return utf8Response(
           '{"ok":true,"task_id":"daily","running":false,"lines":200,"log":"task log"}',
           200,
         );
       }
-      return http.Response('{}', 404);
+      return utf8Response('{}', 404);
     });
 
     await tester.pumpWidget(
@@ -290,7 +292,7 @@ void main() {
 http.Response? _dashboardResponse(http.Request request) {
   switch (request.url.path) {
     case '/api/dashboard/runtime':
-      return http.Response(
+      return utf8Response(
         jsonEncode({
           'ok': true,
           'current_time': '2026-11-25 12:00:00',
@@ -303,12 +305,12 @@ http.Response? _dashboardResponse(http.Request request) {
         200,
       );
     case '/api/scheduler/status':
-      return http.Response(
+      return utf8Response(
         '{"ok":true,"status":"succeeded","status_label":"已完成","task_count":2,"scheduled_count":1,"error":""}',
         200,
       );
     case '/api/scheduler/jobs':
-      return http.Response(
+      return utf8Response(
         '{"ok":true,"jobs":[{"id":"daily","next_run_time":"2026-11-26 08:00:00","trigger":"cron[hour=8]"}]}',
         200,
       );
