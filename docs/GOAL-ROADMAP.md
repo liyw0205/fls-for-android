@@ -14,10 +14,10 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `c3cea91` | 原生认证、Dashboard、任务列表/详情改动及路线文档在工作区，尚未提交 |
-| FLS (`$HOME/fls`) | `develop` | `b7bbb9b` / `20261124.1` | 含最新稳定基线，本地比 `origin/develop` ahead 3；认证、任务详情/日志 API 与备份过滤改动尚未提交 |
+| APP (`fls-for-android`) | `develop` | `8716bc7` | 原生认证与任务工作流已提交并推送；Android CI 的 84 项测试、静态分析和 arm64 Release APK 构建通过 |
+| FLS (`$HOME/fls`) | `develop` | `df46c03` / `20261125.1` | 原生会话认证、任务详情/日志与创建/编辑 API 已提交并推送；后端回归测试通过 |
 
-FLS 的 `develop` 远端原先落后稳定分支；当前本地分支包含已拉取的最新稳定基线，尚未推送。后续需要共享/部署开发后端时，只推送/部署 `develop`，并先验证目标面板不是稳定生产会话。合并前分别验证两个仓库，明确合并次序、兼容 API 和回滚版本；只有 APP 与后端能力配套就绪后再由用户决定合并及发布。
+FLS 的 `develop` 已包含拉取的最新稳定基线及本次后端 API 改动。后续需要共享/部署开发后端时，只推送/部署 `develop`，并先验证目标面板不是稳定生产会话。合并前分别验证两个仓库，明确合并次序、兼容 API 和回滚版本；只有 APP 与后端能力配套就绪后再由用户决定合并及发布。
 
 ## 当前基线
 
@@ -29,7 +29,7 @@ FLS 的 `develop` 远端原先落后稳定分支；当前本地分支包含已�
 
 第一轮按路由和内嵌前端请求形成的矩阵已记录在 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md)。原生认证纵切已在 APP/FLS 两个 `develop` 工作区实现：管理员 Token 只在登录请求体中短暂提交，二次验证通过后以 Android 安全存储按面板保存 session cookie/CSRF token；所有原生业务 API 复用受保护 session。Dashboard、任务列表和任务详情/最近 10 条历史已有原生首版，创建/编辑、完整日志、脚本管理和其余功能域仍待推进，不能把它们描述为全量原生覆盖。
 
-当前纵向交付已继续到完整的任务基础工作流：详情 API 返回白名单配置、运行状态和最近 10 条历史；日志 API 限制行数并复用脱敏。APP 列表可进入详情页，环境变量默认隐藏，可按项查看；页面展示历史和最近 200 行日志。新增/编辑使用 FLS JSON API，创建具备 request_id 幂等，更新要求 expected_updated_at 防止覆盖并发编辑；表单覆盖命令、Cron、配置路径、合集/代理、通知、延迟、重试、启用和环境变量。保存后调度器恢复失败时，FLS 返回 `saved`/`reload_required`，APP 将保存按钮切换为“重新加载调度器”，提供单独恢复路径，避免误报失败或再次提交任务。新增 manager/widget 契约测试；本地 Flutter 静态分析通过，但 Termux 不支持 Flutter tester，widget 测试需由 CI 执行。真实测试面板联调仍待用户手动验收。备份归档过滤排除了原生会话 SQLite 主文件和 journal/WAL/SHM 文件，避免将短期认证状态带入备份或跨实例恢复。
+当前纵向交付已继续到完整的任务基础工作流：详情 API 返回白名单配置、运行状态和最近 10 条历史；日志 API 限制行数并复用脱敏。APP 列表可进入详情页，环境变量默认隐藏，可按项查看；页面展示历史和最近 200 行日志。新增/编辑使用 FLS JSON API，创建具备 request_id 幂等，更新要求 expected_updated_at 防止覆盖并发编辑；表单覆盖命令、Cron、配置路径、合集/代理、通知、延迟、重试、启用和环境变量。保存后调度器恢复失败时，FLS 返回 `saved`/`reload_required`，APP 将保存按钮切换为“重新加载调度器”，提供单独恢复路径，避免误报失败或再次提交任务。任务 manager/widget 契约测试已通过 GitHub Actions；Termux 本机不支持 Flutter tester，因此以 CI 执行结果为准。最新 APP CI 已通过 84 项测试、静态分析和 arm64 Release APK 构建。真实测试面板联调仍待用户手动验收；不执行 ADB 测试。备份归档过滤排除了原生会话 SQLite 主文件和 journal/WAL/SHM 文件，避免将短期认证状态带入备份或跨实例恢复。
 
 ## 建设原则
 

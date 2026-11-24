@@ -2,8 +2,8 @@
 
 ## 基线与证据范围
 
-- FLS 源码：`$HOME/fls` 的 `develop` 工作区，基线 `b7bbb9b` / FLS 版本 `20261124.1`。
-- APP 源码：`fls-for-android` 的 `develop` 工作区，基线 `c3cea91`。
+- FLS 源码：`$HOME/fls` 的 `develop` 工作区，当前提交 `df46c03` / FLS 版本 `20261125.1`。
+- APP 源码：`fls-for-android` 的 `develop` 工作区，当前提交 `8716bc7`；Android CI 通过 84 项测试、静态分析和 arm64 Release APK 构建。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。
 
@@ -11,9 +11,9 @@
 
 | FLS 业务域/页面 | APP 当前覆盖 | FLS 可复用接口证据 | 原生迁移与后端工作 |
 | --- | --- | --- | --- |
-| 登录、Token 登录、验证、首次设置、退出 | 原生登录/session/二次验证/退出接口已开始；首次设置仍为 WebView | FLS `develop` 增加 `/api/auth/session`、`/api/auth/verify`、`/api/auth/resend-code`、`/api/auth/logout`；业务 API 复用 Flask session cookie；写请求使用 `X-CSRF-Token` | 认证契约和回归测试进行中；APP 只在登录请求体短暂发送管理员 Token，完成二次验证后才把 session cookie/CSRF token 写入 Android 安全存储；401 清除过期会话。首次 Token 设置 API 暂未迁移 |
+| 登录、Token 登录、验证、首次设置、退出 | 原生登录/session/二次验证/退出；首次设置仍为 WebView | FLS `develop` 增加 `/api/auth/session`、`/api/auth/verify`、`/api/auth/resend-code`、`/api/auth/logout`；业务 API 复用 Flask session cookie；写请求使用 `X-CSRF-Token` | APP 只在登录请求体短暂发送管理员 Token，完成二次验证后才把 session cookie/CSRF token 写入 Android 安全存储；401 清除过期会话。认证契约与回归测试已通过；首次 Token 设置 API 暂未迁移 |
 | Dashboard、面板运行状态、调度器 | APP 原生概览读取运行时、调度器、最近计划任务与任务计数；本机和远程共用 | `/api/dashboard/runtime`、`/api/status`、`/api/scheduler/jobs`、`/api/scheduler/status`、`POST /api/scheduler/reload` | 首屏 API 已接入；CPU/调度数据来自服务端。历史异常列表、RAM/磁盘、面板维护操作及刷新策略仍需扩充 |
-| 任务列表、创建/编辑、详情、启停、手动运行 | 本机和远程共用原生任务列表、详情、创建/编辑与运行/停止/启用操作；Web 表单保留作回退 | `/api/status` 提供运行摘要；`GET /api/task/<task_id>` 返回白名单配置、运行状态和最近 10 条历史；FLS `develop` 新增 `/api/tasks/form-options`、`POST /api/tasks`、`PUT /api/tasks/<task_id>`；新建用 request_id 幂等，更新用 expected_updated_at 防并发覆盖；`/api/task/action/<action>/<task_id>` 提供现有操作；`POST /api/scheduler/reload` 提供恢复入口 | 原生首条任务工作流已接入；后端覆盖 Cron/配置路径/变量/代理/通知/延迟/重试校验，重复创建与并发编辑有冲突语义；保存成功但调度器失败时 APP 提供仅重载调度器入口。manager/widget 测试已补，Termux Flutter tester 不可运行，待 CI 执行；真实测试面板联调待用户验收 |
+| 任务列表、创建/编辑、详情、启停、手动运行 | 本机和远程共用原生任务列表、详情、创建/编辑与运行/停止/启用操作；Web 表单保留作回退 | `/api/status` 提供运行摘要；`GET /api/task/<task_id>` 返回白名单配置、运行状态和最近 10 条历史；FLS `develop` 新增 `/api/tasks/form-options`、`POST /api/tasks`、`PUT /api/tasks/<task_id>`；新建用 request_id 幂等，更新用 expected_updated_at 防并发覆盖；`/api/task/action/<action>/<task_id>` 提供现有操作；`POST /api/scheduler/reload` 提供恢复入口 | 原生任务基础工作流已接入；后端覆盖 Cron/配置路径/变量/代理/通知/延迟/重试校验，重复创建与并发编辑有冲突语义；保存成功但调度器失败时 APP 提供仅重载调度器入口。manager/widget 工作流已通过 Android CI；真实测试面板联调待用户验收 |
 | 任务集合、任务分组、批量任务操作 | WebView | `/api/collection/save`、`/api/collection/add-task/<id>`、`/api/collection/delete/<id>`；页面 `/collections`、`/collection/new`、`/collection/edit/<id>` | 确认集合列表/详情读 API 和任务排序、复制、删除语义；必要时补结构化读写端点 |
 | 任务运行日志、执行历史、历史导出 | 原生任务详情展示最近 10 条运行历史和最近 200 行任务日志，可手动刷新；历史筛选/导出仍由 WebView 承接 | `GET /api/task/<task_id>` 返回最近 10 条历史摘要；FLS `develop` 新增 `GET /api/task/<task_id>/log?lines=...` JSON API，限制 1-1000 行并复用日志脱敏；`/history`、`/history/export` 页面路由 | 任务日志基础读取已接入；仍需历史筛选分页 API 与导出下载契约，不在 APP 一次性加载无限日志 |
 | 本机脚本文件、拉取、导入、改名、删除、调试 | WebView；APP 已有的是 Android 本机容器内脚本安装/更新，不是远程面板完整脚本管理 | `/scripts/view`、`/pull`、`/pull/fetch`、`/pull/import`、`/scripts/rename`、`/scripts/delete`、`/scripts/debug/*`；调试日志有 `/api/scripts/debug-log/<id>` | 需要明确远程服务器脚本文件 API、编辑冲突/原子替换、上传/下载大小限制、调试启动停止和日志状态 API；现有 APP 本机安装能力保留为容器专属功能 |
