@@ -49,6 +49,14 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.text('Daily check-in'), findsOneWidget);
+      await tester.tap(find.text('Daily check-in'));
+      await tester.pump();
+      await _pumpUntilVisible(tester, find.text('检查更新'));
+      expect(find.text('更新脚本'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     }
     addTearDown(tester.view.resetPhysicalSize);
