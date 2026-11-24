@@ -102,7 +102,7 @@ void main() {
           .first,
     );
     await tester.tap(find.byTooltip('显示变量值'));
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(find.text('very-secret'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
