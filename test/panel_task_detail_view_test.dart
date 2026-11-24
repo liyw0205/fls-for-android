@@ -74,7 +74,7 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('成功'),
       240,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: find.byType(Scrollable).first,
     );
 
     expect(find.text('主账号'), findsOneWidget);

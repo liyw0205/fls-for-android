@@ -116,6 +116,7 @@ void main() {
     await tester.tap(find.text('连接面板'));
     await pumpUntilFound(tester, find.widgetWithText(FilledButton, '连接'));
     await tester.enterText(find.byType(TextField), 'correct-token');
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, '连接'));
     await pumpUntilFound(tester, find.text('已完成'));
 
@@ -171,6 +172,7 @@ void main() {
     await tester.tap(find.text('连接面板'));
     await pumpUntilFound(tester, find.widgetWithText(FilledButton, '连接'));
     await tester.enterText(find.byType(TextField), 'correct-token');
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, '连接'));
     await pumpUntilFound(tester, find.text('输入身份验证器代码'));
 
@@ -286,7 +288,7 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('暂无运行记录'),
       240,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: find.byType(Scrollable).first,
     );
 
     expect(find.text('python /scripts/daily.py'), findsOneWidget);
