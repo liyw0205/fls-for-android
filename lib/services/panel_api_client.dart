@@ -201,7 +201,10 @@ class PanelApiClient {
           ]),
           statusCode: response.statusCode,
           path: uri.path,
-          data: _errorMetadata(decoded),
+          data: _errorMetadata(decoded, [
+            ...redactValues,
+            if (cookie != null) cookie.split('=').last,
+          ]),
         );
       }
       if (text.isEmpty && response.statusCode != 204) {
@@ -273,14 +276,89 @@ class PanelApiClient {
     };
   }
 
-  Map<String, dynamic>? _errorMetadata(Object? payload) {
+  Map<String, dynamic>? _errorMetadata(
+    Object? payload,
+    List<String> redactValues,
+  ) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
-    for (final key in const ['saved', 'reload_required']) {
+    for (final key in const [
+      'saved',
+      'reload_required',
+      'action',
+      'request_id',
+      'msg',
+      'count',
+      'updated_count',
+      'deleted_count',
+      'submitted_count',
+      'stopped_count',
+      'failed_count',
+      'skipped_count',
+      'copied_count',
+      'target_collection',
+    ]) {
       final value = payload[key];
-      if (value is bool) metadata[key] = value;
+      if (value is bool || value is String || value is num) {
+        metadata[key] = key == 'msg' && value is String
+            ? _redactText(value, redactValues)
+            : value;
+      }
+    }
+    final expectedCollections = payload['expected_collections'];
+    if (expectedCollections is Map &&
+        expectedCollections.keys.every((key) => key is String) &&
+        expectedCollections.values.every((value) => value is String)) {
+      metadata['expected_collections'] = Map<String, String>.unmodifiable(
+        expectedCollections.cast<String, String>(),
+      );
+    }
+    for (final key in const [
+      'completed_ids',
+      'retry_ids',
+      'unknown_ids',
+      'created_ids',
+      'stopped_ids',
+      'missing_ids',
+    ]) {
+      final value = payload[key];
+      if (value is List && value.every((item) => item is String)) {
+        metadata[key] = List<String>.unmodifiable(value.cast<String>());
+      }
+    }
+    final results = payload['results'];
+    if (results is List && results.every((item) => item is Map)) {
+      metadata['results'] = results
+          .whereType<Map>()
+          .map((item) {
+            final row = Map<String, dynamic>.from(item);
+            return Map<String, dynamic>.fromEntries(
+              row.entries
+                  .where(
+                    (entry) =>
+                        const {'task_id', 'status', 'msg'}.contains(entry.key),
+                  )
+                  .map(
+                    (entry) => MapEntry(
+                      entry.key,
+                      entry.key == 'msg' && entry.value is String
+                          ? _redactText(entry.value as String, redactValues)
+                          : entry.value,
+                    ),
+                  ),
+            );
+          })
+          .toList(growable: false);
     }
     return metadata.isEmpty ? null : metadata;
+  }
+
+  String _redactText(String text, List<String> values) {
+    var result = text;
+    for (final value in values.where((value) => value.isNotEmpty)) {
+      result = result.replaceAll(value, '[已隐藏]');
+    }
+    return result.length <= 500 ? result : '${result.substring(0, 500)}…';
   }
 
   Uri _apiUri(String path) {

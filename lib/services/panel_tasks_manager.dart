@@ -3,6 +3,7 @@ import 'dart:math';
 import '../models/panel_collection.dart';
 import '../models/panel_task_detail.dart';
 import '../models/panel_task_draft.dart';
+import '../models/panel_task_page.dart';
 import '../models/panel_task_summary.dart';
 import 'panel_api_client.dart';
 
@@ -82,12 +83,41 @@ class PanelTasksManager {
   }) async {
     final path =
         '/api/collection/add-task/${Uri.encodeComponent(collectionId)}';
-    final payload = await _api.postJson(path, {
-      'request_id': requestId,
-      'task_ids': taskIds,
-      'expected_collections': expectedCollections,
-    });
-    return _collectionMutationPayload(payload, path);
+    try {
+      final payload = await _api.postJson(path, {
+        'request_id': requestId,
+        'task_ids': taskIds,
+        'expected_collections': expectedCollections,
+      });
+      return _collectionMutationPayload(payload, path);
+    } on PanelApiException catch (error) {
+      if (error.data != null) {
+        return Map<String, dynamic>.unmodifiable(error.data!);
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> removeTasksFromCollections({
+    required List<String> taskIds,
+    required Map<String, String> expectedCollections,
+    required String requestId,
+  }) async {
+    const path = '/api/task/bulk-action';
+    try {
+      final payload = await _api.postJson(path, {
+        'action': 'clear_collection',
+        'task_ids': taskIds,
+        'request_id': requestId,
+        'expected_collections': expectedCollections,
+      });
+      return _collectionMutationPayload(payload, path);
+    } on PanelApiException catch (error) {
+      if (error.data != null) {
+        return Map<String, dynamic>.unmodifiable(error.data!);
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> removeTaskFromCollection({
@@ -131,16 +161,17 @@ class PanelTasksManager {
     Object? payload,
     String path,
   ) {
-    if (payload is! Map<String, dynamic> || payload['ok'] != true) {
-      final message = payload is Map<String, dynamic>
-          ? payload['msg']?.toString()
-          : null;
+    if (payload is! Map<String, dynamic>) {
+      throw PanelApiException('合集操作响应格式无效', path: path);
+    }
+    if (payload['ok'] != true && payload['msg'] == null) {
+      final message = payload['msg']?.toString();
       throw PanelApiException(
         message?.trim().isNotEmpty == true ? message!.trim() : '合集操作失败',
         path: path,
       );
     }
-    return payload;
+    return Map<String, dynamic>.unmodifiable(payload);
   }
 
   Future<PanelTaskFormOptions> fetchTaskFormOptions() async {
@@ -210,6 +241,47 @@ class PanelTasksManager {
     return payload.map(PanelTaskSummary.fromJson).toList();
   }
 
+  Future<PanelTaskPage> fetchTaskPage({
+    String query = '',
+    String status = 'all',
+    String sort = 'default',
+    String order = 'desc',
+    int page = 1,
+    int limit = 50,
+  }) async {
+    const statuses = {'all', 'running', 'enabled', 'disabled'};
+    const sorts = {'default', 'name', 'recent_run', 'last_run', 'created'};
+    if (!statuses.contains(status)) {
+      throw ArgumentError.value(status, 'status', '任务状态筛选无效');
+    }
+    if (!sorts.contains(sort)) {
+      throw ArgumentError.value(sort, 'sort', '任务排序字段无效');
+    }
+    if (!const {'asc', 'desc'}.contains(order)) {
+      throw ArgumentError.value(order, 'order', '排序方向无效');
+    }
+    if (page < 1 || limit < 1 || limit > 100) {
+      throw ArgumentError('任务分页参数无效');
+    }
+    const path = '/api/tasks';
+    final queryString = Uri(
+      queryParameters: {
+        'q': query,
+        'status': status,
+        'sort': sort,
+        'order': order,
+        'page': '$page',
+        'limit': '$limit',
+      },
+    ).query;
+    final payload = await _api.getJson('$path?$queryString');
+    try {
+      return PanelTaskPage.fromJson(payload);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
   Future<PanelTaskDetail> fetchTaskDetail(String taskId) async {
     final path = '/api/task/${Uri.encodeComponent(taskId)}';
     final payload = await _api.getJson(path);
@@ -240,26 +312,91 @@ class PanelTasksManager {
     return log;
   }
 
-  Future<void> performAction(
+  Future<Map<String, dynamic>> performAction(
     String action,
     String taskId, {
     bool? enabled,
+    bool? pinned,
+    String? requestId,
   }) async {
-    if (!const {'run', 'stop', 'toggle'}.contains(action)) {
+    if (!const {
+      'run',
+      'stop',
+      'toggle',
+      'pin',
+      'delete',
+      'copy',
+    }.contains(action)) {
       throw ArgumentError.value(action, 'action', '不支持的任务操作');
     }
-    final payload = await _api.postJson(
-      '/api/task/action/${Uri.encodeComponent(action)}/${Uri.encodeComponent(taskId)}',
-      <String, Object?>{'enabled': ?enabled},
-    );
-    if (payload is! Map<String, dynamic> || payload['ok'] != true) {
-      final message = payload is Map<String, dynamic>
-          ? payload['msg']?.toString()
-          : null;
-      throw PanelApiException(
-        message?.trim().isNotEmpty == true ? message!.trim() : '任务操作失败',
-        path: '/api/task/action/$action/$taskId',
+    if (action == 'toggle') {
+      if (enabled == null) throw ArgumentError('启停任务必须指定目标状态');
+      final payload = await _api.postJson(
+        '/api/task/action/toggle/${Uri.encodeComponent(taskId)}',
+        {'enabled': enabled, 'request_id': requestId ?? newRequestId()},
       );
+      return _actionPayload(payload, '/api/task/action/toggle/$taskId');
     }
+    if (action == 'pin') {
+      if (pinned == null) throw ArgumentError('置顶操作必须指定目标状态');
+      final path = '/api/task/action/pin/${Uri.encodeComponent(taskId)}';
+      final payload = await _api.postJson(path, {
+        'pinned': pinned,
+        'request_id': requestId ?? newRequestId(),
+      });
+      return _actionPayload(payload, path);
+    }
+    return performBulkAction(action, [taskId], requestId: requestId);
+  }
+
+  Future<Map<String, dynamic>> performBulkAction(
+    String action,
+    List<String> taskIds, {
+    String? requestId,
+  }) async {
+    const actions = {
+      'enable',
+      'disable',
+      'run',
+      'stop',
+      'delete',
+      'copy',
+      'pin',
+      'unpin',
+    };
+    if (!actions.contains(action)) {
+      throw ArgumentError.value(action, 'action', '不支持的批量任务操作');
+    }
+    final ids = taskIds.toSet().toList(growable: false);
+    if (ids.isEmpty || (action == 'copy' && ids.length != 1)) {
+      throw ArgumentError('任务选择无效');
+    }
+    final id = requestId ?? newRequestId();
+    const path = '/api/task/bulk-action';
+    try {
+      final payload = await _api.postJson(path, {
+        'action': action,
+        'task_ids': ids,
+        'request_id': id,
+      });
+      return _actionPayload(payload, path);
+    } on PanelApiException catch (error) {
+      if (error.statusCode == 401 ||
+          error.statusCode == 403 ||
+          error.data == null) {
+        rethrow;
+      }
+      return Map<String, dynamic>.unmodifiable(error.data!);
+    }
+  }
+
+  Map<String, dynamic> _actionPayload(Object? payload, String path) {
+    if (payload is! Map<String, dynamic>) {
+      throw PanelApiException('任务操作响应格式无效', path: path);
+    }
+    if (payload['ok'] != true && payload['msg'] == null) {
+      throw PanelApiException('任务操作失败', path: path, data: payload);
+    }
+    return Map<String, dynamic>.unmodifiable(payload);
   }
 }

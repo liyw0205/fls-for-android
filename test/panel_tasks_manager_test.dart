@@ -10,6 +10,160 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 
 void main() {
+  test('loads bounded searchable task pages with safe list fields', () async {
+    final api = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=tasks-session',
+        csrfToken: 'tasks-csrf',
+      ),
+      client: MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/api/tasks');
+        expect(request.url.queryParameters, {
+          'q': '每日 签到',
+          'status': 'disabled',
+          'sort': 'name',
+          'order': 'desc',
+          'page': '2',
+          'limit': '20',
+        });
+        expect(request.headers['cookie'], 'fls_native_session=tasks-session');
+        return utf8Response(
+          '{"ok":true,"items":[{"id":"task-a","name":"每日签到","command":"python check.py","cron":"","enabled":false,"running":false,"run_count":3,"collection_id":"group-a","pinned":true,"remark":"早间","updated_at":"2026-11-25"}],"page":2,"pages":3,"total":41}',
+          200,
+          headers: {'cache-control': 'no-store'},
+        );
+      }),
+    );
+    addTearDown(api.close);
+
+    final page = await PanelTasksManager(api).fetchTaskPage(
+      query: '每日 签到',
+      status: 'disabled',
+      sort: 'name',
+      order: 'desc',
+      page: 2,
+      limit: 20,
+    );
+
+    expect(page.total, 41);
+    expect(page.page, 2);
+    expect(page.items.single.collectionId, 'group-a');
+    expect(page.items.single.pinned, isTrue);
+    expect(page.items.single.remark, '早间');
+  });
+
+  test(
+    'replays bulk action identifiers and preserves structured error results',
+    () async {
+      final api = PanelApiClient(
+        baseUrl: 'https://fls.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=tasks-session',
+          csrfToken: 'tasks-csrf',
+        ),
+        client: MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/task/bulk-action');
+          expect(request.headers['x-csrf-token'], 'tasks-csrf');
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['action'], 'delete');
+          expect(body['task_ids'], ['task-a', 'task-b']);
+          expect(body['request_id'], 'f' * 32);
+          return utf8Response(
+            '{"ok":false,"action":"delete","request_id":"${'f' * 32}","msg":"上次请求中断","completed_ids":["task-a"],"retry_ids":["task-b"],"unknown_ids":["task-a"],"results":[{"task_id":"task-a","status":"unknown","msg":"检查历史","env":"must-drop"}]}',
+            409,
+          );
+        }),
+      );
+      addTearDown(api.close);
+
+      final result = await PanelTasksManager(
+        api,
+      ).performBulkAction('delete', ['task-a', 'task-b'], requestId: 'f' * 32);
+
+      expect(result['unknown_ids'], ['task-a']);
+      expect(result['retry_ids'], ['task-b']);
+      expect(result['results'], [
+        {'task_id': 'task-a', 'status': 'unknown', 'msg': '检查历史'},
+      ]);
+      expect(result['results'].toString(), isNot(contains('must-drop')));
+    },
+  );
+
+  test(
+    'sets an explicit pinned target state with an idempotency key',
+    () async {
+      final api = PanelApiClient(
+        baseUrl: 'https://fls.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=tasks-session',
+          csrfToken: 'tasks-csrf',
+        ),
+        client: MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/task/action/pin/task-a');
+          expect(request.headers['x-csrf-token'], 'tasks-csrf');
+          expect(jsonDecode(request.body), {
+            'pinned': true,
+            'request_id': 'd' * 32,
+          });
+          return utf8Response(
+            '{"ok":true,"pinned":true,"request_id":"${'d' * 32}"}',
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+
+      final result = await PanelTasksManager(
+        api,
+      ).performAction('pin', 'task-a', pinned: true, requestId: 'd' * 32);
+
+      expect(result['pinned'], isTrue);
+    },
+  );
+
+  test('sends expected memberships for bulk collection changes', () async {
+    final api = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=tasks-session',
+        csrfToken: 'tasks-csrf',
+      ),
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.headers['x-csrf-token'], 'tasks-csrf');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['task_ids'], ['task-a']);
+        expect(body['request_id'], 'c' * 32);
+        if (request.url.path == '/api/collection/add-task/group-new') {
+          expect(body['expected_collections'], {'task-a': 'group-old'});
+          return utf8Response('{"ok":true,"action":"assign_collection"}', 200);
+        }
+        expect(request.url.path, '/api/task/bulk-action');
+        expect(body['action'], 'clear_collection');
+        expect(body['expected_collections'], {'task-a': 'group-new'});
+        return utf8Response('{"ok":true,"action":"clear_collection"}', 200);
+      }),
+    );
+    addTearDown(api.close);
+    final manager = PanelTasksManager(api);
+
+    await manager.addTasksToCollection(
+      collectionId: 'group-new',
+      taskIds: ['task-a'],
+      expectedCollections: {'task-a': 'group-old'},
+      requestId: 'c' * 32,
+    );
+    await manager.removeTasksFromCollections(
+      taskIds: ['task-a'],
+      expectedCollections: {'task-a': 'group-new'},
+      requestId: 'c' * 32,
+    );
+  });
+
   test('loads native collection pages with encoded search parameters', () async {
     final api = PanelApiClient(
       baseUrl: 'https://fls.example',

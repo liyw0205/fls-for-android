@@ -10,6 +10,10 @@ class PanelTaskSummary {
     this.pid,
     this.processName,
     this.collectionId = '',
+    this.remark = '',
+    this.pinned = false,
+    this.createdAt = '',
+    this.updatedAt = '',
   });
 
   final String id;
@@ -22,6 +26,10 @@ class PanelTaskSummary {
   final String? pid;
   final String? processName;
   final String collectionId;
+  final String remark;
+  final bool pinned;
+  final String createdAt;
+  final String updatedAt;
 
   factory PanelTaskSummary.fromJson(Object? value) {
     if (value is! Map<String, dynamic>) {
@@ -43,6 +51,10 @@ class PanelTaskSummary {
       pid: value['pid']?.toString(),
       processName: value['process_name']?.toString(),
       collectionId: value['collection_id']?.toString() ?? '',
+      remark: value['remark']?.toString() ?? '',
+      pinned: value['pinned'] == true,
+      createdAt: value['created_at']?.toString() ?? '',
+      updatedAt: value['updated_at']?.toString() ?? '',
     );
   }
 

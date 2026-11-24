@@ -47,6 +47,8 @@ void main() {
       expect(request.headers['x-token'], isNull);
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
       return utf8Response(jsonEncode(tasks), 200);
     });
 
@@ -85,6 +87,8 @@ void main() {
       if (request.url.path == '/api/status') {
         return utf8Response(jsonEncode(tasks), 200);
       }
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
       if (request.url.path == '/api/collections') {
         return utf8Response(
           '{"ok":true,"items":[{"id":"group-a","name":"每日合集","remark":"签到任务","member_count":1}],"page":1,"pages":1,"total":1}',
@@ -146,6 +150,8 @@ void main() {
       }
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
       statusRequested = true;
       expect(request.headers['cookie'], 'fls_native_session=new-session');
       expect(request.headers['x-token'], isNull);
@@ -206,6 +212,8 @@ void main() {
       }
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
       expect(request.url.path, '/api/status');
       return utf8Response(jsonEncode(tasks), 200);
     });
@@ -251,12 +259,22 @@ void main() {
       expect(request.headers['cookie'], session.cookie);
       final dashboard = _dashboardResponse(request);
       if (dashboard != null) return dashboard;
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
       if (request.method == 'POST') {
         postCount++;
-        expect(request.url.path, '/api/task/action/run/daily');
+        expect(request.url.path, '/api/task/bulk-action');
         expect(request.headers['x-csrf-token'], session.csrfToken);
         expect(request.headers['x-token'], isNull);
-        return utf8Response('{"ok":true,"msg":"已提交"}', 200);
+        expect(jsonDecode(request.body), {
+          'action': 'run',
+          'task_ids': ['daily'],
+          'request_id': isA<String>(),
+        });
+        return utf8Response(
+          '{"ok":true,"action":"run","msg":"已提交","completed_ids":["daily"],"retry_ids":[],"unknown_ids":[]}',
+          200,
+        );
       }
       return utf8Response(jsonEncode(tasks), 200);
     });
@@ -277,12 +295,68 @@ void main() {
     await pumpUntilFound(tester, find.text('立即运行'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('立即运行'));
-    await pumpUntilFound(tester, find.text('确认'));
-    await tester.tap(find.text('确认'));
+    await pumpUntilFound(tester, find.text('立即运行'));
+    await tester.tap(find.text('立即运行').last);
     await pumpUntil(tester, () => postCount == 1);
 
     expect(postCount, 1);
     expect(find.text('每日签到'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('replays uncertain bulk actions with the original request id', (
+    tester,
+  ) async {
+    final credentials = _MemoryCredentials()..value = session;
+    final requestBodies = <Map<String, dynamic>>[];
+    final client = panelMockClient((request) async {
+      final dashboard = _dashboardResponse(request);
+      if (dashboard != null) return dashboard;
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
+      if (request.url.path == '/api/status') {
+        return utf8Response(jsonEncode(tasks), 200);
+      }
+      if (request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        requestBodies.add(body);
+        if (requestBodies.length == 1) {
+          throw http.ClientException('connection lost after submission');
+        }
+        return utf8Response(
+          '{"ok":true,"action":"disable","msg":"已停用 2 个任务","completed_ids":["daily","watcher"],"retry_ids":[],"unknown_ids":[]}',
+          200,
+        );
+      }
+      fail('Unexpected request: ${request.method} ${request.url}');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelTasksView(
+          server: server,
+          credentialStore: credentials,
+          client: client,
+        ),
+      ),
+    );
+    await pumpUntilFound(tester, find.text('2026-11-25 12:00:00'));
+    await tester.tap(find.text('任务'));
+    await pumpUntilFound(tester, find.text('每日签到'));
+    await tester.tap(find.byType(Checkbox).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('批量操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('停用').last);
+    await pumpUntil(tester, () => requestBodies.length == 1);
+    await pumpUntilFound(tester, find.text('恢复同一请求'));
+
+    await tester.tap(find.text('恢复同一请求'));
+    await pumpUntil(tester, () => requestBodies.length == 2);
+
+    expect(requestBodies[0]['action'], 'disable');
+    expect(requestBodies[0]['task_ids'], ['daily', 'watcher']);
+    expect(requestBodies[1]['request_id'], requestBodies[0]['request_id']);
     expect(tester.takeException(), isNull);
   });
 
@@ -294,6 +368,8 @@ void main() {
       if (request.url.path == '/api/status') {
         return utf8Response(jsonEncode(tasks), 200);
       }
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
       if (request.url.path == '/api/task/daily') {
         return utf8Response(
           jsonEncode({
@@ -352,6 +428,39 @@ void main() {
     expect(find.text('暂无运行记录'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+http.Response? _taskPageResponse(
+  http.Request request,
+  List<Map<String, Object>> tasks,
+) {
+  if (request.url.path != '/api/tasks') return null;
+  final status = request.url.queryParameters['status'] ?? 'all';
+  final filtered = tasks
+      .where((task) {
+        if (status == 'running' && task['running'] != true) return false;
+        if (status == 'enabled' && task['enabled'] != true) return false;
+        if (status == 'disabled' && task['enabled'] == true) return false;
+        final query = request.url.queryParameters['q']?.toLowerCase() ?? '';
+        if (query.isNotEmpty &&
+            !'${task['name']} ${task['command']}'.toLowerCase().contains(
+              query,
+            )) {
+          return false;
+        }
+        return true;
+      })
+      .toList(growable: false);
+  return utf8Response(
+    jsonEncode({
+      'ok': true,
+      'items': filtered,
+      'page': 1,
+      'pages': 1,
+      'total': filtered.length,
+    }),
+    200,
+  );
 }
 
 http.Response? _dashboardResponse(http.Request request) {

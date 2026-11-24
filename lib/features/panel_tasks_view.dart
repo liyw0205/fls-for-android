@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/panel_server.dart';
+import '../models/panel_collection.dart';
 import '../models/panel_dashboard_snapshot.dart';
+import '../models/panel_task_page.dart';
 import '../models/panel_task_summary.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_credential_store.dart';
@@ -15,7 +17,56 @@ import 'panel_task_detail_view.dart';
 import 'panel_task_editor_view.dart';
 import 'remote_web_view.dart';
 
-enum _TaskFilter { all, running, disabled }
+enum _TaskFilter { all, running, enabled, disabled }
+
+class _PendingTaskAction {
+  const _PendingTaskAction({
+    required this.action,
+    required this.taskIds,
+    required this.requestId,
+    this.targetCollectionId,
+    this.expectedCollections = const {},
+  });
+
+  final String action;
+  final List<String> taskIds;
+  final String requestId;
+  final String? targetCollectionId;
+  final Map<String, String> expectedCollections;
+}
+
+class _TaskPageControls extends StatelessWidget {
+  const _TaskPageControls({
+    required this.page,
+    required this.pages,
+    required this.onPage,
+  });
+
+  final int page;
+  final int pages;
+  final ValueChanged<int> onPage;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          tooltip: '上一页',
+          onPressed: page > 1 ? () => onPage(page - 1) : null,
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Text('$page / $pages'),
+        IconButton(
+          tooltip: '下一页',
+          onPressed: page < pages ? () => onPage(page + 1) : null,
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
+    ),
+  );
+}
 
 class PanelTasksView extends StatefulWidget {
   const PanelTasksView({
@@ -43,11 +94,21 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   PanelTasksManager? _manager;
   PanelDashboardSnapshot? _dashboard;
   List<PanelTaskSummary> _tasks = const [];
+  PanelTaskPage? _taskPage;
   int _selectedPanelTab = 0;
   _TaskFilter _filter = _TaskFilter.all;
+  String _sort = 'default';
+  String _sortOrder = 'desc';
   String _query = '';
   String? _error;
+  String? _taskError;
   String? _busyTaskId;
+  bool _taskPageLoading = false;
+  int _taskPageRequest = 0;
+  final Set<String> _selectedTaskIds = {};
+  final Map<String, PanelTaskSummary> _selectedTaskSnapshots = {};
+  _PendingTaskAction? _pendingTaskAction;
+  Map<String, dynamic>? _lastTaskAction;
   bool _loading = true;
   bool _dashboardLoading = false;
   bool _hasCredential = false;
@@ -438,59 +499,323 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       await _refreshDashboard();
     } else if (_selectedPanelTab == 1) {
       await _refresh();
+      await _loadTaskPage(page: _taskPage?.page ?? 1);
     } else {
       await _collectionsKey.currentState?.refresh();
     }
   }
 
-  Future<void> _perform(PanelTaskSummary task, String action) async {
+  Future<void> _loadTaskPage({int page = 1}) async {
     final manager = _manager;
-    if (manager == null || _busyTaskId != null) return;
-    if (action != 'toggle') {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(action == 'run' ? '运行任务？' : '停止任务？'),
-          content: Text('将对“${task.name}”执行${action == 'run' ? '运行' : '停止'}。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('确认'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-    }
-    setState(() => _busyTaskId = task.id);
+    if (manager == null) return;
+    final request = ++_taskPageRequest;
+    setState(() {
+      _taskPageLoading = true;
+      _taskError = null;
+    });
     try {
-      await manager.performAction(
-        action,
-        task.id,
-        enabled: action == 'toggle' ? !task.enabled : null,
+      final data = await manager.fetchTaskPage(
+        query: _query,
+        status: switch (_filter) {
+          _TaskFilter.all => 'all',
+          _TaskFilter.running => 'running',
+          _TaskFilter.enabled => 'enabled',
+          _TaskFilter.disabled => 'disabled',
+        },
+        sort: _sort,
+        order: _sortOrder,
+        page: page,
       );
-      await _refreshAfterAction(manager);
+      if (!mounted || request != _taskPageRequest) return;
+      setState(() {
+        _taskPage = data;
+        _taskPageLoading = false;
+      });
     } catch (error) {
-      if (mounted) {
-        if (!await _expireSession(error) && mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(error.toString())));
-        }
-      }
-    } finally {
-      if (mounted) setState(() => _busyTaskId = null);
+      if (!mounted || request != _taskPageRequest) return;
+      if (await _expireSession(error)) return;
+      if (!mounted) return;
+      setState(() {
+        _taskError = error.toString();
+        _taskPageLoading = false;
+      });
     }
   }
 
-  void _openTaskDetails(PanelTaskSummary task) {
+  Future<bool> _confirmTaskAction(String action, List<String> taskIds) async {
+    if (!{'run', 'stop', 'delete'}.contains(action)) return true;
+    final label = switch (action) {
+      'run' => '立即运行',
+      'stop' => '停止运行',
+      _ => '删除',
+    };
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('$label ${taskIds.length} 个任务？'),
+        content: Text(
+          action == 'delete'
+              ? '删除会停止正在运行的任务并从面板移除，无法从 APP 撤销。'
+              : '将对已选的 ${taskIds.length} 个任务执行$label。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(label),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true && mounted;
+  }
+
+  Future<void> _performTaskAction(String action, List<String> taskIds) async {
+    final manager = _manager;
+    if (manager == null || _busyTaskId != null || taskIds.isEmpty) return;
+    if (!await _confirmTaskAction(action, taskIds)) return;
+    final pending = _PendingTaskAction(
+      action: action,
+      taskIds: List.unmodifiable(taskIds),
+      requestId: PanelTasksManager.newRequestId(),
+    );
+    setState(() {
+      _busyTaskId = taskIds.length == 1 ? taskIds.single : '*';
+      _lastTaskAction = null;
+    });
+    await _sendTaskAction(pending);
+  }
+
+  Future<void> _sendTaskAction(_PendingTaskAction pending) async {
     final manager = _manager;
     if (manager == null) return;
-    Navigator.of(context).push<void>(
+    if (_busyTaskId == null && mounted) {
+      setState(
+        () => _busyTaskId = pending.taskIds.length == 1
+            ? pending.taskIds.single
+            : '*',
+      );
+    }
+    try {
+      final result = pending.action == 'pin' || pending.action == 'unpin'
+          ? await manager.performAction(
+              'pin',
+              pending.taskIds.single,
+              pinned: pending.action == 'pin',
+              requestId: pending.requestId,
+            )
+          : pending.action == 'assign_collection'
+          ? await manager.addTasksToCollection(
+              collectionId: pending.targetCollectionId!,
+              taskIds: pending.taskIds,
+              expectedCollections: pending.expectedCollections,
+              requestId: pending.requestId,
+            )
+          : pending.action == 'clear_collection'
+          ? await manager.removeTasksFromCollections(
+              taskIds: pending.taskIds,
+              expectedCollections: pending.expectedCollections,
+              requestId: pending.requestId,
+            )
+          : await manager.performBulkAction(
+              pending.action,
+              pending.taskIds,
+              requestId: pending.requestId,
+            );
+      if (!mounted) return;
+      final completed = _stringList(result['completed_ids']);
+      final unknown = _stringList(result['unknown_ids']);
+      setState(() {
+        _pendingTaskAction = unknown.isEmpty ? null : pending;
+        _lastTaskAction = result;
+        _busyTaskId = null;
+        _selectedTaskIds.removeAll(completed);
+        for (final id in completed) {
+          _selectedTaskSnapshots.remove(id);
+        }
+        if (result['ok'] == true && completed.isEmpty) {
+          _selectedTaskIds.removeAll(pending.taskIds);
+          for (final id in pending.taskIds) {
+            _selectedTaskSnapshots.remove(id);
+          }
+        }
+      });
+      unawaited(_refresh());
+      await _loadTaskPage(page: _taskPage?.page ?? 1);
+    } catch (error) {
+      if (!mounted) return;
+      if (await _expireSession(error)) return;
+      if (!mounted) return;
+      final hasServerResult = error is PanelApiException && error.data != null;
+      setState(() {
+        _pendingTaskAction = hasServerResult ? null : pending;
+        _lastTaskAction = hasServerResult ? error.data : null;
+        _busyTaskId = null;
+      });
+      if (hasServerResult) {
+        unawaited(_refresh());
+        unawaited(_loadTaskPage(page: _taskPage?.page ?? 1));
+      }
+    }
+  }
+
+  Future<void> _retryFailedTaskItems() async {
+    final result = _lastTaskAction;
+    final action = result?['action']?.toString();
+    final ids = _stringList(result?['retry_ids']);
+    if (action == null || ids.isEmpty || _busyTaskId != null) return;
+    await _performTaskAction(action, ids);
+  }
+
+  List<String> _stringList(Object? value) => value is List
+      ? value.whereType<String>().toList(growable: false)
+      : const [];
+
+  void _toggleTaskSelection(PanelTaskSummary task, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedTaskIds.add(task.id);
+        _selectedTaskSnapshots[task.id] = task;
+      } else {
+        _selectedTaskIds.remove(task.id);
+        _selectedTaskSnapshots.remove(task.id);
+      }
+    });
+  }
+
+  Future<PanelCollection?> _chooseCollection() async {
+    final manager = _manager;
+    if (manager == null) return null;
+    try {
+      var page = await manager.fetchCollections(limit: 100);
+      final collections = [...page.items];
+      for (var index = 2; index <= page.pages; index++) {
+        page = await manager.fetchCollections(page: index, limit: 100);
+        collections.addAll(page.items);
+      }
+      if (!mounted) return null;
+      if (collections.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('请先创建任务合集')));
+        return null;
+      }
+      return showDialog<PanelCollection>(
+        context: context,
+        builder: (dialogContext) => SimpleDialog(
+          title: const Text('加入任务合集'),
+          children: collections
+              .map(
+                (collection) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(dialogContext, collection),
+                  child: Text(
+                    '${collection.name} · ${collection.memberCount} 个任务',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(growable: false),
+        ),
+      );
+    } catch (error) {
+      if (await _expireSession(error)) return null;
+      if (!mounted) return null;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      return null;
+    }
+  }
+
+  Future<void> _performMembershipAction(String action) async {
+    final ids = _selectedTaskIds.toList(growable: false);
+    if (ids.isEmpty || _busyTaskId != null) return;
+    String? targetCollectionId;
+    var targetIds = ids;
+    if (action == 'assign_collection') {
+      final collection = await _chooseCollection();
+      if (collection == null || !mounted) return;
+      targetCollectionId = collection.id;
+    } else {
+      targetIds = ids
+          .where(
+            (id) => (_selectedTaskSnapshots[id]?.collectionId ?? '').isNotEmpty,
+          )
+          .toList(growable: false);
+      if (targetIds.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('所选任务不属于任何合集')));
+        return;
+      }
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(action == 'assign_collection' ? '加入合集？' : '移出合集？'),
+        content: Text(
+          action == 'assign_collection'
+              ? '将 ${targetIds.length} 个任务加入所选合集。'
+              : '将 ${targetIds.length} 个任务从各自所属的合集移出，任务仍会保留。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(action == 'assign_collection' ? '加入' : '移出'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final expected = {
+      for (final id in targetIds)
+        id: _selectedTaskSnapshots[id]?.collectionId ?? '',
+    };
+    final pending = _PendingTaskAction(
+      action: action,
+      taskIds: targetIds,
+      requestId: PanelTasksManager.newRequestId(),
+      targetCollectionId: targetCollectionId,
+      expectedCollections: expected,
+    );
+    setState(() {
+      _busyTaskId = '*';
+      _lastTaskAction = null;
+    });
+    await _sendTaskAction(pending);
+  }
+
+  Future<void> _reloadScheduler() async {
+    final manager = _manager;
+    if (manager == null) return;
+    try {
+      await manager.reloadScheduler();
+      if (!mounted) return;
+      setState(() => _lastTaskAction = null);
+      await _refresh();
+      await _loadTaskPage(page: _taskPage?.page ?? 1);
+    } catch (error) {
+      if (!mounted) return;
+      if (!await _expireSession(error) && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  Future<void> _openTaskDetails(PanelTaskSummary task) async {
+    final manager = _manager;
+    if (manager == null) return;
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => PanelTaskDetailView(
           manager: manager,
@@ -504,11 +829,92 @@ class _PanelTasksViewState extends State<PanelTasksView> {
         ),
       ),
     );
+    if (mounted) await _loadTaskPage(page: _taskPage?.page ?? 1);
   }
 
-  Future<void> _refreshAfterAction(PanelTasksManager manager) async {
-    final tasks = await manager.fetchTasks();
-    if (mounted) setState(() => _tasks = tasks);
+  Future<void> _performTaskMenu(PanelTaskSummary task, String action) async {
+    await _performTaskAction(action, [task.id]);
+  }
+
+  Widget _taskActionBanner() {
+    final pending = _pendingTaskAction;
+    final result = _lastTaskAction;
+    if (pending == null && result == null) return const SizedBox.shrink();
+    final unknown = _stringList(result?['unknown_ids']);
+    final retry = _stringList(result?['retry_ids']);
+    final message = pending != null
+        ? '请求结果未知。使用同一提交标识恢复，不会重复已完成的操作。'
+        : (result?['msg']?.toString() ?? '任务操作已返回');
+    return MaterialBanner(
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            unknown.isEmpty
+                ? message
+                : '$message；${unknown.length} 项结果仍未知，请先核对任务状态或历史。',
+          ),
+          if (_stringList(result?['unknown_ids']).isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '待核对 ID：${_stringList(result?['unknown_ids']).take(5).join('、')}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          if (result?['results'] is List) ...[
+            const SizedBox(height: 4),
+            ...((result!['results'] as List)
+                .whereType<Map>()
+                .take(3)
+                .map(
+                  (row) => Text(
+                    '${row['task_id'] ?? '任务'} · ${row['status'] ?? 'unknown'} · ${row['msg'] ?? ''}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                )),
+          ],
+        ],
+      ),
+      actions: [
+        if (pending != null)
+          TextButton.icon(
+            onPressed: _busyTaskId != null
+                ? null
+                : () => _sendTaskAction(pending),
+            icon: const Icon(Icons.replay),
+            label: const Text('恢复同一请求'),
+          ),
+        if (pending == null &&
+            retry.isNotEmpty &&
+            !{
+              'assign_collection',
+              'clear_collection',
+            }.contains(result?['action']))
+          TextButton(
+            onPressed: _busyTaskId != null ? null : _retryFailedTaskItems,
+            child: Text('重试 ${retry.length} 项'),
+          ),
+        if (pending == null && result?['reload_required'] == true)
+          TextButton(onPressed: _reloadScheduler, child: const Text('重新加载调度器')),
+        if (pending == null)
+          TextButton(
+            onPressed: () => setState(() => _lastTaskAction = null),
+            child: const Text('关闭'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _perform(PanelTaskSummary task, String action) async {
+    if (action == 'details') {
+      await _openTaskDetails(task);
+      return;
+    }
+    await _performTaskMenu(task, action);
   }
 
   Future<bool> _expireSession(Object error, {PanelApiClient? candidate}) async {
@@ -525,6 +931,14 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       _dashboardManager = null;
       _manager = null;
       _tasks = const [];
+      _taskPage = null;
+      _selectedTaskIds.clear();
+      _selectedTaskSnapshots.clear();
+      _pendingTaskAction = null;
+      _lastTaskAction = null;
+      _busyTaskId = null;
+      _taskPageRequest++;
+      _taskPageLoading = false;
       _dashboard = null;
       _dashboardLoading = false;
       _loading = false;
@@ -558,17 +972,10 @@ class _PanelTasksViewState extends State<PanelTasksView> {
         ),
       ),
     );
-    if (created == true && mounted) await _refresh();
-  }
-
-  List<PanelTaskSummary> get _visibleTasks {
-    return _tasks.where((task) {
-      if (_filter == _TaskFilter.running && !task.running) return false;
-      if (_filter == _TaskFilter.disabled && task.enabled) return false;
-      if (_query.isEmpty) return true;
-      return task.name.toLowerCase().contains(_query) ||
-          task.command.toLowerCase().contains(_query);
-    }).toList();
+    if (created == true && mounted) {
+      await _refresh();
+      await _loadTaskPage();
+    }
   }
 
   @override
@@ -608,6 +1015,14 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   _dashboardManager = null;
                   _manager = null;
                   _tasks = const [];
+                  _taskPage = null;
+                  _selectedTaskIds.clear();
+                  _selectedTaskSnapshots.clear();
+                  _pendingTaskAction = null;
+                  _lastTaskAction = null;
+                  _busyTaskId = null;
+                  _taskPageRequest++;
+                  _taskPageLoading = false;
                   _dashboard = null;
                   _hasCredential = false;
                   _selectedPanelTab = 0;
@@ -641,6 +1056,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   unawaited(_refreshDashboard());
                 } else if (index == 1) {
                   unawaited(_refresh());
+                  unawaited(_loadTaskPage());
                 } else {
                   unawaited(_collectionsKey.currentState?.refresh());
                 }
@@ -688,7 +1104,11 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       );
     }
 
-    final visible = _visibleTasks;
+    final taskPage = _taskPage;
+    final visible = taskPage?.items ?? const <PanelTaskSummary>[];
+    final visibleIds = visible.map((task) => task.id).toSet();
+    final allVisibleSelected =
+        visibleIds.isNotEmpty && visibleIds.every(_selectedTaskIds.contains);
     return Column(
       children: [
         if (_error != null)
@@ -696,13 +1116,26 @@ class _PanelTasksViewState extends State<PanelTasksView> {
             content: Text(_error!),
             actions: [TextButton(onPressed: _refresh, child: const Text('重试'))],
           ),
-        if (_loading) const LinearProgressIndicator(minHeight: 2),
+        if (_loading || _taskPageLoading)
+          const LinearProgressIndicator(minHeight: 2),
+        if (_taskError != null)
+          MaterialBanner(
+            content: Text(_taskError!),
+            actions: [
+              TextButton(
+                onPressed: () => _loadTaskPage(page: taskPage?.page ?? 1),
+                child: const Text('重试'),
+              ),
+            ],
+          ),
+        _taskActionBanner(),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Column(
             children: [
               TextField(
                 controller: _searchController,
+                textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.search),
                   hintText: '搜索任务',
@@ -713,12 +1146,15 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                           onPressed: () {
                             _searchController.clear();
                             setState(() => _query = '');
+                            unawaited(_loadTaskPage());
                           },
                           icon: const Icon(Icons.close),
                         ),
                 ),
-                onChanged: (value) =>
-                    setState(() => _query = value.trim().toLowerCase()),
+                onSubmitted: (value) {
+                  setState(() => _query = value.trim());
+                  unawaited(_loadTaskPage());
+                },
               ),
               const SizedBox(height: 8),
               SizedBox(
@@ -732,33 +1168,157 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                       label: Text('运行中'),
                     ),
                     ButtonSegment(
+                      value: _TaskFilter.enabled,
+                      label: Text('已启用'),
+                    ),
+                    ButtonSegment(
                       value: _TaskFilter.disabled,
                       label: Text('已停用'),
                     ),
                   ],
                   selected: {_filter},
-                  onSelectionChanged: (value) =>
-                      setState(() => _filter = value.first),
+                  onSelectionChanged: (value) {
+                    setState(() => _filter = value.first);
+                    unawaited(_loadTaskPage());
+                  },
                 ),
               ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        taskPage == null ? '' : '${taskPage.total} 个任务',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                  Text(_sortLabel(_sort)),
+                  IconButton(
+                    tooltip: _sortOrder == 'desc' ? '降序' : '升序',
+                    onPressed: () {
+                      setState(
+                        () =>
+                            _sortOrder = _sortOrder == 'desc' ? 'asc' : 'desc',
+                      );
+                      unawaited(_loadTaskPage());
+                    },
+                    icon: Icon(
+                      _sortOrder == 'desc' ? Icons.south : Icons.north,
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: '任务排序',
+                    onSelected: (value) {
+                      setState(() => _sort = value);
+                      unawaited(_loadTaskPage());
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'default', child: Text('默认排序')),
+                      PopupMenuItem(value: 'name', child: Text('按名称')),
+                      PopupMenuItem(value: 'recent_run', child: Text('最近运行')),
+                      PopupMenuItem(value: 'last_run', child: Text('最后运行')),
+                      PopupMenuItem(value: 'created', child: Text('创建时间')),
+                    ],
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.sort, size: 20),
+                    ),
+                  ),
+                ],
+              ),
+              if (visible.isNotEmpty)
+                Row(
+                  children: [
+                    Checkbox(
+                      value: allVisibleSelected,
+                      onChanged: _busyTaskId != null
+                          ? null
+                          : (value) => setState(() {
+                              if (value == true) {
+                                _selectedTaskIds.addAll(visibleIds);
+                                for (final task in visible) {
+                                  _selectedTaskSnapshots[task.id] = task;
+                                }
+                              } else {
+                                _selectedTaskIds.removeAll(visibleIds);
+                                _selectedTaskSnapshots.removeWhere(
+                                  (id, _) => visibleIds.contains(id),
+                                );
+                              }
+                            }),
+                    ),
+                    Expanded(
+                      child: Text(
+                        _selectedTaskIds.isEmpty
+                            ? '选择当前页'
+                            : '已选 ${_selectedTaskIds.length} 个任务',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (_selectedTaskIds.isNotEmpty)
+                      PopupMenuButton<String>(
+                        tooltip: '批量操作',
+                        enabled: _busyTaskId == null,
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'enable', child: Text('启用')),
+                          PopupMenuItem(value: 'disable', child: Text('停用')),
+                          PopupMenuItem(value: 'run', child: Text('立即运行')),
+                          PopupMenuItem(value: 'stop', child: Text('停止运行')),
+                          PopupMenuItem(value: 'delete', child: Text('删除')),
+                          PopupMenuItem(
+                            value: 'assign_collection',
+                            child: Text('加入合集'),
+                          ),
+                          PopupMenuItem(
+                            value: 'clear_collection',
+                            child: Text('移出合集'),
+                          ),
+                        ],
+                        onSelected: (action) {
+                          if (action == 'assign_collection' ||
+                              action == 'clear_collection') {
+                            _performMembershipAction(action);
+                          } else {
+                            _performTaskAction(
+                              action,
+                              _selectedTaskIds.toList(growable: false),
+                            );
+                          }
+                        },
+                      ),
+                  ],
+                ),
             ],
           ),
         ),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: _refresh,
+            onRefresh: () async => _loadTaskPage(page: taskPage?.page ?? 1),
             child: visible.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: [
                       const SizedBox(height: 80),
                       Icon(
-                        _tasks.isEmpty ? Icons.task_alt : Icons.search_off,
+                        taskPage?.total == 0
+                            ? Icons.task_alt
+                            : Icons.search_off,
                         size: 36,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                       const SizedBox(height: 12),
-                      Center(child: Text(_tasks.isEmpty ? '暂无任务' : '没有匹配的任务')),
+                      Center(
+                        child: Text(
+                          taskPage == null
+                              ? '正在读取任务'
+                              : taskPage.total == 0
+                              ? '没有匹配的任务'
+                              : '暂无任务',
+                        ),
+                      ),
                     ],
                   )
                 : ListView.separated(
@@ -771,6 +1331,12 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   ),
           ),
         ),
+        if (taskPage != null && taskPage.pages > 1)
+          _TaskPageControls(
+            page: taskPage.page,
+            pages: taskPage.pages,
+            onPage: (page) => _loadTaskPage(page: page),
+          ),
       ],
     );
   }
@@ -964,7 +1530,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   );
 
   Widget _buildTaskRow(BuildContext context, PanelTaskSummary task) {
-    final busy = _busyTaskId == task.id;
+    final busy = _busyTaskId == task.id || _busyTaskId == '*';
+    final selected = _selectedTaskIds.contains(task.id);
     final status = task.running
         ? '运行中${task.pid == null ? '' : ' · PID ${task.pid}'}'
         : task.enabled
@@ -977,14 +1544,35 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     ].join('  ·  ');
     return Card(
       child: ListTile(
-        onTap: () => _openTaskDetails(task),
-        title: Text(task.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        onTap: () => _selectedTaskIds.isNotEmpty
+            ? _toggleTaskSelection(task, !selected)
+            : _openTaskDetails(task),
+        onLongPress: () => _toggleTaskSelection(task, !selected),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                task.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (task.pinned) ...[
+              const SizedBox(width: 6),
+              Icon(
+                Icons.push_pin,
+                size: 16,
+                color: Theme.of(context).colorScheme.tertiary,
+              ),
+            ],
+          ],
+        ),
         subtitle: Text(detail, maxLines: 2, overflow: TextOverflow.ellipsis),
-        leading: Icon(
-          task.running ? Icons.play_circle_fill : Icons.task_alt,
-          color: task.running
-              ? Theme.of(context).colorScheme.tertiary
-              : Theme.of(context).colorScheme.onSurfaceVariant,
+        leading: Checkbox(
+          value: selected,
+          onChanged: busy
+              ? null
+              : (value) => _toggleTaskSelection(task, value == true),
         ),
         trailing: busy
             ? const SizedBox.square(
@@ -993,21 +1581,37 @@ class _PanelTasksViewState extends State<PanelTasksView> {
               )
             : PopupMenuButton<String>(
                 tooltip: '任务操作',
+                enabled: _busyTaskId == null,
                 onSelected: (action) => _perform(task, action),
                 itemBuilder: (_) => [
+                  PopupMenuItem(value: 'details', child: const Text('查看详情')),
                   PopupMenuItem(
                     value: task.running ? 'stop' : 'run',
                     child: Text(task.running ? '停止运行' : '立即运行'),
                   ),
                   PopupMenuItem(
-                    value: 'toggle',
+                    value: task.enabled ? 'disable' : 'enable',
                     child: Text(task.enabled ? '停用任务' : '启用任务'),
                   ),
+                  PopupMenuItem(
+                    value: task.pinned ? 'unpin' : 'pin',
+                    child: Text(task.pinned ? '取消置顶' : '置顶任务'),
+                  ),
+                  const PopupMenuItem(value: 'copy', child: Text('复制任务')),
+                  const PopupMenuItem(value: 'delete', child: Text('删除任务')),
                 ],
               ),
       ),
     );
   }
+
+  String _sortLabel(String sort) => switch (sort) {
+    'name' => '名称',
+    'recent_run' => '最近运行',
+    'last_run' => '最后运行',
+    'created' => '创建时间',
+    _ => '默认排序',
+  };
 
   Widget _buildSignInPrompt(BuildContext context) => Center(
     child: Padding(
