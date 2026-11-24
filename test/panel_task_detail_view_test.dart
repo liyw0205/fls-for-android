@@ -71,6 +71,11 @@ void main() {
       ),
     );
     await pumpUntilFound(tester, find.text('主账号'));
+    await tester.scrollUntilVisible(
+      find.text('成功'),
+      240,
+      scrollable: find.byType(Scrollable).last,
+    );
 
     expect(find.text('主账号'), findsOneWidget);
     expect(find.text('python daily.py'), findsOneWidget);

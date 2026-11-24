@@ -42,14 +42,21 @@ Future<void> pumpUntil(WidgetTester tester, bool Function() condition) async {
 
 http.Client panelMockClient(
   Future<http.Response> Function(http.Request request) handler,
-) => http_testing.MockClient.streaming((baseRequest, _) async {
-  final request = baseRequest as http.Request;
+) => http_testing.MockClient.streaming((baseRequest, bodyStream) async {
+  final bodyBytes = await bodyStream.toBytes();
+  final request = http.Request(baseRequest.method, baseRequest.url)
+    ..persistentConnection = baseRequest.persistentConnection
+    ..followRedirects = baseRequest.followRedirects
+    ..maxRedirects = baseRequest.maxRedirects
+    ..headers.addAll(baseRequest.headers)
+    ..bodyBytes = bodyBytes
+    ..finalize();
   final response = await handler(request);
   return http.StreamedResponse(
     Stream<List<int>>.value(response.bodyBytes),
     response.statusCode,
     contentLength: response.contentLength,
-    request: request,
+    request: response.request ?? request,
     headers: response.headers,
     isRedirect: response.isRedirect,
     persistentConnection: response.persistentConnection,

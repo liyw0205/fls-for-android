@@ -221,6 +221,7 @@ void main() {
     await pumpUntilFound(tester, find.text('每日签到'));
     await tester.tap(find.byTooltip('任务操作').first);
     await pumpUntilFound(tester, find.text('立即运行'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('立即运行'));
     await pumpUntilFound(tester, find.text('确认'));
     await tester.tap(find.text('确认'));
@@ -282,6 +283,11 @@ void main() {
     await pumpUntilFound(tester, find.text('每日签到'));
     await tester.tap(find.text('每日签到'));
     await pumpUntilFound(tester, find.text('python /scripts/daily.py'));
+    await tester.scrollUntilVisible(
+      find.text('暂无运行记录'),
+      240,
+      scrollable: find.byType(Scrollable).last,
+    );
 
     expect(find.text('python /scripts/daily.py'), findsOneWidget);
     expect(find.text('暂无运行记录'), findsOneWidget);
