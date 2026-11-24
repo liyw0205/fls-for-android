@@ -201,10 +201,11 @@ class PanelApiClient {
           ]),
           statusCode: response.statusCode,
           path: uri.path,
-          data: _errorMetadata(decoded, [
-            ...redactValues,
-            if (cookie != null) cookie.split('=').last,
-          ]),
+          data: _errorMetadata(
+            decoded,
+            [...redactValues, if (cookie != null) cookie.split('=').last],
+            includeTaskActionDetails: _isTaskActionPath(Uri.parse(path).path),
+          ),
         );
       }
       if (text.isEmpty && response.statusCode != 204) {
@@ -278,26 +279,29 @@ class PanelApiClient {
 
   Map<String, dynamic>? _errorMetadata(
     Object? payload,
-    List<String> redactValues,
-  ) {
+    List<String> redactValues, {
+    required bool includeTaskActionDetails,
+  }) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
-    for (final key in const [
-      'saved',
-      'reload_required',
-      'action',
-      'request_id',
-      'msg',
-      'count',
-      'updated_count',
-      'deleted_count',
-      'submitted_count',
-      'stopped_count',
-      'failed_count',
-      'skipped_count',
-      'copied_count',
-      'target_collection',
-    ]) {
+    final keys = <String>['saved', 'reload_required'];
+    if (includeTaskActionDetails) {
+      keys.addAll(const [
+        'action',
+        'request_id',
+        'msg',
+        'count',
+        'updated_count',
+        'deleted_count',
+        'submitted_count',
+        'stopped_count',
+        'failed_count',
+        'skipped_count',
+        'copied_count',
+        'target_collection',
+      ]);
+    }
+    for (final key in keys) {
       final value = payload[key];
       if (value is bool || value is String || value is num) {
         metadata[key] = key == 'msg' && value is String
@@ -306,28 +310,34 @@ class PanelApiClient {
       }
     }
     final expectedCollections = payload['expected_collections'];
-    if (expectedCollections is Map &&
+    if (includeTaskActionDetails &&
+        expectedCollections is Map &&
         expectedCollections.keys.every((key) => key is String) &&
         expectedCollections.values.every((value) => value is String)) {
       metadata['expected_collections'] = Map<String, String>.unmodifiable(
         expectedCollections.cast<String, String>(),
       );
     }
-    for (final key in const [
-      'completed_ids',
-      'retry_ids',
-      'unknown_ids',
-      'created_ids',
-      'stopped_ids',
-      'missing_ids',
-    ]) {
+    for (final key
+        in includeTaskActionDetails
+            ? const [
+                'completed_ids',
+                'retry_ids',
+                'unknown_ids',
+                'created_ids',
+                'stopped_ids',
+                'missing_ids',
+              ]
+            : const <String>[]) {
       final value = payload[key];
       if (value is List && value.every((item) => item is String)) {
         metadata[key] = List<String>.unmodifiable(value.cast<String>());
       }
     }
     final results = payload['results'];
-    if (results is List && results.every((item) => item is Map)) {
+    if (includeTaskActionDetails &&
+        results is List &&
+        results.every((item) => item is Map)) {
       metadata['results'] = results
           .whereType<Map>()
           .map((item) {
@@ -352,6 +362,11 @@ class PanelApiClient {
     }
     return metadata.isEmpty ? null : metadata;
   }
+
+  bool _isTaskActionPath(String path) =>
+      path == '/api/task/bulk-action' ||
+      path.startsWith('/api/task/action/') ||
+      path.startsWith('/api/collection/add-task/');
 
   String _redactText(String text, List<String> values) {
     var result = text;

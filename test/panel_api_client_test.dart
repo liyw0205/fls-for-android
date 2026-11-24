@@ -205,6 +205,41 @@ void main() {
     );
   });
 
+  test(
+    'retains safe task action recovery details on mounted panel paths',
+    () async {
+      final client = PanelApiClient(
+        baseUrl: 'https://fls.example/panel',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=signed-cookie',
+          csrfToken: 'csrf-token',
+        ),
+        client: MockClient(
+          (_) async => utf8Response(
+            '{"ok":false,"action":"delete","request_id":"request-1","msg":"检查结果","unknown_ids":["task-1"],"results":[{"task_id":"task-1","status":"unknown","msg":"待确认","env":"must-drop"}]}',
+            409,
+          ),
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.postJson('/api/task/bulk-action', const {}),
+        throwsA(
+          isA<PanelApiException>().having((error) => error.data, 'data', {
+            'action': 'delete',
+            'request_id': 'request-1',
+            'msg': '检查结果',
+            'unknown_ids': ['task-1'],
+            'results': [
+              {'task_id': 'task-1', 'status': 'unknown', 'msg': '待确认'},
+            ],
+          }),
+        ),
+      );
+    },
+  );
+
   test('limits JSON response size', () async {
     final client = PanelApiClient(
       baseUrl: 'https://fls.example',
