@@ -240,6 +240,10 @@ Future<_TestOnlineScriptsManager> _pumpScriptsView(
   addTearDown(manager.close);
   await tester.pumpWidget(
     MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: MediaQuery(
         data: MediaQueryData(
           size: tester.view.physicalSize / tester.view.devicePixelRatio,
