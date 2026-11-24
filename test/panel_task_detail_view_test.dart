@@ -82,20 +82,24 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('成功'),
       240,
-      scrollable: find.descendant(
-        of: find.byType(ListView).first,
-        matching: find.byType(Scrollable),
-      ),
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).first,
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(find.text('成功'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.byTooltip('显示变量值'),
       -240,
-      scrollable: find.descendant(
-        of: find.byType(ListView).first,
-        matching: find.byType(Scrollable),
-      ),
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).first,
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     await tester.tap(find.byTooltip('显示变量值'));
     await tester.pumpAndSettle();

@@ -289,10 +289,12 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('暂无运行记录'),
       240,
-      scrollable: find.descendant(
-        of: find.byType(ListView).last,
-        matching: find.byType(Scrollable),
-      ),
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).last,
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
 
     expect(find.text('python /scripts/daily.py'), findsOneWidget);
