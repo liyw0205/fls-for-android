@@ -12,6 +12,9 @@ http.Response utf8Response(
 
 Future<void> pumpUntilFound(WidgetTester tester, Finder finder) async {
   for (var attempt = 0; attempt < 100; attempt++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
     await tester.pump(const Duration(milliseconds: 100));
     if (finder.evaluate().isNotEmpty) return;
   }
@@ -27,6 +30,9 @@ Future<void> pumpUntilFound(WidgetTester tester, Finder finder) async {
 
 Future<void> pumpUntil(WidgetTester tester, bool Function() condition) async {
   for (var attempt = 0; attempt < 100; attempt++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
     await tester.pump(const Duration(milliseconds: 100));
     if (condition()) return;
   }
