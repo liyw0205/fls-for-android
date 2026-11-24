@@ -164,6 +164,129 @@ void main() {
     expect(find.text('打开 FLS 运行环境安装器'), findsNothing);
   });
 
+  for (final size in [const Size(360, 800), const Size(800, 360)]) {
+    testWidgets('local environment controls fit $size with enlarged text', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      SharedPreferences.setMockInitialValues({});
+      const panelChannel = MethodChannel('top.fls/local_panel');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        panelChannel,
+        (call) async => switch (call.method) {
+          'supportedAbis' => ['arm64-v8a'],
+          'status' => {'state': 'stopped'},
+          'notificationsGranted' => true,
+          _ => null,
+        },
+      );
+      addTearDown(() => messenger.setMockMethodCallHandler(panelChannel, null));
+
+      final manager = _TestLocalInstallManager();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: LocalSetupView(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Future<Rect> reveal(Finder target) async {
+        await Scrollable.ensureVisible(tester.element(target), alignment: 0.5);
+        await tester.pumpAndSettle();
+        final rect = tester.getRect(target);
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(size.width));
+        expect(rect.top, greaterThanOrEqualTo(0));
+        expect(rect.bottom, lessThanOrEqualTo(size.height));
+        expect(target.hitTestable(), findsOneWidget);
+        return rect;
+      }
+
+      final environment = find.text('环境');
+      await reveal(environment);
+      await tester.tap(environment);
+      await tester.pumpAndSettle();
+
+      final profiles = find.byType(SegmentedButton<RuntimeProfile>);
+      final python = find.descendant(
+        of: profiles,
+        matching: find.text('Python 基础'),
+      );
+      final full = find.descendant(
+        of: profiles,
+        matching: find.text('Full 预装'),
+      );
+      await reveal(profiles);
+      expect(python.hitTestable(), findsOneWidget);
+      expect(full.hitTestable(), findsOneWidget);
+      expect(tester.getRect(python).overlaps(tester.getRect(full)), isFalse);
+      expect(find.textContaining('轻量容器，包含 Python'), findsOneWidget);
+      await tester.tap(full);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SegmentedButton<RuntimeProfile>>(profiles).selected,
+        {RuntimeProfile.all},
+      );
+      expect(find.textContaining('镜像预装常用 Linux 工具'), findsOneWidget);
+
+      final toggle = find.widgetWithText(SwitchListTile, '使用 GitHub 加速源');
+      await reveal(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(manager.savedMirror, builtinGithubMirrors.first.prefix);
+      expect(find.byType(RadioListTile<String>), findsNWidgets(6));
+
+      final measure = find.text('批量测速');
+      await reveal(measure);
+      await tester.tap(measure);
+      await tester.pumpAndSettle();
+      final fastest = builtinGithubMirrors.last;
+      final fastestTile = find.widgetWithText(
+        RadioListTile<String>,
+        fastest.name,
+      );
+      await reveal(fastestTile);
+      expect(
+        tester
+            .widget<RadioListTile<String>>(
+              find.byType(RadioListTile<String>).first,
+            )
+            .value,
+        fastest.prefix,
+      );
+      expect(
+        find.descendant(of: fastestTile, matching: find.text('42 ms')),
+        findsOneWidget,
+      );
+
+      final custom = find.widgetWithText(RadioListTile<String>, '自定义');
+      await reveal(custom);
+      await tester.tap(custom);
+      await tester.pumpAndSettle();
+      final input = find.byType(TextField);
+      await reveal(input);
+      const customMirror = 'https://mirror.example/';
+      await tester.enterText(input, customMirror);
+      tester.testTextInput.hide();
+      await tester.pumpAndSettle();
+      expect(manager.savedMirror, customMirror);
+      await reveal(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(manager.savedMirror, isEmpty);
+      expect(custom, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('failed local service exposes its diagnostics', (tester) async {
     SharedPreferences.setMockInitialValues({});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -211,6 +334,7 @@ class _TestLocalInstallManager extends LocalInstallManager {
 
   final RuntimeProfile? profile;
   final bool projectInstalled;
+  String savedMirror = '';
 
   @override
   Future<RuntimeProfile?> installedRuntimeProfile() async => profile;
@@ -219,7 +343,25 @@ class _TestLocalInstallManager extends LocalInstallManager {
   Future<bool> hasProject() async => projectInstalled;
 
   @override
-  Future<String> loadGithubMirror() async => '';
+  Future<String> loadGithubMirror() async => savedMirror;
+
+  @override
+  Future<void> saveGithubMirror(String value) async => savedMirror = value;
+
+  @override
+  Future<List<GithubMirrorTestResult>> testGithubMirrors({
+    String? customMirror,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final fastest = builtinGithubMirrors.last;
+    return [
+      GithubMirrorTestResult(
+        mirror: fastest.prefix,
+        name: fastest.name,
+        latency: const Duration(milliseconds: 42),
+      ),
+    ];
+  }
 
   @override
   Future<String?> currentPanelVersion() async => null;
