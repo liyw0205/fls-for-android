@@ -42,6 +42,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       await _pumpScriptsView(
         tester,
+        installed: true,
         textScaler: size.width < 400
             ? const TextScaler.linear(1.8)
             : const TextScaler.linear(1),
@@ -52,6 +53,46 @@ void main() {
     }
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+  });
+
+  testWidgets('catalog exposes on-demand update availability', (tester) async {
+    final manager = await _pumpScriptsView(tester, installed: true);
+    await _pumpUntilVisible(tester, find.byTooltip('检查更新'));
+    manager.updateResult = OnlineScriptUpdateState.updateAvailable;
+
+    await tester.tap(find.byTooltip('检查更新'));
+    await tester.pumpAndSettle();
+
+    expect(manager.updateCheckCount, 1);
+    expect(find.text('RAW · checkin.py · 有可用更新'), findsOneWidget);
+    expect(find.byTooltip('查看可用更新'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('catalog reports update-check failure and allows cancellation', (
+    tester,
+  ) async {
+    final manager = await _pumpScriptsView(tester, installed: true);
+    await _pumpUntilVisible(tester, find.byTooltip('检查更新'));
+    manager.updateFailure = 'offline';
+
+    await tester.tap(find.byTooltip('检查更新'));
+    await tester.pumpAndSettle();
+    expect(find.text('RAW · checkin.py · 检查失败'), findsOneWidget);
+    expect(find.byTooltip('重试检查更新'), findsOneWidget);
+
+    manager.updateFailure = null;
+    manager.updateGate = Completer<void>();
+    await tester.tap(find.byTooltip('重试检查更新'));
+    await tester.pump();
+    await _pumpUntilVisible(tester, find.byTooltip('取消检查更新'));
+    expect(find.textContaining('下载远端脚本并比对'), findsOneWidget);
+    await tester.tap(find.byTooltip('取消检查更新'));
+    await tester.pumpAndSettle();
+
+    expect(manager.updateCheckCount, 2);
+    expect(find.text('RAW · checkin.py · 已安装'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('script detail shows progress, cancellation and log controls', (
@@ -145,8 +186,12 @@ Future<_TestOnlineScriptsManager> _pumpScriptsView(
   WidgetTester tester, {
   TextScaler textScaler = TextScaler.noScaling,
   bool offlineAfterCache = false,
+  bool installed = false,
 }) async {
-  final manager = _TestOnlineScriptsManager(offline: offlineAfterCache);
+  final manager = _TestOnlineScriptsManager(
+    offline: offlineAfterCache,
+    installed: installed,
+  );
   addTearDown(manager.close);
   await tester.pumpWidget(
     MaterialApp(
@@ -189,12 +234,16 @@ Future<void> _pumpUntilVisible(WidgetTester tester, Finder finder) async {
 }
 
 class _TestOnlineScriptsManager extends OnlineScriptsManager {
-  _TestOnlineScriptsManager({required this.offline});
+  _TestOnlineScriptsManager({required this.offline, required this.installed});
 
   final bool offline;
+  bool installed;
   final Completer<void> installStarted = Completer<void>();
   final Completer<void> installGate = Completer<void>();
-  bool installed = false;
+  OnlineScriptUpdateState updateResult = OnlineScriptUpdateState.upToDate;
+  String? updateFailure;
+  Completer<void>? updateGate;
+  int updateCheckCount = 0;
 
   static final _scripts = [
     OnlineScript(
@@ -243,6 +292,31 @@ class _TestOnlineScriptsManager extends OnlineScriptsManager {
     OnlineScript script,
     LocalInstallManager installManager,
   ) async => installed && script.id == 'daily_checkin';
+
+  @override
+  Future<OnlineScriptUpdateResult> checkForUpdate({
+    required OnlineScript script,
+    required LocalInstallManager installManager,
+    required OperationCancellation cancellation,
+    required OnlineScriptsStatusCallback onStatus,
+    OnlineScriptsProgressCallback? onProgress,
+  }) async {
+    updateCheckCount++;
+    onStatus('下载远端脚本并比对');
+    onProgress?.call(512, 1024);
+    final gate = updateGate;
+    if (gate != null) {
+      await Future.any<void>([
+        gate.future,
+        cancellation.whenCancelled.then<void>(
+          (_) => throw const OperationCancelled(),
+        ),
+      ]);
+    }
+    cancellation.throwIfCancelled();
+    if (updateFailure case final failure?) throw StateError(failure);
+    return OnlineScriptUpdateResult(state: updateResult);
+  }
 
   @override
   Future<void> installOrUpdateNative({

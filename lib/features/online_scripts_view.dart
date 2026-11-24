@@ -35,10 +35,17 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
   List<OnlineScript> _scripts = const [];
   OnlineScriptsCatalogSnapshot? _catalog;
   final Map<String, bool?> _installedById = {};
+  final Map<String, OnlineScriptUpdateState> _updateStateById = {};
+  final Map<String, String> _updateErrorById = {};
   bool _loading = true;
   String? _error;
   String _query = '';
   _OnlineScriptTypeFilter _typeFilter = _OnlineScriptTypeFilter.all;
+  String? _checkingUpdateId;
+  String _checkingUpdateStatus = '';
+  int _checkingUpdateReceived = 0;
+  int? _checkingUpdateTotal;
+  OperationCancellation? _updateCancellation;
 
   @override
   void initState() {
@@ -50,6 +57,7 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
 
   @override
   void dispose() {
+    _updateCancellation?.cancel();
     _searchController.dispose();
     if (_ownsManager) _manager.close();
     super.dispose();
@@ -75,6 +83,8 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
       setState(() {
         _catalog = catalog;
         _scripts = catalog.scripts;
+        _updateStateById.clear();
+        _updateErrorById.clear();
         _loading = false;
       });
       _refreshInstalledStates(catalog.scripts);
@@ -141,8 +151,118 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
       ),
     );
     if (!mounted) return;
+    _updateStateById.remove(script.id);
+    _updateErrorById.remove(script.id);
     await _refreshInstalledStates(_scripts);
   }
+
+  Future<void> _checkForUpdate(OnlineScript script) async {
+    if (_checkingUpdateId != null || _installedById[script.id] != true) return;
+    final cancellation = OperationCancellation();
+    _updateCancellation = cancellation;
+    setState(() {
+      _checkingUpdateId = script.id;
+      _checkingUpdateStatus = '准备检查更新';
+      _checkingUpdateReceived = 0;
+      _checkingUpdateTotal = null;
+      _updateErrorById.remove(script.id);
+    });
+    try {
+      final result = await _manager.checkForUpdate(
+        script: script,
+        installManager: widget.installManager,
+        cancellation: cancellation,
+        onStatus: (status) {
+          if (!mounted || _checkingUpdateId != script.id) return;
+          setState(() => _checkingUpdateStatus = status);
+        },
+        onProgress: (received, total) {
+          if (!mounted || _checkingUpdateId != script.id) return;
+          setState(() {
+            _checkingUpdateReceived = received;
+            _checkingUpdateTotal = total;
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _updateStateById[script.id] = result.state;
+        if (result.state == OnlineScriptUpdateState.notInstalled) {
+          _installedById[script.id] = false;
+        }
+      });
+    } catch (error) {
+      if (!mounted || cancellation.isCancelled) return;
+      setState(() => _updateErrorById[script.id] = error.toString());
+    } finally {
+      if (identical(_updateCancellation, cancellation)) {
+        _updateCancellation = null;
+      }
+      if (mounted) setState(() => _checkingUpdateId = null);
+    }
+  }
+
+  Widget _scriptTrailing(OnlineScript script) {
+    if (_installedById[script.id] != true) {
+      return const Icon(Icons.chevron_right);
+    }
+    if (_checkingUpdateId == script.id) {
+      return IconButton(
+        tooltip: '取消检查更新',
+        onPressed: _updateCancellation?.cancel,
+        icon: const Icon(Icons.close),
+      );
+    }
+    if (_updateErrorById.containsKey(script.id)) {
+      return IconButton(
+        tooltip: '重试检查更新',
+        onPressed: () => _checkForUpdate(script),
+        icon: const Icon(Icons.cloud_off_outlined),
+      );
+    }
+    if (_updateStateById[script.id] ==
+        OnlineScriptUpdateState.updateAvailable) {
+      return IconButton(
+        tooltip: '查看可用更新',
+        onPressed: () => _openScript(script),
+        icon: const Icon(Icons.system_update_alt),
+      );
+    }
+    return IconButton(
+      tooltip: _updateStateById.containsKey(script.id) ? '重新检查更新' : '检查更新',
+      onPressed: () => _checkForUpdate(script),
+      icon: const Icon(Icons.refresh),
+    );
+  }
+
+  String _scriptStatus(OnlineScript script) {
+    if (_checkingUpdateId == script.id) {
+      final received = _formatUpdateBytes(_checkingUpdateReceived);
+      final total = _checkingUpdateTotal;
+      if (_checkingUpdateReceived > 0 || total != null) {
+        return total == null
+            ? '$_checkingUpdateStatus · 已接收 $received'
+            : '$_checkingUpdateStatus · $received / ${_formatUpdateBytes(total)}';
+      }
+      return _checkingUpdateStatus;
+    }
+    if (_updateErrorById.containsKey(script.id)) return '检查失败';
+    if (_installedById[script.id] != true) {
+      return _installedLabel(_installedById[script.id]);
+    }
+    return switch (_updateStateById[script.id]) {
+      OnlineScriptUpdateState.notInstalled => '未安装',
+      OnlineScriptUpdateState.upToDate => '已是最新版本',
+      OnlineScriptUpdateState.updateAvailable => '有可用更新',
+      null => '已安装',
+    };
+  }
+
+  String _formatUpdateBytes(int bytes) => bytes < 1024
+      ? '$bytes B'
+      : bytes < 1024 * 1024
+      ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+      : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 
   @override
   Widget build(BuildContext context) {
@@ -280,11 +400,11 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text(
-                      '${scripts[index].type.toUpperCase()} · ${scripts[index].linkName} · ${_installedLabel(scripts[index])}',
+                      '${scripts[index].type.toUpperCase()} · ${scripts[index].linkName} · ${_scriptStatus(scripts[index])}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: _scriptTrailing(scripts[index]),
                     onTap: () => _openScript(scripts[index]),
                   ),
                 ],
@@ -296,12 +416,11 @@ class _OnlineScriptsViewState extends State<OnlineScriptsView> {
     );
   }
 
-  String _installedLabel(OnlineScript script) =>
-      switch (_installedById[script.id]) {
-        true => '已安装',
-        false => '未安装',
-        null => '状态未知',
-      };
+  String _installedLabel(bool? installed) => switch (installed) {
+    true => '已安装',
+    false => '未安装',
+    null => '状态未知',
+  };
 
   String _formatCatalogTime(DateTime? value) {
     if (value == null) return '未知';
