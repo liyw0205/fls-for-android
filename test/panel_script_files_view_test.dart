@@ -61,24 +61,39 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () =>
+            find.text('demo.py').evaluate().isNotEmpty &&
+            find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      );
       expect(find.text('demo.py'), findsOneWidget);
       await tester.tap(find.text('demo.py'));
-      await tester.pumpAndSettle();
+      await _pumpUntil(tester, () {
+        final fields = find.byType(TextField);
+        return fields.evaluate().length > 1 &&
+            tester.widget<TextField>(fields.last).enabled == true;
+      });
 
       await tester.enterText(find.byType(TextField).last, 'print("draft")\n');
       await tester.tap(find.byTooltip('保存文件'));
-      await tester.pumpAndSettle();
+      await _pumpUntil(tester, () => find.text('文件版本冲突').evaluate().isNotEmpty);
 
       expect(find.text('文件版本冲突'), findsOneWidget);
       expect(find.textContaining('draft'), findsOneWidget);
       expect(find.textContaining('server'), findsOneWidget);
       await tester.tap(find.text('保留草稿'));
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () => find.textContaining('草稿已保留').evaluate().isNotEmpty,
+      );
       expect(find.textContaining('草稿已保留'), findsOneWidget);
 
       await tester.tap(find.byTooltip('保存文件'));
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () => find.byTooltip('新建文件或目录').evaluate().isNotEmpty,
+      );
       expect(putBodies, hasLength(2));
       expect(putBodies.last['content'], 'print("draft")\n');
       expect(putBodies.last['revision'], 'b' * 64);
@@ -127,12 +142,24 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpUntil(
+      tester,
+      () =>
+          find.text('demo.py').evaluate().isNotEmpty &&
+          find.byType(LinearProgressIndicator).evaluate().isEmpty,
+    );
     await tester.tap(find.text('demo.py'));
-    await tester.pumpAndSettle();
+    await _pumpUntil(tester, () {
+      final fields = find.byType(TextField);
+      return fields.evaluate().length > 1 &&
+          tester.widget<TextField>(fields.last).enabled == true;
+    });
     await tester.enterText(find.byType(TextField).last, 'print("draft")\n');
     await tester.tap(find.byTooltip('保存文件'));
-    await tester.pumpAndSettle();
+    await _pumpUntil(
+      tester,
+      () => find.byTooltip('新建文件或目录').evaluate().isNotEmpty,
+    );
 
     expect(fileReads, 2);
     expect(find.text('面板文件'), findsOneWidget);
@@ -172,3 +199,11 @@ http.Response _jsonResponse(Object value, [int status = 200]) => http.Response(
   status,
   headers: {'content-type': 'application/json'},
 );
+
+Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
+  for (var attempt = 0; attempt < 80; attempt++) {
+    if (condition()) return;
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  fail('widget state did not reach the expected condition');
+}
