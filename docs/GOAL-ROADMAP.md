@@ -14,10 +14,10 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `6afa14c` / `0.1.37+42` | 在线脚本管理与全量原生渲染方案已推送；[Android CI #45568326814](https://github.com/liyw0205/fls-for-android/actions/runs/45568326814) 通过格式、分析、116 项测试及 arm64 APK 构建；隔离面板手动验收待用户反馈 |
-| FLS (`$HOME/fls`) | `develop` | `5d54e68` / `20261125.7` | 409 个在线脚本测试和 305 个子测试通过；[Module](https://github.com/liyw0205/fls/actions/runs/45562804710)、[Windows Desktop](https://github.com/liyw0205/fls/actions/runs/45562804520)、[Windows EXE](https://github.com/liyw0205/fls/actions/runs/45562804501) 打包通过 |
+| APP (`fls-for-android`) | `develop` | pending / `0.1.38+45` | 面板文件目录/编辑原生页已实现；Widget 使用 streaming HTTP mock，并等待文件编辑路由转场结束后再操作。上一轮 CI `45582858935` 已通过格式与分析，但编辑器保存点击发生在转场期间、未命中按钮；本次修正在本地静态分析后待推送验证。真实隔离面板验收待用户反馈 |
+| FLS (`$HOME/fls`) | `develop` | `05220cf` / `20261125.8` | 新增面板脚本目录/文件 JSON API；定向测试 25 项及 44 个子测试通过。Module、Windows Desktop、Windows EXE 打包工作流 `45578854065`、`45578853626`、`45578853716` 全部通过 |
 
-2026-11-25 对 `$HOME/fls` 执行 `git pull --ff-only origin develop`，结果为 `Already up to date`，本地 HEAD 与远端 `develop` 均为 `5d54e68`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
+2026-11-25 对 `$HOME/fls` 执行 `git pull --ff-only origin develop`，结果为 `Already up to date`；随后 FLS `develop` 推进到 `05220cf`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
 
 开发验证不发正式 tag/Release。FLS 打包工作流的手动触发也可能发布 Release，不能用它代替普通的 `develop` push 构建。APP 当前 `develop` CI 会构建 APK，但不会上传为可下载产物；安排仅在 `develop` 上传 arm64 APK artifact，供手动验收，不进入正式更新渠道。远程联调仅在隔离 FLS 实例使用候选提交，不替换稳定面板。
 
@@ -41,7 +41,7 @@ FLS `develop` 已为原生任务管理补齐 `GET /api/tasks` 安全白名单分
 
 ## 当前纵切：FLS 面板脚本文件原生化
 
-面板在线脚本已实现目录、详情、文档、安装/更新与进度、源同步/缓存编辑、独立任务导入和恢复管理。当前推进面板脚本文件目录、编辑、新建 API 与 APP 原生页面；文件拉取/导入、改名/删除和调试仍在后续批次。双仓提交和 CI 状态以上方表格为准。CI 不替代隔离面板手动验收：需验证 APP 重启后能恢复作业、冲突时保留编辑草稿、未知回执不会重复安装或导入，并逐项复核 Web 操作是否都有原生入口。
+面板在线脚本已实现目录、详情、文档、安装/更新与进度、源同步/缓存编辑、独立任务导入和恢复管理。FLS `develop` `05220cf` 新增目录/文件 JSON API：分页搜索、UTF-8 快照、revision 保存和新建；限制 2 MiB，拒绝路径穿越与符号链接。APP 文件页的异步 HTTP 测试已改用 streaming mock；首次目录请求问题解决后，`45582858935` 暴露出测试在编辑器路由转场未结束时点击保存的竞态。本地已加转场稳定等待，下一次推送再由 CI 验证。FLS 三个打包工作流通过；Termux 全量测试仍有 19 项环境或既有字段断言失败，不能记录为全量通过。文件拉取/导入、改名/删除、调试及其余面板域仍未迁移。CI 不替代隔离面板手动验收，也不构成全量原生化完成证明。
 
 在线脚本只是一个业务域。终点是 [全量功能矩阵](FLS-FEATURE-MATRIX.md) 中所有适用 FLS Web 页面、状态、表单和操作均由 APP 原生 Flutter 界面完整覆盖，不限于版本、镜像或脚本。WebView 仅是明确标注的临时兼容/维护回退，不能计入原生覆盖率；双方 `main` 必须等全量验收后再考虑合并。
 

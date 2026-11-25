@@ -78,6 +78,7 @@ void main() {
         return fields.evaluate().length > 1 &&
             tester.widget<TextField>(fields.last).enabled == true;
       });
+      await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField).last, 'print("draft")\n');
       await tester.tap(find.byTooltip('保存文件'));
@@ -161,6 +162,7 @@ void main() {
       return fields.evaluate().length > 1 &&
           tester.widget<TextField>(fields.last).enabled == true;
     });
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'print("draft")\n');
     await tester.tap(find.byTooltip('保存文件'));
     await _pumpUntil(
