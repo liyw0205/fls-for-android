@@ -6,6 +6,7 @@ import '../models/panel_online_script.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_online_scripts_manager.dart';
 import '../widgets/native_markdown_view.dart';
+import 'panel_online_script_admin_view.dart';
 
 Future<void> _expireNestedPanelSession(
   BuildContext context,
@@ -120,6 +121,18 @@ class PanelOnlineScriptsViewState extends State<PanelOnlineScriptsView> {
     );
   }
 
+  Future<void> _openAdmin() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelOnlineScriptAdminView(
+          manager: widget.manager,
+          onUnauthorized: widget.onUnauthorized,
+        ),
+      ),
+    );
+    if (mounted) await refresh();
+  }
+
   void _submitSearch(String value) {
     setState(() => _query = value.trim());
     unawaited(_load());
@@ -159,6 +172,11 @@ class PanelOnlineScriptsViewState extends State<PanelOnlineScriptsView> {
                 tooltip: '安装历史',
                 onPressed: _openHistory,
                 icon: const Icon(Icons.history),
+              ),
+              IconButton(
+                tooltip: '脚本源管理',
+                onPressed: _openAdmin,
+                icon: const Icon(Icons.settings_outlined),
               ),
             ],
           ),
@@ -406,6 +424,166 @@ class _PanelOnlineScriptDetailViewState
     }
   }
 
+  Future<void> _importTasksOnly() async {
+    final script = _script;
+    if (script == null || !script.hasTasks || _starting) return;
+    final draft = await Navigator.of(context)
+        .push<PanelOnlineScriptInstallDraft>(
+          MaterialPageRoute<PanelOnlineScriptInstallDraft>(
+            builder: (_) => _PanelOnlineScriptOptionsView(
+              manager: widget.manager,
+              script: script,
+              onUnauthorized: widget.onUnauthorized,
+              importOnly: true,
+            ),
+          ),
+        );
+    if (draft == null || !mounted) return;
+    final requestId = PanelOnlineScriptsManager.newRequestId();
+    setState(() => _starting = true);
+    try {
+      final result = await widget.manager.importTasks(
+        scriptId: script.id,
+        requestId: requestId,
+        taskIndexes: draft.taskIndexes,
+        enableTasks: draft.enableTasks,
+      );
+      final operationId = _safeInstallId(result['request_id']) ?? requestId;
+      if (mounted) await _openTaskOperation(operationId, taskImport: true);
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PanelApiException && error.statusCode == 401) {
+        await _expireNestedPanelSession(
+          context,
+          widget.onUnauthorized,
+          error,
+          routesToClose: 2,
+        );
+      } else if (error is PanelApiException &&
+          (error.statusCode == null ||
+              error.statusCode! >= 500 ||
+              error.data?['accepted'] == true ||
+              error.data?['scheduler_reload_required'] == true)) {
+        await _openTaskOperation(requestId, taskImport: true);
+      } else {
+        _showMessage(error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  Future<void> _syncTaskSource() async {
+    final script = _script;
+    if (script == null || !script.hasTaskSource || _starting) return;
+    setState(() => _starting = true);
+    String? requestId;
+    try {
+      final options = await widget.manager.fetchRefreshOptions();
+      final proxies = (options['proxies'] as List? ?? const [])
+          .whereType<Map>()
+          .map(PanelOnlineScriptProxy.fromJson)
+          .toList(growable: false);
+      final proxyId = await _chooseTaskLinkProxy(proxies);
+      if (proxyId == null || !mounted) return;
+      requestId = PanelOnlineScriptsManager.newRequestId();
+      final result = await widget.manager.linkTasks(
+        scriptId: script.id,
+        requestId: requestId,
+        proxyId: proxyId,
+      );
+      final operationId = _safeInstallId(result['request_id']) ?? requestId;
+      if (mounted) await _openTaskOperation(operationId, taskImport: false);
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PanelApiException && error.statusCode == 401) {
+        await _expireNestedPanelSession(
+          context,
+          widget.onUnauthorized,
+          error,
+          routesToClose: 1,
+        );
+      } else if (error is PanelApiException &&
+          (error.statusCode == null ||
+              error.statusCode! >= 500 ||
+              error.data?['accepted'] == true ||
+              error.data?['receipt_confirmation_required'] == true)) {
+        if (requestId != null) {
+          await _openTaskOperation(requestId, taskImport: false);
+        } else {
+          _showMessage(error.toString());
+        }
+      } else {
+        _showMessage(error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  Future<String?> _chooseTaskLinkProxy(
+    List<PanelOnlineScriptProxy> proxies,
+  ) async {
+    if (proxies.isEmpty) return '';
+    var selected = proxies.first.id;
+    return showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('同步外部任务源'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('从脚本配置的 task_link 拉取任务并合并到任务列表。'),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: selected,
+                decoration: const InputDecoration(labelText: '同步代理'),
+                items: proxies
+                    .map(
+                      (proxy) => DropdownMenuItem(
+                        value: proxy.id,
+                        child: Text(
+                          '${proxy.name}${proxy.type.isEmpty ? '' : ' · ${proxy.type}'}',
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => selected = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, selected),
+              child: const Text('开始同步'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openTaskOperation(
+    String requestId, {
+    required bool taskImport,
+  }) => Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (_) => _PanelOnlineTaskOperationView(
+        manager: widget.manager,
+        requestId: requestId,
+        taskImport: taskImport,
+        onUnauthorized: widget.onUnauthorized,
+      ),
+    ),
+  );
+
   Future<void> _startForcedInstall(
     PanelOnlineScript script,
     PanelOnlineScriptInstallDraft draft,
@@ -559,9 +737,31 @@ class _PanelOnlineScriptDetailViewState
         ],
         if (script.hasTasks) ...[
           const SizedBox(height: 20),
-          Text(
-            '可导入任务：${script.taskCount}',
-            style: Theme.of(context).textTheme.titleSmall,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '可导入任务：${script.taskCount}',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _starting ? null : _importTasksOnly,
+                icon: const Icon(Icons.playlist_add),
+                label: const Text('单独导入'),
+              ),
+            ],
+          ),
+        ],
+        if (script.hasTaskSource) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _starting ? null : _syncTaskSource,
+              icon: const Icon(Icons.link),
+              label: const Text('同步外部任务源'),
+            ),
           ),
         ],
         if (script.hasDoc) ...[
@@ -613,11 +813,13 @@ class _PanelOnlineScriptOptionsView extends StatefulWidget {
     required this.manager,
     required this.script,
     required this.onUnauthorized,
+    this.importOnly = false,
   });
 
   final PanelOnlineScriptsManager manager;
   final PanelOnlineScript script;
   final Future<void> Function(Object error) onUnauthorized;
+  final bool importOnly;
 
   @override
   State<_PanelOnlineScriptOptionsView> createState() =>
@@ -640,6 +842,7 @@ class _PanelOnlineScriptOptionsViewState
   @override
   void initState() {
     super.initState();
+    _importTasks = widget.importOnly;
     unawaited(_load());
   }
 
@@ -714,7 +917,7 @@ class _PanelOnlineScriptOptionsViewState
   Widget build(BuildContext context) {
     final data = _data;
     return Scaffold(
-      appBar: AppBar(title: const Text('安装选项')),
+      appBar: AppBar(title: Text(widget.importOnly ? '选择要导入的任务' : '安装选项')),
       body: Column(
         children: [
           if (_error != null)
@@ -743,16 +946,17 @@ class _PanelOnlineScriptOptionsViewState
                 onChanged: (value) => setState(() => _proxyId = value ?? ''),
               ),
             ),
-          SwitchListTile(
-            value: _importTasks,
-            onChanged: widget.script.hasTasks
-                ? (value) => setState(() {
-                    _importTasks = value;
-                    if (!value) _enableTasks = false;
-                  })
-                : null,
-            title: const Text('导入附带任务'),
-          ),
+          if (!widget.importOnly)
+            SwitchListTile(
+              value: _importTasks,
+              onChanged: widget.script.hasTasks
+                  ? (value) => setState(() {
+                      _importTasks = value;
+                      if (!value) _enableTasks = false;
+                    })
+                  : null,
+              title: const Text('导入附带任务'),
+            ),
           SwitchListTile(
             value: _enableTasks,
             onChanged: _importTasks
@@ -1049,7 +1253,7 @@ class _PanelOnlineInstallViewState extends State<_PanelOnlineInstallView> {
             if (state.error.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text(
-                state.error,
+                PanelOnlineScriptsManager.sanitizeDiagnostic(state.error),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
@@ -1147,6 +1351,226 @@ class _PanelOnlineInstallViewState extends State<_PanelOnlineInstallView> {
       return '已接收 ${_formatBytes(downloaded)} · 总量未知';
     }
     return '已接收 ${_formatBytes(downloaded)}';
+  }
+}
+
+class _PanelOnlineTaskOperationView extends StatefulWidget {
+  const _PanelOnlineTaskOperationView({
+    required this.manager,
+    required this.requestId,
+    required this.taskImport,
+    required this.onUnauthorized,
+  });
+
+  final PanelOnlineScriptsManager manager;
+  final String requestId;
+  final bool taskImport;
+  final Future<void> Function(Object error) onUnauthorized;
+
+  @override
+  State<_PanelOnlineTaskOperationView> createState() =>
+      _PanelOnlineTaskOperationViewState();
+}
+
+class _PanelOnlineTaskOperationViewState
+    extends State<_PanelOnlineTaskOperationView> {
+  Timer? _timer;
+  Map<String, dynamic>? _state;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_poll());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _poll() async {
+    _timer?.cancel();
+    try {
+      final state = widget.taskImport
+          ? await widget.manager.fetchTaskImportState(widget.requestId)
+          : await widget.manager.fetchTaskLinkState(widget.requestId);
+      if (!mounted) return;
+      setState(() {
+        _state = state;
+        _error = null;
+      });
+      if (state['active'] == true || state['state'] == 'running') {
+        _timer = Timer(const Duration(seconds: 2), _poll);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PanelApiException && error.statusCode == 401) {
+        await widget.onUnauthorized(error);
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+      setState(() => _error = error.toString());
+      _timer = Timer(const Duration(seconds: 5), _poll);
+    }
+  }
+
+  Future<void> _perform(String action) async {
+    if (_busy) return;
+    final state = _state;
+    if (state == null) return;
+    setState(() => _busy = true);
+    try {
+      switch (action) {
+        case 'confirm':
+          if (widget.taskImport) {
+            await widget.manager.confirmTaskImport(widget.requestId);
+          } else {
+            await widget.manager.confirmTaskLink(widget.requestId);
+          }
+          break;
+        case 'reload':
+          await widget.manager.reloadTaskImportScheduler(widget.requestId);
+          break;
+        case 'retry_import':
+          final indexes = (state['selected_task_indexes'] as List? ?? const [])
+              .map((value) => int.tryParse(value.toString()))
+              .whereType<int>()
+              .toList();
+          await widget.manager.importTasks(
+            scriptId: state['script_id']?.toString() ?? '',
+            requestId: widget.requestId,
+            taskIndexes: indexes,
+            enableTasks: state['enable_task'] == true,
+          );
+          break;
+        case 'retry_link':
+          await widget.manager.linkTasks(
+            scriptId: state['script_id']?.toString() ?? '',
+            requestId: widget.requestId,
+            proxyId: state['proxy_id']?.toString() ?? '',
+            refreshRequestId:
+                state['origin_refresh_request_id']?.toString() ?? '',
+          );
+          break;
+      }
+      await _poll();
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PanelApiException && error.statusCode == 401) {
+        await widget.onUnauthorized(error);
+        if (mounted) Navigator.of(context).pop();
+      } else {
+        setState(() => _error = error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = _state;
+    final status = state?['state']?.toString() ?? '读取中';
+    final rawMessage =
+        state?['message']?.toString() ??
+        state?['msg']?.toString() ??
+        state?['error']?.toString();
+    final message = rawMessage == null
+        ? null
+        : PanelOnlineScriptsManager.sanitizeDiagnostic(rawMessage);
+    final schedulerError = PanelOnlineScriptsManager.sanitizeDiagnostic(
+      state?['scheduler_reload_error']?.toString() ?? '',
+    );
+    final canConfirm =
+        state?['receipt_confirmation_required'] == true || status == 'unknown';
+    final canReload =
+        widget.taskImport &&
+        (state?['scheduler_reload_required'] == true ||
+            status == 'scheduler_pending');
+    final canRetry = state?['retry_allowed'] == true;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.taskImport ? '任务导入状态' : '外部任务同步状态'),
+        actions: [
+          IconButton(
+            tooltip: '刷新状态',
+            onPressed: _poll,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (_error != null)
+            MaterialBanner(
+              content: Text(_error!),
+              actions: [TextButton(onPressed: _poll, child: const Text('重试'))],
+            ),
+          Text(status, style: Theme.of(context).textTheme.titleLarge),
+          if (message != null && message.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(message),
+          ],
+          if (schedulerError.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              schedulerError,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+          const SizedBox(height: 12),
+          SelectableText(
+            '请求：${widget.requestId}',
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+          if (state != null) ...[
+            const SizedBox(height: 8),
+            Text('脚本：${state['script_name'] ?? state['script_id'] ?? '-'}'),
+            if (widget.taskImport && state['selected_task_indexes'] is List)
+              Text(
+                '任务序号：${(state['selected_task_indexes'] as List).join(', ')}',
+              ),
+            if (!widget.taskImport && state['added'] != null)
+              Text('新增任务：${state['added']} / ${state['total'] ?? '-'}'),
+            if (state['updated_at'] != null)
+              Text('更新时间：${state['updated_at']}'),
+          ],
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (canConfirm)
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : () => _perform('confirm'),
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('核对原请求'),
+                ),
+              if (canReload)
+                FilledButton.tonalIcon(
+                  onPressed: _busy ? null : () => _perform('reload'),
+                  icon: const Icon(Icons.sync),
+                  label: const Text('重新加载调度器'),
+                ),
+              if (canRetry)
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _perform(
+                          widget.taskImport ? 'retry_import' : 'retry_link',
+                        ),
+                  icon: const Icon(Icons.replay),
+                  label: const Text('继续原请求'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -335,14 +335,9 @@ class PanelApiClient {
               ?.toString()
               .trim();
       if (rawMessage != null && rawMessage.isNotEmpty) {
-        var message = rawMessage;
-        for (final value in redactValues.where((value) => value.isNotEmpty)) {
-          message = message.replaceAll(value, '[已隐藏]');
-        }
+        var message = _redactText(rawMessage, redactValues);
         if (redactPanelPaths) message = _redactPanelPaths(message);
-        return message.length <= 500
-            ? message
-            : '${message.substring(0, 500)}…';
+        return message;
       }
     }
     return switch (statusCode) {
@@ -386,6 +381,15 @@ class PanelApiClient {
         'running',
         'accepted',
         'retry_allowed',
+        'active',
+        'receipt_missing',
+        'receipt_confirmation_required',
+        'scheduler_reload_required',
+        'confirmation_stale',
+        'cache_published',
+        'replayed',
+        'code',
+        'state',
         'status',
         'phase',
         'msg',
@@ -398,6 +402,29 @@ class PanelApiClient {
             value is String &&
             const {'request_id', 'install_id'}.contains(key) &&
             !RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(value)) {
+          continue;
+        }
+        if (includeOnlineScriptDetails &&
+            value is String &&
+            key == 'state' &&
+            !const {
+              'prepared',
+              'running',
+              'failed',
+              'unknown',
+              'completed',
+              'scheduler_pending',
+            }.contains(value)) {
+          continue;
+        }
+        if (includeOnlineScriptDetails &&
+            value is String &&
+            key == 'code' &&
+            !const {
+              'revision_conflict',
+              'snapshot_changed',
+              'offset_out_of_range',
+            }.contains(value)) {
           continue;
         }
         var safeValue = value;
@@ -477,6 +504,39 @@ class PanelApiClient {
     for (final value in values.where((value) => value.isNotEmpty)) {
       result = result.replaceAll(value, '[已隐藏]');
     }
+    result = result
+        .replaceAll(
+          RegExp(r'(https?://)[^/\s:@]+(?::[^/\s@]*)?@', caseSensitive: false),
+          r'$1[已隐藏]@',
+        )
+        .replaceAll(
+          RegExp(
+            r'''(["']?(?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|key|secret|password|passwd|pwd|cookie)["']\s*:\s*["']?)([^"'\s,}]+)(["']?)''',
+            caseSensitive: false,
+          ),
+          r'$1[已隐藏]$3',
+        )
+        .replaceAll(
+          RegExp(
+            r'''([?&](?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|key|secret|password|passwd|pwd|authorization|cookie)=)[^&#\s<>"']+''',
+            caseSensitive: false,
+          ),
+          r'$1[已隐藏]',
+        )
+        .replaceAll(
+          RegExp(
+            r'(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+',
+            caseSensitive: false,
+          ),
+          r'$1[已隐藏]',
+        )
+        .replaceAll(
+          RegExp(
+            r'''((?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|key|secret|password|passwd|pwd|cookie)\s*[:=]\s*)[^\s,;&<>"']+''',
+            caseSensitive: false,
+          ),
+          r'$1[已隐藏]',
+        );
     return result.length <= 500 ? result : '${result.substring(0, 500)}…';
   }
 

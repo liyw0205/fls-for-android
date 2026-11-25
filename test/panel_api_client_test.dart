@@ -240,6 +240,44 @@ void main() {
     },
   );
 
+  test('redacts credentials embedded in online script error messages', () async {
+    final client = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=signed-cookie',
+        csrfToken: 'csrf-token',
+      ),
+      client: MockClient(
+        (_) async => utf8Response(
+          jsonEncode({
+            'ok': false,
+            'msg':
+                'fetch https://source.example/x?token=url-secret and {"api_key":"json-secret"}',
+          }),
+          502,
+        ),
+      ),
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.postJson('/api/online-scripts/refresh', const {}),
+      throwsA(
+        isA<PanelApiException>()
+            .having(
+              (error) => error.message,
+              'message',
+              allOf(contains('token=[已隐藏]'), contains('"api_key":"[已隐藏]"')),
+            )
+            .having(
+              (error) => error.data?['msg'],
+              'safe msg',
+              contains('token=[已隐藏]'),
+            ),
+      ),
+    );
+  });
+
   test(
     'retains safe task action recovery details on mounted panel paths',
     () async {

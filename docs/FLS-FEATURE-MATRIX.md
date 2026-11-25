@@ -2,8 +2,9 @@
 
 ## 基线与证据范围
 
-- FLS `develop`：`094c7c3`（`20261125.6`），从 `bdbbbe9` 快进拉取后提交并推送；本批 61 项在线脚本定向测试通过，Module/Windows Desktop/Windows EXE 工作流 `45548937139`、`45548937276`、`45548937300` 全部通过。
-- APP `develop`：`216c386`（`0.1.36+41`），从 `9e742b4` 推进；Android CI `45549664068` 的格式、分析、全量测试及 arm64 Release APK 构建通过。真实隔离面板验收由用户手动完成。
+- FLS `develop` 远端最新：`094c7c3`（`20261125.6`）。2026-11-25 已 fetch 并执行 `git pull --ff-only origin develop`，结果为 Already up to date。工作区未提交版本变更到 `20261125.7`，并补在线脚本源 JSON 读写/revision 冲突保护、刷新代理选项和目录 `has_task_source`；本轮测试与 CI 尚待执行。`094c7c3` 此前的 61 项定向测试及 Module/Windows Desktop/Windows EXE 工作流证据仍有效，但不覆盖这些未提交改动。
+- APP `develop` 远端最新：`89a777f`（`0.1.36+41`）。工作区未提交版本变更到 `0.1.37+42`，并扩展面板在线脚本源管理、独立任务操作/恢复及管理页面；本轮格式、分析、测试和 Android CI 尚待执行。此前 `216c386` 首批实现的 Android CI `45549664068` 仍是旧批次证据，不覆盖当前工作区。
+- 两仓均在 `develop`，当前工作区含用户/本轮保留的未提交改动。以下状态区分已推送能力与本地待验证实现；不把本地代码、mock 测试或旧工作流记录等同于最新版本已交付。真实隔离面板验收由用户手动完成。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。
 
@@ -17,7 +18,7 @@
 | 任务合集、任务分组、批量任务操作 | APP `develop` 原生合集搜索/分页/创建/编辑/删除、查看成员与候选任务、加入/移出；任务页选择任务后可批量加入指定合集/批量移出 | `GET /api/collections`、`GET /api/collection/<id>?view=members|available`；`/api/collection/save`、`/api/collection/add-task/<id>`、`/api/collection/delete/<id>`；bulk clear 接受 `expected_collections` 避免清掉过期选择，assign/clear 复用 request_id 逐项恢复 | FLS 本批定向测试含批量移出 expected membership 与恢复；APP 集合 manager 加入/移出与原生列表多选动作已接入。此前 FLS 37 项合集/恢复和 APP 88 项 CI 通过；任务管理扩展批次已由 `45509036217` 通过 94 项 CI 测试/分析/构建；真实面板验收待完成 |
 | 任务运行日志、执行历史、历史导出 | APP 原生记录页支持历史筛选/分页、状态详情、CSV 导出；系统日志文件筛选/分页、尾部读取、内容搜索和受限下载；任务详情仍展示最近 10 条历史与任务日志 | `GET /api/history`、`/api/history/export` 提供有界白名单分页/导出；`GET /api/logs`、`/api/logfile/<filename>?format=json`、`/api/logfile/<filename>/download` 提供有界日志摘要/尾部/脱敏下载；所有接口复用 session/权限 | 历史与系统日志首个原生纵切已完成；8 MB 下载上限、5000 行尾部、路径限制和敏感信息脱敏已覆盖；真实面板验收待完成 |
 | 本机脚本文件、拉取、导入、改名、删除、调试 | WebView；APP 已有的是 Android 本机容器内脚本安装/更新，不是远程面板完整脚本管理 | `/scripts/view`、`/pull`、`/pull/fetch`、`/pull/import`、`/scripts/rename`、`/scripts/delete`、`/scripts/debug/*`；调试日志有 `/api/scripts/debug-log/<id>` | 需要明确远程服务器脚本文件 API、编辑冲突/原子替换、上传/下载大小限制、调试启动停止和日志状态 API；现有 APP 本机安装能力保留为容器专属功能 |
-| FLS 面板在线脚本市场与安装/更新 | APP `216c386` 已接入独立目录/详情/文档/安装选项/任务选择/进度日志/停止/历史恢复原生页面；CI 通过。与不启动面板的本机容器脚本市场分离 | 复用 `/catalog`、`/detail/<id>`、`/install-options/<id>`、`/doc/<id>`、安装日志/历史下载进度、安装重试/启动恢复；另有单独导入、任务关联、源刷新 API | FLS `094c7c3` 修复变量值搜索和覆盖路径泄露，61 项定向测试及三项打包 CI 通过。APP 后续补源同步/历史、任务单独导入/关联/恢复、源配置编辑；再按矩阵继续迁移所有其他 Web 业务域。此行不是全量 APP 覆盖完成证明 |
+| FLS 面板在线脚本市场与安装/更新 | 已推送部分：目录/详情/文档/安装/下载进度/安装历史。当前 APP `develop` 工作区另有源同步/历史、源 JSON 编辑、独立任务导入、外部任务源同步/失败项恢复、任务操作历史与归档实现，待本轮验证；与不启动面板的本机容器脚本市场分离 | 复用 `/catalog`、`/detail/<id>`、`/install-options/<id>`、`/doc/<id>`、安装日志/历史、`/refresh*`、`/import-tasks*`、`/task-link*`；FLS 工作区新增 `/source` JSON 读写及 `/refresh-options`，`/catalog` DTO 新增 `has_task_source` | 当前 FLS 工作区补源缓存大小限制、`cache_revision` 冲突保护、启用代理白名单及任务源布尔 DTO；APP manager/widget/API 测试有新增但尚未本轮验证。通过双方 CI 和全矩阵复核后再标记本域完成；此行不是全量 APP 覆盖完成证明 |
 | 依赖管理、Python/Node 运行时 | WebView；本机 Python/Full 容器镜像管理已原生 | `deps.py` 有安装、取消、重试、确认、日志、历史 API；`runtime.py` 有 `/api/install/runtime/<runtime>` 和安装页面 | 迁移依赖清单/状态/卸载及运行时管理；确认环境与架构、下载/执行权限、流式进度、恢复 Token、取消和不完整安装回滚 |
 | 系统日志、日志文件与清理 | APP 原生日志列表/详情/搜索/下载；分组删除仍由 WebView | `/api/logs`、`/api/logfile/<filename>`、`/api/logfile/<filename>/download`；`/api/logs/groups/delete` 仍为 Web 操作 | 原生读取与下载已完成；分组清理需单独补结构化确认/写入契约 |
 | 全局环境变量 | WebView | `/api/env/action` 有动作写 API；`/env`、`/env/view`、`/env/new`、`/env/edit/<key>`、`/env/delete/<key>`、`/env/import` 页面 | 补结构化变量列表/详情/验证契约；敏感值在 APP 响应、缓存、日志和复制中脱敏，更新需明确副作用 |

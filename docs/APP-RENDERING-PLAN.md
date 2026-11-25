@@ -1,6 +1,6 @@
-# FLS APP 原生渲染方案
+# FLS APP 原生前端实施方案
 
-> 本文记录本机容器脚本、APP 版本更新及下一步 FLS 面板在线脚本的原生呈现方案，不代表 APP 最终只渲染这些功能。全量原生前端目标、双仓开发及合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md)。
+> 最终目标是 Flutter 原生覆盖 FLS Web 中所有适用页面、表单、状态和操作；本文件记录交互/架构约束和面板在线脚本纵切。业务域全量清单、推进顺序与双仓合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md) 和 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md)。WebView 只作迁移期兼容入口，不计入原生覆盖。
 
 ## 目标
 
@@ -32,19 +32,19 @@
 - 长命令输出进入可展开的终端日志区；最近日志自动滚动，用户可暂停滚动和复制日志。
 - 安装不启动 FLS 面板。需要容器运行环境；容器不存在或损坏时，操作入口转到“环境”页。
 
-### FLS 面板在线脚本（下一纵切）
+### FLS 面板在线脚本（当前纵切）
 
-这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。FLS `develop` 已从 `bdbbbe9` 更新并推送至 `094c7c3`（`20261125.6`）；APP `develop` 已推送原生首批实现 `216c386`（`0.1.36+41`），Android CI `45549664068` 通过。本批不是全量迁移；剩余范围见第 5 项及 [全量路线图](GOAL-ROADMAP.md)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 和 `tests/test_online_native_api.py` 为准。
+这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。截至 2026-11-25，`$HOME/fls` 已 fetch 并 fast-forward pull `develop`，远端最新仍为 `094c7c3`（`20261125.6`）；APP 远端 `develop` 为 `89a777f`（`0.1.36+41`）。当前两仓工作区均有未提交扩展：FLS 计划版本 `20261125.7`，APP 计划版本 `0.1.37+42`，其中源缓存 API、代理选项、原生源管理/任务恢复等本地实现尚待完整验证和 CI，不视为已交付。本纵切不是全量迁移；剩余范围见 [全量路线图](GOAL-ROADMAP.md) 与 [功能矩阵](FLS-FEATURE-MATRIX.md)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 及相应测试为准。
 
 | 接入顺序 | 现有接口 | APP 行为与验收 |
 | --- | --- | --- |
 | 1. 浏览 | `GET` `/catalog`、`/detail/<script_id>`、`/doc/<script_id>` | 服务端搜索/分页，详情保留来源和文档入口。文档有 1 MiB 上限且限制 HTTPS 重定向；Markdown 用 `NativeMarkdownView`，HTML 与纯文本不交给 WebView。 |
 | 2. 安装/更新 | `GET` `/install-options/<script_id>`；`POST` `/install/<script_id>` | 代理与任务按服务端选项展示；支持分页选择，默认不导入或启用。覆盖文件须明确确认。区分 409 覆盖确认、已有作业运行和普通冲突；已有作业直接定位，不重复提交。 |
 | 3. 状态/恢复 | `GET` `/log/<install_id>?state_only=1`、`/install-history`；`POST` `/install-stop/<install_id>`、`/install-retry/<install_id>`、`/install-start-retry/<install_id>`、`/install-task-confirm/<install_id>`、`/install-task-retry/<install_id>`、`/install-reload/<install_id>` | 状态轻量轮询，日志按需读取有限行数。可靠总量才显示 `xx MB / xx MB · xx%`；未知总量或 Git 操作使用不定进度。轮询不得把下载完成当作安装完成；任务导入和调度器恢复分别显示。历史以 `snapshot` 分页，409 后从第一页重读。 |
-| 4. 源同步 | `POST` `/refresh`、`/refresh-recover/<request_id>`、`/refresh-confirm/<request_id>`、`/refresh-retry/<request_id>`；`GET` `/refresh-status/<request_id>`、`/refresh-history`、`/refresh-task-link-failures/<request_id>`、`/refresh-log/<request_id>` | 刷新在服务端运行，按请求 ID 恢复，成功后重新读取目录。复用源确认、重试和恢复契约；同步失败不清空现有目录。 |
-| 5. 补齐该域 | 既有 `/import-tasks*`、`/task-link*`、`/refresh-task-link*`；手工编辑源缓存目前是 Web 表单 `/online-scripts/source` | 核对后再迁移独立导入、任务关联、同步失败明细/恢复及手工编辑源缓存。手工编辑需 FLS 补有界 JSON 读写、校验与 `cache_revision` 冲突保护。 |
+| 4. 源同步 | `POST` `/refresh`、`/refresh-recover/<request_id>`、`/refresh-confirm/<request_id>`、`/refresh-retry/<request_id>`；`GET` `/refresh-options`、`/refresh-status/<request_id>`、`/refresh-history`、`/refresh-task-link-failures/<request_id>`、`/refresh-log/<request_id>` | Flutter 原生同步页可选启用代理、查看最近 10 次刷新、轮询状态和日志、确认/恢复未知结果、重试失败项，并按原请求绑定重试单个外部任务源。 |
+| 5. 单独任务操作与源缓存 | 既有 `/import-tasks*`、`/task-link*`、`/refresh-task-link*`；新增 `/source` JSON GET/PUT，使用 `cache_revision` 做并发保护 | 详情页可选择并独立导入任务、同步 `task_link`；任务操作历史可确认未知回执、恢复调度器、重试允许的原请求和归档失败记录。源缓存编辑有 4 MiB 缓存/8 MiB 请求上限，校验 JSON、条目和重复 ID；冲突时保留草稿并允许查看/采用服务器版本。 |
 
-APP 当前在 `PanelTasksView` 接入独立 DTO、`PanelOnlineScriptsManager` 和原生页面，复用 `PanelApiClient` 与现有 `_expireSession`。已覆盖目录/搜索/分页、详情/文档、安装选项、任务选择、覆盖确认、安装状态/日志/停止/恢复和历史；源刷新、源编辑、单独导入/任务关联仍未完成。提交前生成请求 ID，结果未知或返回 `accepted` 时先按原 ID 查状态；仅在服务端明确允许时重试。按面板隔离恢复标识，重进页面或重启后也能从历史找回作业。401 必须退出全部在线脚本嵌套页面并回到重新连接状态，不能停留在旧会话页面。
+APP 当前工作区在 `PanelTasksView` 接入独立 manager、DTO 和原生页面，远程与本机面板共用会话边界。在线脚本实现覆盖目录/详情/安装与进度/历史、源刷新和历史/失败项恢复、源缓存 JSON 编辑、独立任务导入、外部任务同步及任务操作历史/确认/调度器恢复/归档；新增改动仍需跑格式、静态分析、测试并经 Android CI 验证。写操作复用原 request ID 恢复，不把代理凭据或任务变量值放进列表 DTO。在线脚本仍只是全量迁移中的一个域，矩阵中其余适用业务域仍需逐项实现原生页面。
 
 写操作接入前的两项 FLS `develop` 契约修整已在 `094c7c3` 完成并通过 61 项定向测试：`install-options` 搜索不再匹配任务环境变量值；覆盖冲突只返回 `target_exists` 和 `confirm_required`，不返回服务器目标路径。继续检查安装拒绝/重试、日志和历史序列化的敏感字段白名单。APP 的错误元数据扩展按在线脚本路由和字段类型白名单处理 `confirm_required`、`target_exists`、`request_id`、`install_id`、`running`、`accepted`、`retry_allowed` 等，不保留目标路径、任意返回 URL、代理凭据或变量值；原始错误不直接展示。
 
@@ -52,7 +52,7 @@ APP 具体落地次序：
 
 1. 保持独立 `panel_online_script.dart`、`panel_online_scripts_manager.dart`、`panel_online_scripts_view.dart` 及相应测试；不改造本机容器 `OnlineScriptsManager`。
 2. 当前已在 `PanelTasksView` 增加“脚本”入口，复用面板会话。修正 401 后嵌套路由退出行为；面板变化/离开页面时继续废弃旧请求和计时器。主导航之后按全站信息架构收敛分组，避免每个新 Web 菜单都占一个底栏项。
-3. 完成在线脚本域剩余源刷新/历史、独立导入、任务关联/恢复和源缓存编辑；核对每个 Web 操作均有原生入口、失败恢复和权限/冲突处理。每个阶段可以交付在 `develop`，但不得标记未实现的 Web 操作为原生完成。
+3. 验证当前工作区的在线脚本扩展：先跑 FLS 源 API/刷新/目录定向与全量回归，再跑 APP format/analyze/契约和 widget 测试，审查并发冲突草稿保留、request ID 恢复、刷新失败重试和凭据脱敏；通过后仅推送两个 `develop` 并等待工作流。随后核对每个 Web 操作均有原生入口、失败恢复和权限/冲突处理。不得标记未实现的 Web 操作为原生完成。
 4. DTO/manager 测试固定 API 方法、路径、查询参数、JSON body、cookie/CSRF headers、分页/快照、进度不确定状态和错误元数据白名单。Widget 测试覆盖空目录、搜索结果、无文档/HTML 文档、窄屏/大字号、确认覆盖、安装受理后断网、轮询恢复、停止、任务导入确认和源刷新失败。
 5. 随后按 [全量功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移 FLS Web 中所有适用页面、表单、状态、导航和操作，不止版本/镜像/脚本；FLS 缺 JSON 契约时先在 FLS `develop` 补 API 与回归测试，再由 APP 接入。每批执行本地检查并推送两个 `develop`，由对应 GitHub Actions 验证；不合并 `main`，直到全量原生渲染通过矩阵、CI 与用户手动验收。不做 ADB。
 
@@ -88,7 +88,7 @@ APP 具体落地次序：
 4. **已完成：可重复的网络边界测试**。CI 已通过无 `Content-Length` 时只显示已接收字节和不定进度，以及分块慢速传输时进度随接收字节前进的 manager/UI 测试。
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
 
-6. **当前纵切：FLS 面板在线脚本（首批已推送，域内未完成）**。FLS `094c7c3`（`20261125.6`）的 61 项定向测试与 Module/Windows Desktop/Windows EXE 工作流 `45548937139`、`45548937276`、`45548937300` 均通过；APP `216c386`（`0.1.36+41`）Android CI `45549664068` 的格式、分析、全部测试及 arm64 构建通过。已补 401 嵌套页面退出。随后补齐在线脚本域剩余操作，再按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 迁移其余所有适用 Web 页面。任何单域完成都不等于全 APP 原生化，两个 `main` 在全量验收前保持不动。
+6. **当前纵切：FLS 面板在线脚本（本地扩展待验证）**。FLS 远端 `develop` `094c7c3`（`20261125.6`）此前的 61 项定向测试与 Module/Windows Desktop/Windows EXE 工作流通过；APP 远端 `develop` `89a777f`（`0.1.36+41`）包含此前首批原生页面和 401 嵌套页面退出。当前工作区新增源管理/源 JSON API/任务恢复等实现及版本变更，尚未完成本轮验证、提交、推送或工作流。先完成此批闭环，再按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 迁移其余所有适用 Web 页面。任何单域完成都不等于全 APP 原生化；两个仓库继续只在 `develop` 开发，全量验收前保持 `main` 不动。
 
 ### 手动验收清单
 

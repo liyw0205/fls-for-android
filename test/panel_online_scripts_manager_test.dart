@@ -14,6 +14,23 @@ void main() {
   const snapshot =
       'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
+  test('redacts secrets from script diagnostics', () {
+    final safe = PanelOnlineScriptsManager.sanitizeDiagnostic(
+      'https://source.example/tasks.json?token=secret-value&mode=1 '
+      '{"api_key":"json-secret"} password=plain-secret '
+      'https://user:basic-secret@source.example/tasks.json',
+    );
+
+    expect(safe, contains('token=[已隐藏]&mode=1'));
+    expect(safe, contains('"api_key":"[已隐藏]"'));
+    expect(safe, contains('password=[已隐藏]'));
+    expect(safe, isNot(contains('secret-value')));
+    expect(safe, isNot(contains('json-secret')));
+    expect(safe, isNot(contains('plain-secret')));
+    expect(safe, contains('https://[已隐藏]@source.example'));
+    expect(safe, isNot(contains('basic-secret')));
+  });
+
   test(
     'loads paginated online scripts and safely parses install options',
     () async {
@@ -174,4 +191,95 @@ void main() {
     expect(page.items.single.scriptName, 'Demo');
     expect(page.hasMore, isFalse);
   });
+
+  test('reads and saves source cache with optimistic revision control', () async {
+    final api = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=script-session',
+        csrfToken: 'script-csrf',
+      ),
+      client: MockClient((request) async {
+        if (request.method == 'GET') {
+          expect(request.url.path, '/api/online-scripts/source');
+          return utf8Response(
+            '{"ok":true,"json_text":"[]","cache_revision":"$snapshot"}',
+            200,
+          );
+        }
+        expect(request.method, 'PUT');
+        expect(request.headers['x-csrf-token'], 'script-csrf');
+        expect(request.url.path, '/api/online-scripts/source');
+        expect(jsonDecode(request.body), {
+          'json_text': '[{"id":"demo"}]',
+          'cache_revision': snapshot,
+        });
+        return utf8Response(
+          '{"ok":true,"count":1,"json_text":"[]","cache_revision":"$snapshot"}',
+          200,
+        );
+      }),
+    );
+    addTearDown(api.close);
+
+    final manager = PanelOnlineScriptsManager(api);
+    final source = await manager.fetchSourceCache();
+    final saved = await manager.saveSourceCache(
+      jsonText: '[{"id":"demo"}]',
+      cacheRevision: source['cache_revision'] as String,
+    );
+
+    expect(source['json_text'], '[]');
+    expect(saved['count'], 1);
+  });
+
+  test(
+    'submits refresh, task import, and task-link with stable request IDs',
+    () async {
+      final api = PanelApiClient(
+        baseUrl: 'https://fls.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=script-session',
+          csrfToken: 'script-csrf',
+        ),
+        client: MockClient((request) async {
+          expect(request.headers['x-csrf-token'], 'script-csrf');
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          if (request.url.path == '/api/online-scripts/refresh') {
+            expect(body, {'request_id': requestId, 'proxy_id': 'proxy-1'});
+          } else if (request.url.path ==
+              '/api/online-scripts/import-tasks/demo') {
+            expect(body, {
+              'request_id': requestId,
+              'task_indexes': ['2'],
+              'enable_task': true,
+            });
+          } else {
+            expect(
+              request.url.path,
+              '/api/online-scripts/refresh-task-link/$historyId/task-link/demo',
+            );
+            expect(body, {'request_id': requestId, 'proxy_id': 'proxy-1'});
+          }
+          return utf8Response('{"ok":true,"request_id":"$requestId"}', 202);
+        }),
+      );
+      addTearDown(api.close);
+
+      final manager = PanelOnlineScriptsManager(api);
+      await manager.startRefresh(requestId: requestId, proxyId: 'proxy-1');
+      await manager.importTasks(
+        scriptId: 'demo',
+        requestId: requestId,
+        taskIndexes: [2],
+        enableTasks: true,
+      );
+      await manager.linkTasks(
+        scriptId: 'demo',
+        requestId: requestId,
+        proxyId: 'proxy-1',
+        refreshRequestId: historyId,
+      );
+    },
+  );
 }

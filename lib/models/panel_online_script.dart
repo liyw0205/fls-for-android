@@ -15,6 +15,7 @@ class PanelOnlineScript {
     required this.hasDoc,
     required this.hasTasks,
     required this.taskCount,
+    required this.hasTaskSource,
   });
 
   final String id;
@@ -32,6 +33,7 @@ class PanelOnlineScript {
   final bool hasDoc;
   final bool hasTasks;
   final int taskCount;
+  final bool hasTaskSource;
 
   factory PanelOnlineScript.fromJson(Object? value) {
     if (value is! Map<String, dynamic>) {
@@ -61,6 +63,7 @@ class PanelOnlineScript {
       hasDoc: value['has_doc'] == true,
       hasTasks: value['has_tasks'] == true,
       taskCount: _integer(value['task_count']),
+      hasTaskSource: value['has_task_source'] == true,
     );
   }
 }
