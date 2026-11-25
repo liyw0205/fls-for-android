@@ -68,11 +68,15 @@ APP 具体落地次序：
 4. DTO/manager 测试固定 API 方法、路径、查询参数、JSON body、cookie/CSRF headers、分页/快照、进度不确定状态和错误元数据白名单。Widget 测试覆盖空目录、搜索结果、无文档/HTML 文档、窄屏/大字号、确认覆盖、安装受理后断网、轮询恢复、停止、任务导入确认和源刷新失败。
 5. 随后按 [全量功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移 FLS Web 中所有适用页面、表单、状态、导航和操作，不止版本/镜像/脚本；FLS 缺 JSON 契约时先在 FLS `develop` 补 API 与回归测试，再由 APP 接入。每批执行本地检查并推送两个 `develop`，由对应 GitHub Actions 验证；不合并 `main`，直到全量原生渲染通过矩阵、CI 与用户手动验收。不做 ADB。
 
-### 下一纵切：面板脚本文件
+### 当前纵切：面板脚本文件目录与编辑
 
 FLS `routes/scripts/files.py` 的 Web 编辑已使用 `script_file_snapshot`、`publish_script_file` 和文件 revision；改名已有任务引用预览与可继续/回滚的操作记录。`routes/scripts/pull.py` 有文件拉取与归档导入；调试仅已有 `/api/scripts/debug-log/<id>` 读接口，启动/停止仍由 Web 路由承载。APP 不抓取这些路由的 HTML，也不直接用调试页面的 GET 请求启动进程。
 
-1. **目录与编辑。** FLS 先加仅返回相对路径及必要元数据的目录分页 API、受限 UTF-8 文件快照和保存/新建 API。目录 GET 不沿用 Web 缺目录时自动创建的行为；复用路径检查、原子写入和 revision。APP 先完成“面板文件”浏览、编辑和新建；遇 409 保留草稿并可对照服务器内容，已写入但回复失败时先重读核实，不盲目重提。
+当前 `develop` 纵切新增 `GET /api/scripts/tree`、`GET /api/scripts/file`、`PUT /api/scripts/file`、`POST /api/scripts/file`。目录分页上限 100，不跟随 symlink、不创建缺失目录、不回传绝对路径；文件仅接受 UTF-8 普通文件并限制 2 MiB。保存沿用 revision 并发保护与原子发布。Termux Python 缺少 `os.link` 时，新建走独占目标保留；改名在 hard-link 不可用的文件系统尝试 `renameat2(RENAME_NOREPLACE)`，避免拒绝支持该文件系统。
+
+APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口：目录搜索/分页/面包屑、UTF-8 编辑和新建；过期 revision 展示草稿与服务器内容，明确选择保留草稿或采用服务器内容后再保存。读写共享当前面板 session/CSRF。当前自动化覆盖在 manager/widget 和 FLS API 测试中；真实隔离面板手动验收仍由用户完成，不做 ADB。其他脚本操作仍按后续纵切推进，不能把本子批记为脚本域或全 APP 原生化完成。
+
+1. **目录与编辑。** 已在当前 `develop` 纵切实现上述 API 与 APP 原生页面。继续验证已写入但回复失败时先重读核实，不盲目重提；若增加文件操作也必须沿用相同路径、安全大小与 revision 边界。
 2. **文件操作。** FLS 接续提供改名预览/确认/恢复、带影响范围的删除，以及受限下载、拉取和归档导入。APP 以原生确认表单展示任务引用、覆盖范围和作业结果；改名后的任务与路径重新从后端刷新。不要在 APP 重新实现解包、脚本路径解析或任务引用改写。
 3. **调试。** FLS 补显式 POST 启停、状态、历史与受限脱敏日志契约，复用已有调试服务。APP 离开或重开页面后按原作业 ID 恢复，不以断网或轮询停止当作调试结束。
 

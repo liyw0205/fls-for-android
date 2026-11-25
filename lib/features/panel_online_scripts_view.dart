@@ -40,10 +40,12 @@ class PanelOnlineScriptsView extends StatefulWidget {
     super.key,
     required this.manager,
     required this.onUnauthorized,
+    this.onOpenPanelFiles,
   });
 
   final PanelOnlineScriptsManager manager;
   final Future<void> Function(Object error) onUnauthorized;
+  final VoidCallback? onOpenPanelFiles;
 
   @override
   State<PanelOnlineScriptsView> createState() => PanelOnlineScriptsViewState();
@@ -168,6 +170,12 @@ class PanelOnlineScriptsViewState extends State<PanelOnlineScriptsView> {
                   ),
                 ),
               ),
+              if (widget.onOpenPanelFiles != null)
+                IconButton(
+                  tooltip: '面板文件',
+                  onPressed: widget.onOpenPanelFiles,
+                  icon: const Icon(Icons.folder_open_outlined),
+                ),
               IconButton(
                 tooltip: '安装历史',
                 onPressed: _openHistory,

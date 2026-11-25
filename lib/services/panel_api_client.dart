@@ -191,6 +191,7 @@ class PanelApiClient {
             redactValues,
             includeTaskActionDetails: false,
             includeOnlineScriptDetails: false,
+            includeScriptFileDetails: false,
           ),
         );
       }
@@ -267,7 +268,9 @@ class PanelApiClient {
             decoded,
             response.statusCode,
             errorRedactValues,
-            redactPanelPaths: _isOnlineScriptPath(Uri.parse(path).path),
+            redactPanelPaths:
+                _isOnlineScriptPath(Uri.parse(path).path) ||
+                _isScriptFilePath(Uri.parse(path).path),
           ),
           statusCode: response.statusCode,
           path: uri.path,
@@ -278,6 +281,7 @@ class PanelApiClient {
             includeOnlineScriptDetails: _isOnlineScriptPath(
               Uri.parse(path).path,
             ),
+            includeScriptFileDetails: _isScriptFilePath(Uri.parse(path).path),
           ),
         );
       }
@@ -352,6 +356,7 @@ class PanelApiClient {
     List<String> redactValues, {
     required bool includeTaskActionDetails,
     required bool includeOnlineScriptDetails,
+    required bool includeScriptFileDetails,
   }) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
@@ -395,6 +400,9 @@ class PanelApiClient {
         'msg',
       ]);
     }
+    if (includeScriptFileDetails) {
+      keys.addAll(const ['code', 'msg']);
+    }
     for (final key in keys) {
       final value = payload[key];
       if (value is bool || value is String || value is num) {
@@ -427,6 +435,12 @@ class PanelApiClient {
             }.contains(value)) {
           continue;
         }
+        if (includeScriptFileDetails &&
+            value is String &&
+            key == 'code' &&
+            value != 'revision_conflict') {
+          continue;
+        }
         var safeValue = value;
         if (value is String && const {'msg', 'status', 'phase'}.contains(key)) {
           safeValue = _redactText(value, redactValues);
@@ -445,6 +459,37 @@ class PanelApiClient {
       metadata['expected_collections'] = Map<String, String>.unmodifiable(
         expectedCollections.cast<String, String>(),
       );
+    }
+    final currentFile = payload['current'];
+    if (includeScriptFileDetails &&
+        currentFile is Map<String, dynamic> &&
+        currentFile['path'] is String &&
+        currentFile['name'] is String &&
+        currentFile['content'] is String &&
+        currentFile['revision'] is String &&
+        utf8.encode(currentFile['content'] as String).length <=
+            2 * 1024 * 1024 &&
+        RegExp(r'^[0-9a-f]{64}$').hasMatch(currentFile['revision'] as String)) {
+      final relativePath = currentFile['path'] as String;
+      if (relativePath.isNotEmpty &&
+          !relativePath.startsWith('/') &&
+          !relativePath.contains('\\') &&
+          !relativePath.contains('\u0000') &&
+          relativePath.split('/').last == currentFile['name'] &&
+          !relativePath
+              .split('/')
+              .any((part) => part == '.' || part == '..' || part.isEmpty)) {
+        metadata['current'] = Map<String, dynamic>.unmodifiable({
+          'path': relativePath,
+          if (currentFile['name'] is String) 'name': currentFile['name'],
+          'content': currentFile['content'],
+          'revision': currentFile['revision'],
+          if (currentFile['size_bytes'] is num)
+            'size_bytes': currentFile['size_bytes'],
+          if (currentFile['modified_at'] is String)
+            'modified_at': currentFile['modified_at'],
+        });
+      }
     }
     for (final key
         in includeTaskActionDetails
@@ -498,6 +543,8 @@ class PanelApiClient {
 
   bool _isOnlineScriptPath(String path) =>
       path.startsWith('/api/online-scripts/');
+
+  bool _isScriptFilePath(String path) => path == '/api/scripts/file';
 
   String _redactText(String text, List<String> values) {
     var result = text;
