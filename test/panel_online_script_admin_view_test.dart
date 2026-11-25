@@ -22,6 +22,8 @@ void main() {
   ) async {
     var sourceReads = 0;
     final sourceLoaded = Completer<void>();
+    final conflictRead = Completer<void>();
+    final putSent = Completer<void>();
     final api = PanelApiClient(
       baseUrl: 'https://fls.example',
       credentials: const PanelSessionCredentials(
@@ -48,6 +50,9 @@ void main() {
             request.method == 'GET') {
           sourceReads++;
           if (!sourceLoaded.isCompleted) sourceLoaded.complete();
+          if (sourceReads == 2 && !conflictRead.isCompleted) {
+            conflictRead.complete();
+          }
           final text = sourceReads == 1 ? oldJson : currentJson;
           return utf8Response(
             jsonEncode({
@@ -61,6 +66,7 @@ void main() {
         expect(request.method, 'PUT');
         expect(request.headers['x-csrf-token'], 'script-csrf');
         expect(jsonDecode(request.body)['json_text'], '[{"id":"draft"}]');
+        if (!putSent.isCompleted) putSent.complete();
         return utf8Response(
           '{"ok":false,"code":"revision_conflict","msg":"缓存已变更，未保存"}',
           409,
@@ -94,6 +100,11 @@ void main() {
     editor.controller!.text = '[{"id":"draft"}]';
     await tester.pump();
     await tester.tap(find.text('保存'));
+    await tester.pump();
+    await tester.runAsync(() => putSent.future);
+    await tester.pump();
+    await tester.runAsync(() => conflictRead.future);
+    await tester.pump();
     await tester.pump();
 
     expect(find.text('缓存已被其他操作修改。当前草稿保留；可查看新版本后决定是否替换。'), findsOneWidget);

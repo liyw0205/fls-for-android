@@ -14,7 +14,7 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `689a953` / `0.1.37+42` | 在线脚本原生管理与测试宿主修复已推送；Android CI #45566856015 的格式和静态分析通过，但两项 widget 测试因异步请求未同步失败，正在改为等待实际请求完成后复验 |
+| APP (`fls-for-android`) | `develop` | `a523e0c` / `0.1.37+42` | 方案与测试同步修复已推送；Android CI #45567891012 格式、分析通过，115 项测试通过、源编辑冲突测试仍早于第二次 GET 完成断言，正补请求屏障后复验 |
 | FLS (`$HOME/fls`) | `develop` | `5d54e68` / `20261125.7` | 409 个在线脚本测试和 305 个子测试通过；[Module](https://github.com/liyw0205/fls/actions/runs/45562804710)、[Windows Desktop](https://github.com/liyw0205/fls/actions/runs/45562804520)、[Windows EXE](https://github.com/liyw0205/fls/actions/runs/45562804501) 打包通过 |
 
 2026-11-25 对 `$HOME/fls` 执行 `git pull --ff-only origin develop`，结果为 `Already up to date`，本地 HEAD 与远端 `develop` 均为 `5d54e68`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
