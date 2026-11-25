@@ -36,6 +36,12 @@ void main() {
             200,
           );
         }
+        if (request.url.path == '/api/online-scripts/import-tasks-history') {
+          return utf8Response('{"ok":true,"items":[],"has_more":false}', 200);
+        }
+        if (request.url.path == '/api/online-scripts/task-link-history') {
+          return utf8Response('{"ok":true,"items":[],"has_more":false}', 200);
+        }
         if (request.url.path == '/api/online-scripts/source' &&
             request.method == 'GET') {
           sourceReads++;
