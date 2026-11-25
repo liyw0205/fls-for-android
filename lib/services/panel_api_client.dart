@@ -211,6 +211,9 @@ class PanelApiClient {
   Future<Object?> putJson(String path, Object? body) =>
       _sendJson('PUT', path, body: body);
 
+  Future<Object?> deleteJson(String path, Object? body) =>
+      _sendJson('DELETE', path, body: body);
+
   Future<Object?> _sendJson(
     String method,
     String path, {
@@ -440,6 +443,11 @@ class PanelApiClient {
             key == 'code' &&
             !const {
               'revision_conflict',
+              'references_ack_required',
+              'script_busy_or_recovery_required',
+              'delete_result_unknown',
+              'too_many_references',
+              'not_file',
               'rename_revision_conflict',
               'rename_recovery_required',
               'rename_conflict',
@@ -542,6 +550,58 @@ class PanelApiClient {
               'references': List.unmodifiable(safeReferences),
             };
           }
+        }
+      }
+      if (preview is Map<String, dynamic> &&
+          _safeRenamePath(preview['path']) &&
+          preview['kind'] == 'file' &&
+          preview['revision'] is String &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(preview['revision'] as String) &&
+          preview['size_bytes'] is num &&
+          (preview['size_bytes'] as num) >= 0 &&
+          preview['modified_at'] is String &&
+          preview['references'] is List &&
+          (preview['references'] as List).length <= 200) {
+        final references = <Map<String, dynamic>>[];
+        var valid = true;
+        for (final reference in preview['references'] as List) {
+          if (reference is! Map<String, dynamic> ||
+              reference['task_id'] is! String ||
+              (reference['task_id'] as String).length > 128 ||
+              reference['task_name'] is! String ||
+              (reference['task_name'] as String).length > 160 ||
+              reference['fields'] is! List) {
+            valid = false;
+            break;
+          }
+          final fields = (reference['fields'] as List).cast<Object?>();
+          if (fields.isEmpty ||
+              fields.any(
+                (field) =>
+                    field is! String ||
+                    !const {'command', 'config_path'}.contains(field),
+              )) {
+            valid = false;
+            break;
+          }
+          references.add({
+            'task_id': reference['task_id'],
+            'task_name': _redactText(
+              reference['task_name'] as String,
+              redactValues,
+            ),
+            'fields': List<String>.unmodifiable(fields.cast<String>()),
+          });
+        }
+        if (valid) {
+          metadata['preview'] = {
+            'path': preview['path'],
+            'kind': 'file',
+            'revision': preview['revision'],
+            'size_bytes': preview['size_bytes'],
+            'modified_at': preview['modified_at'],
+            'references': List.unmodifiable(references),
+          };
         }
       }
       final operation = payload['operation'];
@@ -649,7 +709,9 @@ class PanelApiClient {
       path.startsWith('/api/online-scripts/');
 
   bool _isScriptFilePath(String path) =>
-      path == '/api/scripts/file' || path.startsWith('/api/scripts/rename');
+      path == '/api/scripts/file' ||
+      path.startsWith('/api/scripts/rename') ||
+      path.startsWith('/api/scripts/delete/');
 
   bool _safeRenamePath(Object? value) =>
       value is String &&

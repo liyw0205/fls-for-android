@@ -280,6 +280,86 @@ class PanelScriptRenameOperation {
   }
 }
 
+class PanelScriptDeleteReference {
+  const PanelScriptDeleteReference({
+    required this.taskId,
+    required this.taskName,
+    required this.fields,
+  });
+
+  final String taskId;
+  final String taskName;
+  final List<String> fields;
+
+  factory PanelScriptDeleteReference.fromJson(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value['task_id'] is! String ||
+        (value['task_id'] as String).isEmpty ||
+        value['task_name'] is! String ||
+        (value['task_name'] as String).length > 160 ||
+        value['fields'] is! List) {
+      throw const FormatException('脚本删除任务引用格式无效');
+    }
+    final fields = (value['fields'] as List).cast<Object?>();
+    if (fields.isEmpty ||
+        fields.any(
+          (field) =>
+              field is! String ||
+              !const {'command', 'config_path'}.contains(field),
+        )) {
+      throw const FormatException('脚本删除任务引用字段无效');
+    }
+    return PanelScriptDeleteReference(
+      taskId: value['task_id'] as String,
+      taskName: value['task_name'] as String,
+      fields: List.unmodifiable(fields.cast<String>()),
+    );
+  }
+}
+
+class PanelScriptDeletePreview {
+  const PanelScriptDeletePreview({
+    required this.path,
+    required this.revision,
+    required this.sizeBytes,
+    required this.modifiedAt,
+    required this.references,
+  });
+
+  final String path;
+  final String revision;
+  final int sizeBytes;
+  final String modifiedAt;
+  final List<PanelScriptDeleteReference> references;
+
+  factory PanelScriptDeletePreview.fromJson(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value['kind'] != 'file' ||
+        value['path'] is! String ||
+        !_validRelativePath(value['path'] as String) ||
+        value['revision'] is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(value['revision'] as String) ||
+        value['size_bytes'] is! num ||
+        (value['size_bytes'] as num) < 0 ||
+        (value['size_bytes'] as num) > (1 << 40) ||
+        value['references'] is! List ||
+        (value['references'] as List).length > 200) {
+      throw const FormatException('脚本删除预览格式无效');
+    }
+    return PanelScriptDeletePreview(
+      path: value['path'] as String,
+      revision: value['revision'] as String,
+      sizeBytes: (value['size_bytes'] as num).toInt(),
+      modifiedAt: value['modified_at'] is String
+          ? value['modified_at'] as String
+          : '',
+      references: (value['references'] as List)
+          .map(PanelScriptDeleteReference.fromJson)
+          .toList(growable: false),
+    );
+  }
+}
+
 bool _validRelativePath(String value) =>
     value.isNotEmpty &&
     !value.startsWith('/') &&

@@ -283,6 +283,90 @@ void main() {
     expect(find.text('renamed.py'), findsOneWidget);
     expect(find.text('面板文件'), findsOneWidget);
   });
+
+  testWidgets('reviews task impact and confirms panel script deletion', (
+    tester,
+  ) async {
+    var treeReads = 0;
+    var deleteSubmitted = false;
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=file-session',
+        csrfToken: 'file-csrf',
+      ),
+      client: panelMockClient((request) async {
+        if (request.url.path == '/api/scripts/tree') {
+          treeReads++;
+          return _jsonResponse({
+            ..._tree(),
+            'total': deleteSubmitted ? 0 : 1,
+            'items': deleteSubmitted
+                ? <Map<String, dynamic>>[]
+                : _tree()['items'],
+          });
+        }
+        if (request.url.path == '/api/scripts/delete/preview') {
+          expect(request.url.queryParameters, {'path': 'demo.py'});
+          return _jsonResponse({
+            'ok': true,
+            'preview': {
+              'path': 'demo.py',
+              'kind': 'file',
+              'revision': 'e' * 64,
+              'size_bytes': 10,
+              'modified_at': 'now',
+              'references': [
+                {
+                  'task_id': 'task-1',
+                  'task_name': 'Demo task',
+                  'fields': ['command'],
+                },
+              ],
+            },
+          });
+        }
+        expect(request.method, 'DELETE');
+        expect(request.url.path, '/api/scripts/file');
+        expect(request.headers['x-csrf-token'], 'file-csrf');
+        expect(jsonDecode(request.body), {
+          'path': 'demo.py',
+          'revision': 'e' * 64,
+          'confirm_references': true,
+        });
+        deleteSubmitted = true;
+        return _jsonResponse({'ok': true, 'deleted': true, 'path': 'demo.py'});
+      }),
+    );
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelScriptFilesView(
+          manager: PanelScriptFilesManager(api),
+          onUnauthorized: (_) async {},
+        ),
+      ),
+    );
+    await _pumpUntil(tester, () => find.text('demo.py').evaluate().isNotEmpty);
+    await tester.tap(find.byTooltip('文件操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除文件').first);
+    await _pumpUntil(
+      tester,
+      () => find.text('删除 demo.py').evaluate().isNotEmpty,
+    );
+
+    expect(find.text('以下任务引用此文件。删除后这些任务可能无法运行。'), findsOneWidget);
+    expect(find.text('Demo task'), findsOneWidget);
+    expect(find.text('python demo.py'), findsNothing);
+    await tester.tap(find.text('删除文件').last);
+    await _pumpUntil(tester, () => treeReads == 2 && deleteSubmitted);
+
+    expect(deleteSubmitted, isTrue);
+    expect(treeReads, 2);
+    expect(find.text('目录为空'), findsOneWidget);
+  });
 }
 
 Map<String, dynamic> _tree() => {

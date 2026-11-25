@@ -89,6 +89,48 @@ class PanelScriptFilesManager {
     }
   }
 
+  Future<PanelScriptDeletePreview> previewDelete(String path) async {
+    _requireRelativePath(path);
+    final uri = Uri(
+      path: '/api/scripts/delete/preview',
+      queryParameters: {'path': path},
+    );
+    final payload = await _api.getJson(uri.toString());
+    try {
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('脚本删除预览响应格式无效');
+      }
+      return PanelScriptDeletePreview.fromJson(payload['preview']);
+    } on FormatException catch (error) {
+      throw PanelApiException(
+        error.message,
+        path: '/api/scripts/delete/preview',
+      );
+    }
+  }
+
+  Future<void> deleteFile({
+    required String path,
+    required String revision,
+    required bool confirmReferences,
+  }) async {
+    _requireRelativePath(path);
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(revision)) {
+      throw ArgumentError('脚本删除确认版本无效');
+    }
+    final payload = await _api.deleteJson('/api/scripts/file', {
+      'path': path,
+      'revision': revision,
+      'confirm_references': confirmReferences,
+    });
+    if (payload is! Map<String, dynamic> ||
+        payload['ok'] != true ||
+        payload['deleted'] != true ||
+        payload['path'] != path) {
+      throw const PanelApiException('脚本删除响应格式无效');
+    }
+  }
+
   Future<PanelScriptRenamePreview> previewRename({
     required String path,
     required String newName,

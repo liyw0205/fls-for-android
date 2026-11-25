@@ -181,6 +181,135 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
     }
   }
 
+  Future<void> _delete(PanelScriptFileItem item) async {
+    try {
+      final preview = await widget.manager.previewDelete(item.path);
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('删除 ${item.name}'),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(preview.path),
+                  const SizedBox(height: 8),
+                  Text('大小：${_formatBytes(preview.sizeBytes)}'),
+                  if (preview.references.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Text('以下任务引用此文件。删除后这些任务可能无法运行。'),
+                    for (final reference in preview.references)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(reference.taskName),
+                        subtitle: Text(
+                          [
+                            if (reference.fields.contains('command')) '命令',
+                            if (reference.fields.contains('config_path'))
+                              '配置路径',
+                          ].join('、'),
+                        ),
+                      ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    const Text('此操作会永久删除服务器上的文件。'),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('删除文件'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      try {
+        await widget.manager.deleteFile(
+          path: preview.path,
+          revision: preview.revision,
+          confirmReferences: preview.references.isNotEmpty,
+        );
+      } catch (error) {
+        if (error is PanelApiException && error.statusCode == 401) {
+          await _handleUnauthorized(error, routesToClose: 1);
+          return;
+        }
+        if (error is PanelApiException && error.statusCode == 409) {
+          await _load(page: 1);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('文件或任务引用已变化，请重新检查后再删除')),
+            );
+          }
+          return;
+        }
+        if (error is PanelApiException &&
+            (error.statusCode == null || error.statusCode! >= 500)) {
+          try {
+            await widget.manager.previewDelete(preview.path);
+          } on PanelApiException catch (statusError) {
+            if (statusError.statusCode == 404) {
+              if (mounted) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('已删除 ${preview.path}')));
+                await _load(page: 1);
+              }
+              return;
+            }
+            if (statusError.statusCode == 401) {
+              await _handleUnauthorized(statusError, routesToClose: 1);
+              return;
+            }
+          }
+          if (mounted) {
+            await _load(page: 1);
+            if (mounted) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('删除结果未知，已刷新目录确认状态')));
+            }
+          }
+          return;
+        }
+        rethrow;
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已删除 ${preview.path}')));
+      await _load(page: 1);
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PanelApiException && error.statusCode == 401) {
+        await _handleUnauthorized(error, routesToClose: 1);
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
   Future<void> _showRenameOperation(PanelScriptRenameOperation initial) async {
     var operation = initial;
     while (mounted) {
@@ -427,12 +556,18 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
                             tooltip: '文件操作',
                             onSelected: (action) {
                               if (action == 'rename') _rename(item);
+                              if (action == 'delete') _delete(item);
                             },
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(
+                            itemBuilder: (_) => [
+                              const PopupMenuItem(
                                 value: 'rename',
                                 child: Text('重命名'),
                               ),
+                              if (!item.isDirectory)
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('删除文件'),
+                                ),
                             ],
                             icon: const Icon(Icons.more_vert),
                           ),

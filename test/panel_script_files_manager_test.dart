@@ -125,6 +125,119 @@ void main() {
     },
   );
 
+  test('previews task impact and deletes with the reviewed revision', () async {
+    var deleteCount = 0;
+    final requests = <String>[];
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: session,
+      client: MockClient((request) async {
+        requests.add('${request.method} ${request.url}');
+        if (request.method == 'GET') {
+          expect(request.url.path, '/api/scripts/delete/preview');
+          expect(request.url.queryParameters, {'path': 'tasks/demo.py'});
+          return _jsonResponse({
+            'ok': true,
+            'preview': {
+              'path': 'tasks/demo.py',
+              'kind': 'file',
+              'revision': revision,
+              'size_bytes': 2048,
+              'modified_at': '2026-11-25T10:00:00+08:00',
+              'references': [
+                {
+                  'task_id': 'task-1',
+                  'task_name': 'Demo task',
+                  'fields': ['command', 'config_path'],
+                },
+              ],
+            },
+          });
+        }
+        expect(request.method, 'DELETE');
+        expect(request.url.path, '/api/scripts/file');
+        expect(request.headers['x-csrf-token'], session.csrfToken);
+        expect(jsonDecode(request.body), {
+          'path': 'tasks/demo.py',
+          'revision': revision,
+          'confirm_references': true,
+        });
+        deleteCount++;
+        if (deleteCount == 1) {
+          return _jsonResponse({
+            'ok': false,
+            'code': 'references_ack_required',
+            'msg': '请确认影响',
+            'preview': {
+              'path': 'tasks/demo.py',
+              'kind': 'file',
+              'revision': revision,
+              'size_bytes': 2048,
+              'modified_at': '2026-11-25T10:00:00+08:00',
+              'references': [
+                {
+                  'task_id': 'task-1',
+                  'task_name': 'Demo task',
+                  'fields': ['command'],
+                  'command': 'must-not-leak',
+                },
+              ],
+            },
+            'private': 'must-drop',
+          }, 409);
+        }
+        return _jsonResponse({
+          'ok': true,
+          'deleted': true,
+          'path': 'tasks/demo.py',
+        });
+      }),
+    );
+    addTearDown(api.close);
+    final manager = PanelScriptFilesManager(api);
+
+    final preview = await manager.previewDelete('tasks/demo.py');
+    expect(preview.path, 'tasks/demo.py');
+    expect(preview.sizeBytes, 2048);
+    expect(preview.references.single.taskName, 'Demo task');
+    expect(preview.references.single.fields, ['command', 'config_path']);
+
+    try {
+      await manager.deleteFile(
+        path: preview.path,
+        revision: preview.revision,
+        confirmReferences: true,
+      );
+      fail('expected the server to require an explicit impact confirmation');
+    } on PanelApiException catch (error) {
+      expect(error.statusCode, 409);
+      expect(error.data?['code'], 'references_ack_required');
+      expect(error.data?['preview'], {
+        'path': 'tasks/demo.py',
+        'kind': 'file',
+        'revision': revision,
+        'size_bytes': 2048,
+        'modified_at': '2026-11-25T10:00:00+08:00',
+        'references': [
+          {
+            'task_id': 'task-1',
+            'task_name': 'Demo task',
+            'fields': ['command'],
+          },
+        ],
+      });
+      expect(error.data!.containsKey('private'), isFalse);
+    }
+
+    await manager.deleteFile(
+      path: preview.path,
+      revision: preview.revision,
+      confirmReferences: true,
+    );
+    expect(deleteCount, 2);
+    expect(requests, hasLength(3));
+  });
+
   test(
     'script conflict metadata is limited to a validated relative UTF-8 snapshot',
     () async {
