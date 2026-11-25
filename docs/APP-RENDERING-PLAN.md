@@ -1,14 +1,26 @@
 # FLS APP 原生前端实施方案
 
-> 最终目标是 Flutter 原生覆盖 FLS Web 中所有适用页面、表单、状态和操作；本文件记录交互/架构约束和面板在线脚本纵切。业务域全量清单、推进顺序与双仓合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md) 和 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md)。WebView 只作迁移期兼容入口，不计入原生覆盖。
+> 最终目标是 Flutter 原生覆盖 FLS Web 中所有适用页面、表单、状态和操作；本文件记录原生信息架构、本机保留能力和当前/下一批对接。业务域全量清单、推进顺序与双仓合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md) 和 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md)。WebView 只作显式兼容入口，不计入原生覆盖。
 
 ## 目标
 
-本机脚本目录、脚本详情、安装进度和版本更新信息由 Flutter 原生页面负责展示；FLS Web 面板仍用于用户明确打开面板时的完整管理能力。常见脚本浏览与安装不再跳转 WebView，也不依赖启动面板。
+远程与本机 FLS 面板共用原生导航、页面和业务逻辑，同一页面使用当前面板的服务端数据。APP 单独设计交互，不拉取 Web HTML 重新排版。本机容器的镜像安装、APP 更新和不启动面板的脚本安装依然独立于面板业务。
 
 界面按 Android APP 的阅读和操作习惯设计：信息密度适中、操作明确、进度可见、失败可恢复。视觉沿用现有 FLS APP 的中性色和蓝绿语义色，不复刻桌面 Web 面板的导航、宽表格或悬浮工具栏。
 
-## 页面结构
+## 原生面板导航
+
+| 一级入口 | 二级页面与操作 |
+| --- | --- |
+| 概览 | 面板状态、调度器、运行时、近期执行；点击状态进入对应任务或记录 |
+| 任务 | 任务列表、详情/编辑、批量动作、合集；任务详情可进入关联脚本和运行日志 |
+| 脚本 | 面板文件、在线脚本；目录、编辑、导入、安装、调试及作业状态 |
+| 记录 | 执行历史、系统/任务日志；过滤、详情、导出/下载与清理 |
+| 管理 | 环境变量、配置、依赖/运行时、代理、通知、备份恢复、FLS 版本与面板控制；显式打开 Web 面板 |
+
+面板级路由始终带当前实例上下文，切换面板时退出旧详情、取消轮询并丢弃旧响应。列表返回恢复筛选、分页和滚动位置；编辑遇冲突保留草稿；长任务区分“已受理”“执行中”“失败”“结果未知”，回到页面按服务端作业 ID 恢复。未迁移的功能标注 Web 回退，不静默跳转。不与 APP 外层的“本机环境/远程面板”入口重复。
+
+## 本机容器与版本管理
 
 ### 脚本目录
 
@@ -34,7 +46,7 @@
 
 ### FLS 面板在线脚本（当前纵切）
 
-这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。截至 2026-11-25，`$HOME/fls` 已 fetch 并 fast-forward pull `develop`，远端最新仍为 `094c7c3`（`20261125.6`）；APP 远端 `develop` 为 `89a777f`（`0.1.36+41`）。当前两仓工作区均有未提交扩展：FLS 计划版本 `20261125.7`，APP 计划版本 `0.1.37+42`，其中源缓存 API、代理选项、原生源管理/任务恢复等本地实现尚待完整验证和 CI，不视为已交付。本纵切不是全量迁移；剩余范围见 [全量路线图](GOAL-ROADMAP.md) 与 [功能矩阵](FLS-FEATURE-MATRIX.md)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 及相应测试为准。
+这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。两仓 `develop` 的版本、提交和工作流结果统一见 [路线图基线](GOAL-ROADMAP.md#分支与合并策略)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 及相应测试为准。
 
 | 接入顺序 | 现有接口 | APP 行为与验收 |
 | --- | --- | --- |
@@ -44,17 +56,27 @@
 | 4. 源同步 | `POST` `/refresh`、`/refresh-recover/<request_id>`、`/refresh-confirm/<request_id>`、`/refresh-retry/<request_id>`；`GET` `/refresh-options`、`/refresh-status/<request_id>`、`/refresh-history`、`/refresh-task-link-failures/<request_id>`、`/refresh-log/<request_id>` | Flutter 原生同步页可选启用代理、查看最近 10 次刷新、轮询状态和日志、确认/恢复未知结果、重试失败项，并按原请求绑定重试单个外部任务源。 |
 | 5. 单独任务操作与源缓存 | 既有 `/import-tasks*`、`/task-link*`、`/refresh-task-link*`；新增 `/source` JSON GET/PUT，使用 `cache_revision` 做并发保护 | 详情页可选择并独立导入任务、同步 `task_link`；任务操作历史可确认未知回执、恢复调度器、重试允许的原请求和归档失败记录。源缓存编辑有 4 MiB 缓存/8 MiB 请求上限，校验 JSON、条目和重复 ID；冲突时保留草稿并允许查看/采用服务器版本。 |
 
-APP 当前工作区在 `PanelTasksView` 接入独立 manager、DTO 和原生页面，远程与本机面板共用会话边界。在线脚本实现覆盖目录/详情/安装与进度/历史、源刷新和历史/失败项恢复、源缓存 JSON 编辑、独立任务导入、外部任务同步及任务操作历史/确认/调度器恢复/归档；新增改动仍需跑格式、静态分析、测试并经 Android CI 验证。写操作复用原 request ID 恢复，不把代理凭据或任务变量值放进列表 DTO。在线脚本仍只是全量迁移中的一个域，矩阵中其余适用业务域仍需逐项实现原生页面。
+APP `develop` 已在 `PanelTasksView` 接入独立 manager、DTO 和原生页面，远程与本机面板共用会话边界。写操作复用原 request ID 恢复，不把代理凭据或任务变量值放进列表 DTO。真实面板仍待手动验收；在线脚本只是一个业务域，其余适用页面继续按矩阵迁移。
 
 写操作接入前的两项 FLS `develop` 契约修整已在 `094c7c3` 完成并通过 61 项定向测试：`install-options` 搜索不再匹配任务环境变量值；覆盖冲突只返回 `target_exists` 和 `confirm_required`，不返回服务器目标路径。继续检查安装拒绝/重试、日志和历史序列化的敏感字段白名单。APP 的错误元数据扩展按在线脚本路由和字段类型白名单处理 `confirm_required`、`target_exists`、`request_id`、`install_id`、`running`、`accepted`、`retry_allowed` 等，不保留目标路径、任意返回 URL、代理凭据或变量值；原始错误不直接展示。
 
 APP 具体落地次序：
 
 1. 保持独立 `panel_online_script.dart`、`panel_online_scripts_manager.dart`、`panel_online_scripts_view.dart` 及相应测试；不改造本机容器 `OnlineScriptsManager`。
-2. 当前已在 `PanelTasksView` 增加“脚本”入口，复用面板会话。修正 401 后嵌套路由退出行为；面板变化/离开页面时继续废弃旧请求和计时器。主导航之后按全站信息架构收敛分组，避免每个新 Web 菜单都占一个底栏项。
-3. 验证当前工作区的在线脚本扩展：先跑 FLS 源 API/刷新/目录定向与全量回归，再跑 APP format/analyze/契约和 widget 测试，审查并发冲突草稿保留、request ID 恢复、刷新失败重试和凭据脱敏；通过后仅推送两个 `develop` 并等待工作流。随后核对每个 Web 操作均有原生入口、失败恢复和权限/冲突处理。不得标记未实现的 Web 操作为原生完成。
+2. `PanelTasksView` 现有“脚本”入口继续复用面板会话，与下一批的面板文件归到同一个脚本域。401 后退出嵌套业务路由，面板变化/离开页面时废弃旧请求和计时器。
+3. 在隔离面板复核每个 Web 操作的原生入口、冲突草稿保留、request ID 恢复、刷新失败重试和凭据脱敏；CI 和手动状态分别记入矩阵。不得把未实现的 Web 操作标为原生完成。
 4. DTO/manager 测试固定 API 方法、路径、查询参数、JSON body、cookie/CSRF headers、分页/快照、进度不确定状态和错误元数据白名单。Widget 测试覆盖空目录、搜索结果、无文档/HTML 文档、窄屏/大字号、确认覆盖、安装受理后断网、轮询恢复、停止、任务导入确认和源刷新失败。
 5. 随后按 [全量功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移 FLS Web 中所有适用页面、表单、状态、导航和操作，不止版本/镜像/脚本；FLS 缺 JSON 契约时先在 FLS `develop` 补 API 与回归测试，再由 APP 接入。每批执行本地检查并推送两个 `develop`，由对应 GitHub Actions 验证；不合并 `main`，直到全量原生渲染通过矩阵、CI 与用户手动验收。不做 ADB。
+
+### 下一纵切：面板脚本文件
+
+FLS `routes/scripts/files.py` 的 Web 编辑已使用 `script_file_snapshot`、`publish_script_file` 和文件 revision；改名已有任务引用预览与可继续/回滚的操作记录。`routes/scripts/pull.py` 有文件拉取与归档导入；调试仅已有 `/api/scripts/debug-log/<id>` 读接口，启动/停止仍由 Web 路由承载。APP 不抓取这些路由的 HTML，也不直接用调试页面的 GET 请求启动进程。
+
+1. **目录与编辑。** FLS 先加仅返回相对路径及必要元数据的目录分页 API、受限 UTF-8 文件快照和保存/新建 API。目录 GET 不沿用 Web 缺目录时自动创建的行为；复用路径检查、原子写入和 revision。APP 先完成“面板文件”浏览、编辑和新建；遇 409 保留草稿并可对照服务器内容，已写入但回复失败时先重读核实，不盲目重提。
+2. **文件操作。** FLS 接续提供改名预览/确认/恢复、带影响范围的删除，以及受限下载、拉取和归档导入。APP 以原生确认表单展示任务引用、覆盖范围和作业结果；改名后的任务与路径重新从后端刷新。不要在 APP 重新实现解包、脚本路径解析或任务引用改写。
+3. **调试。** FLS 补显式 POST 启停、状态、历史与受限脱敏日志契约，复用已有调试服务。APP 离开或重开页面后按原作业 ID 恢复，不以断网或轮询停止当作调试结束。
+
+首个子批的验收：隔离面板上同一个文件可由 APP 与 Web 轮流读取和编辑；过期 revision 不覆盖远端，非法路径与非 UTF-8/超限文件不会进入编辑器；两仓有契约/回归测试和 CI，手动验收记录精确 APP/FLS SHA。缺功能时仅降级对应入口，不把权限错误或普通 404 当作旧面板。
 
 ### APP 更新
 
@@ -66,7 +88,7 @@ APP 具体落地次序：
 
 - 页面只依赖结构化模型，不直接拼 HTTP 或启动 WebView。
 - `OnlineScriptsManager` 负责目录、文档、远端文件/仓库下载、路径与归档校验和可取消安装任务。
-- 计划新增的 `PanelOnlineScriptsManager` 独立负责当前面板 session/CSRF 下的目录、文档、安装作业、日志、停止与恢复；不直接访问脚本文件系统。
+- `PanelOnlineScriptsManager` 独立负责当前面板 session/CSRF 下的目录、文档、安装作业、日志、源管理和失败恢复；不直接访问脚本文件系统。
 - `LocalPanelHost` 负责通过 Android MethodChannel 在现有 rootfs 中运行一次性命令；该命令不启动 `LocalPanelService`。
 - `AppUpdateManager` 负责 Release 元数据、版本比较、Compare commits 和 APK 地址校验。
 - Markdown 使用成熟解析器输出 Flutter widget，不把不可信 HTML 直接交给 WebView 渲染。
@@ -88,7 +110,7 @@ APP 具体落地次序：
 4. **已完成：可重复的网络边界测试**。CI 已通过无 `Content-Length` 时只显示已接收字节和不定进度，以及分块慢速传输时进度随接收字节前进的 manager/UI 测试。
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
 
-6. **当前纵切：FLS 面板在线脚本（本地扩展待验证）**。FLS 远端 `develop` `094c7c3`（`20261125.6`）此前的 61 项定向测试与 Module/Windows Desktop/Windows EXE 工作流通过；APP 远端 `develop` `89a777f`（`0.1.36+41`）包含此前首批原生页面和 401 嵌套页面退出。当前工作区新增源管理/源 JSON API/任务恢复等实现及版本变更，尚未完成本轮验证、提交、推送或工作流。先完成此批闭环，再按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 迁移其余所有适用 Web 页面。任何单域完成都不等于全 APP 原生化；两个仓库继续只在 `develop` 开发，全量验收前保持 `main` 不动。
+6. **当前纵切：FLS 面板在线脚本**。源管理、独立任务操作、恢复管理与后端 API 已推送两仓 `develop`。继续做隔离面板手动验收，同时按 [功能矩阵](FLS-FEATURE-MATRIX.md) 推进面板脚本文件和其余适用 Web 页面。任何单域完成都不等于全 APP 原生化；全量验收前两仓保持 `main` 不动。
 
 ### 手动验收清单
 
@@ -96,9 +118,9 @@ APP 具体落地次序：
 2. 在限速网络下下载，检查已接收/总量/百分比与网络面板或下载字节相符；传输期间取消，确认旧版本仍可用且没有暂存文件残留。
 3. 更新已有仓库时保留一个本地新增文件；让依赖安装失败或取消，确认上游旧文件恢复、本地文件保留、提交版本未前移、面板未启动。
 4. 在竖屏、横屏和系统大字体下检查目录、详情操作、安装进度和日志区域，无重叠且取消操作可触达。
-5. 面板页面接入后，在隔离 `develop` 面板验收目录、安装/更新、停止、任务导入和源刷新；中途断网或重启 APP，从历史恢复原作业，确认没有再次安装或重复导入。
+5. 在隔离 `develop` 面板验收目录、安装/更新、停止、任务导入和源刷新；中途断网或重启 APP，从历史恢复原作业，确认没有再次安装或重复导入。同时用两端分别编辑同一份源缓存，确认过期编辑收到冲突且草稿保留。
 
-反馈时记录 APP 版本、Android 版本、容器档位、面板起始状态、网络类型/限速、执行步骤、实际进度与预期、失败日志或截图。未执行的手动项保持待验收状态，不影响继续开发和 CI 发布。
+反馈时记录 APP/FLS 版本和候选提交、Android 版本、容器档位、面板起始状态、网络类型/限速、执行步骤、实际进度与预期、失败日志或截图。未执行的手动项保持待验收状态，不影响继续开发和 CI，不满足正式发布门槛。
 
 ### 自动化验证
 

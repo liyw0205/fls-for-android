@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fls_for_android/features/panel_online_script_admin_view.dart';
@@ -20,6 +21,7 @@ void main() {
     tester,
   ) async {
     var sourceReads = 0;
+    final sourceLoaded = Completer<void>();
     final api = PanelApiClient(
       baseUrl: 'https://fls.example',
       credentials: const PanelSessionCredentials(
@@ -45,6 +47,7 @@ void main() {
         if (request.url.path == '/api/online-scripts/source' &&
             request.method == 'GET') {
           sourceReads++;
+          if (!sourceLoaded.isCompleted) sourceLoaded.complete();
           final text = sourceReads == 1 ? oldJson : currentJson;
           return utf8Response(
             jsonEncode({
@@ -77,7 +80,8 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.runAsync(() => sourceLoaded.future);
+    await tester.pump();
 
     final editor = tester.widget<TextField>(find.byType(TextField));
     expect(editor.controller!.text, oldJson);
@@ -127,6 +131,8 @@ void main() {
     tester,
   ) async {
     const requestId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final historyLoaded = Completer<void>();
+    final statusLoaded = Completer<void>();
     final api = PanelApiClient(
       baseUrl: 'https://fls.example',
       credentials: const PanelSessionCredentials(
@@ -149,6 +155,7 @@ void main() {
               200,
             );
           case '/api/online-scripts/import-tasks-history':
+            if (!historyLoaded.isCompleted) historyLoaded.complete();
             return utf8Response(
               jsonEncode({
                 'ok': true,
@@ -165,6 +172,7 @@ void main() {
               200,
             );
           case '/api/online-scripts/import-tasks-status/$requestId':
+            if (!statusLoaded.isCompleted) statusLoaded.complete();
             return utf8Response(
               jsonEncode({
                 'ok': true,
@@ -196,13 +204,14 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.runAsync(() => historyLoaded.future);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
     expect(find.text('demo'), findsOneWidget);
     await tester.tap(find.text('demo').first);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.runAsync(() => statusLoaded.future);
+    await tester.pump();
 
     expect(find.textContaining('token=[已隐藏]'), findsOneWidget);
     expect(find.textContaining('private-value'), findsNothing);
