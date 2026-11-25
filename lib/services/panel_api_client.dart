@@ -454,6 +454,24 @@ class PanelApiClient {
               'rename_result_unknown',
               'operation_conflict',
               'rename_failed',
+              'invalid_url',
+              'invalid_request_id',
+              'invalid_path',
+              'invalid_parent',
+              'invalid_proxy',
+              'target_exists',
+              'request_id_conflict',
+              'too_many_active_jobs',
+              'history_unavailable',
+              'job_persistence_failed',
+              'invalid_job_id',
+              'not_found',
+              'invalid_limit',
+              'too_large',
+              'download_failed',
+              'worker_interrupted',
+              'state_unknown',
+              'not_cancellable',
             }.contains(value)) {
           continue;
         }
@@ -710,6 +728,8 @@ class PanelApiClient {
 
   bool _isScriptFilePath(String path) =>
       path == '/api/scripts/file' ||
+      path.startsWith('/api/scripts/pull') ||
+      path.startsWith('/api/scripts/debug') ||
       path.startsWith('/api/scripts/rename') ||
       path.startsWith('/api/scripts/delete/');
 

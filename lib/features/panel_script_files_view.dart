@@ -6,15 +6,19 @@ import 'package:flutter/material.dart';
 import '../models/panel_script_file.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_script_files_manager.dart';
+import '../services/panel_script_pull_manager.dart';
+import 'panel_script_pull_view.dart';
 
 class PanelScriptFilesView extends StatefulWidget {
   const PanelScriptFilesView({
     super.key,
     required this.manager,
+    this.pullManager,
     required this.onUnauthorized,
   });
 
   final PanelScriptFilesManager manager;
+  final PanelScriptPullManager? pullManager;
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
@@ -93,6 +97,21 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       ),
     );
     if (saved == true && mounted) await _load(page: _data?.page ?? 1);
+  }
+
+  Future<void> _openPull() async {
+    final manager = widget.pullManager;
+    if (manager == null) return;
+    final completed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => PanelScriptPullView(
+          manager: manager,
+          currentPath: _path,
+          onUnauthorized: widget.onUnauthorized,
+        ),
+      ),
+    );
+    if (completed == true && mounted) await _load(page: _data?.page ?? 1);
   }
 
   Future<void> _rename(PanelScriptFileItem item) async {
@@ -455,6 +474,12 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       appBar: AppBar(
         title: const Text('面板文件'),
         actions: [
+          if (widget.pullManager != null)
+            IconButton(
+              tooltip: '从 URL 拉取',
+              onPressed: _openPull,
+              icon: const Icon(Icons.download_outlined),
+            ),
           IconButton(
             tooltip: '刷新目录',
             onPressed: _loading ? null : () => _load(page: data?.page ?? 1),

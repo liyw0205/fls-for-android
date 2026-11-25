@@ -70,7 +70,7 @@ APP 具体落地次序：
 4. DTO/manager 测试固定 API 方法、路径、查询参数、JSON body、cookie/CSRF headers、分页/快照、进度不确定状态和错误元数据白名单。Widget 测试覆盖空目录、搜索结果、无文档/HTML 文档、窄屏/大字号、确认覆盖、安装受理后断网、轮询恢复、停止、任务导入确认和源刷新失败。
 5. 随后按 [全量功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移 FLS Web 中所有适用页面、表单、状态、导航和操作，不止版本/镜像/脚本；FLS 缺 JSON 契约时先在 FLS `develop` 补 API 与回归测试，再由 APP 接入。每批执行本地检查并推送两个 `develop`，由对应 GitHub Actions 验证；不合并 `main`，直到全量原生渲染通过矩阵、CI 与用户手动验收。不做 ADB。
 
-### 当前纵切：面板脚本文件目录与编辑
+### 已交付子批：面板脚本文件目录、编辑与文件操作
 
 FLS `routes/scripts/files.py` 的 Web 编辑已使用 `script_file_snapshot`、`publish_script_file` 和文件 revision；改名已有任务引用预览与可继续/回滚的操作记录。`routes/scripts/pull.py` 有文件拉取与归档导入；调试仅已有 `/api/scripts/debug-log/<id>` 读接口，启动/停止仍由 Web 路由承载。APP 不抓取这些路由的 HTML，也不直接用调试页面的 GET 请求启动进程。
 
@@ -84,16 +84,20 @@ APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口�
 
 首个子批的验收：隔离面板上同一个文件可由 APP 与 Web 轮流读取和编辑；过期 revision 不覆盖远端，非法路径与非 UTF-8/超限文件不会进入编辑器；两仓有契约/回归测试和 CI，手动验收记录精确 APP/FLS SHA。缺功能时仅降级对应入口，不把权限错误或普通 404 当作旧面板。
 
-### 下一纵切：面板脚本拉取/导入与调试
+### 当前纵切：面板脚本拉取/导入与调试
 
-已同步 FLS `develop` 最新 `17c52f6` (`20261125.10`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 目前是同步 Web 表单；没有 APP 可恢复的导入作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
+已同步并确认 FLS `develop` 最新基线为 `17c52f6` (`20261125.10`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 原本是同步 Web 表单；当前工作区先实现远程单文件的可恢复作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
 
-先在 FLS `develop` 为下列行为建立稳定 JSON 契约和后端回归测试，再在 APP `develop` 做原生页面：
+**已实现但尚未提交/触发 CI 的单文件拉取子批：** FLS 工作区目标版本 `20261125.11` 新增 `POST /api/scripts/pull`、`GET /api/scripts/pull/<job_id>`、`GET /api/scripts/pull-history`、`GET /api/scripts/pull-options` 和取消接口。作业以 `request_id` 幂等，限制 64 MiB，流式报告下载字节和可信 Content-Length，使用同目录暂存及不覆盖发布；历史不保存原始 URL 或代理凭据，重启后中断状态为 `unknown`，发布状态通过目标 SHA-256 核实。FLS 定向测试 55 项、46 个 subtests 已通过。
 
-1. **远程拉取。** 单文件与 Git 仓库作为异步作业受理，返回 `job_id`；状态/有限日志可恢复轮询，支持取消。文件下载只有收到可信总量时显示 `已收/总量 · 百分比`，否则显示已收字节和不定进度；Git 克隆不伪造百分比。支持当前面板的代理选择，不回传代理凭据或 URL 查询秘密。
+APP 工作区目标版本 `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页提供 URL 拉取入口、代理选项、下载字节进度、取消、作业轮询/恢复和成功后刷新目录；初次打开会自动选中活动作业。`flutter analyze` 通过；Termux 宿主上的 `flutter test` 在 Flutter tester 构建阶段因仅支持 Linux/Windows/macOS 而退出，新增测试待 develop CI 验证。不得把本地静态分析当作 Widget 测试通过。
+
+后续按以下顺序扩展该脚本域；每项均留在各自 `develop`，所有页面都完成并经矩阵/CI/用户验收前不合并 `main`：
+
+1. **远程仓库拉取。** 为 Git 仓库下载建立可取消 job 与恢复状态；克隆进度不伪造文件百分比，明确传输阶段/文本日志边界。代理仍只暴露白名单字段。
 2. **本地上传/归档导入。** APP 用 multipart 上传普通文件、ZIP、TAR、TGZ；传输上传进度由 APP 展示，服务端完成安全提取/写入后用作业状态确认。复用现有路径/归档安全检查；限制上传体积、文件数和展开总量，拒绝链接、特殊文件、路径穿越。默认不覆盖已存在目标，冲突需显式确认；在同目录 staging 后原子发布，失败清理 staging，目录中已有文件不被部分覆盖。
 3. **调试运行。** 新增明确的 POST 启动、状态/历史、停止和有界日志 API；启动使用 request ID 幂等，记录只能包含相对脚本路径、状态/退出码和脱敏错误，日志限制行数/字节且不得向 APP 返回服务器绝对路径。服务重启导致进程结果无法确认时表达 `unknown`，不能谎报停止或成功。
-4. **APP 原生呈现。** 在现有面板文件页提供“拉取/导入”和“调试运行”原生入口，复用当前面板会话和请求上下文。作业离页/重启后可按 job ID 恢复，支持取消、失败重试和未知结果核实；目录刷新只在服务端确认发布后发生。路径与冲突提示使用相对路径，不在 UI/日志记录凭据。
+4. **APP 原生呈现与完整性。** 完成仓库拉取、上传/归档、调试入口及其页面/恢复状态；目录只在后端确认发布后刷新。每个入口有 manager/widget/API 契约测试，路径和冲突提示使用相对路径，不在 UI/日志记录凭据。
 
 先完成一个类型的后端 API 与测试，再接对应 APP manager/widget 测试并推送两仓 `develop`；APP 代码批次版本号递增。FLS 定向/相关回归测试和打包工作流、APP 格式/分析/Flutter 测试/arm64 CI 全通过后，再继续脚本域未迁移操作及功能矩阵其他面板域。真实隔离面板由用户手动验收，不做 ADB；任何单个纵切完成都不改变两仓 `main`。
 
