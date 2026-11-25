@@ -85,7 +85,7 @@ void main() {
       await _pumpUntil(tester, () => find.text('文件版本冲突').evaluate().isNotEmpty);
 
       expect(find.text('文件版本冲突'), findsOneWidget);
-      expect(find.textContaining('draft'), findsOneWidget);
+      expect(find.textContaining('draft'), findsNWidgets(2));
       expect(find.textContaining('server'), findsOneWidget);
       await tester.tap(find.text('保留草稿'));
       await _pumpUntil(
