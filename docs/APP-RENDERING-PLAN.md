@@ -86,11 +86,11 @@ APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口�
 
 ### 当前纵切：面板脚本拉取/导入与调试
 
-已同步并确认 FLS `develop` 最新基线为 `17c52f6` (`20261125.10`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 原本是同步 Web 表单；当前工作区先实现远程单文件的可恢复作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
+FLS `develop` 基线 `17c52f6` 后已推送 `4dd1b2e` (`20261125.11`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 原本是同步 Web 表单；本批为远程单文件补了可恢复作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
 
-**已实现但尚未提交/触发 CI 的单文件拉取子批：** FLS 工作区目标版本 `20261125.11` 新增 `POST /api/scripts/pull`、`GET /api/scripts/pull/<job_id>`、`GET /api/scripts/pull-history`、`GET /api/scripts/pull-options` 和取消接口。作业以 `request_id` 幂等，限制 64 MiB，流式报告下载字节和可信 Content-Length，使用同目录暂存及不覆盖发布；历史不保存原始 URL 或代理凭据，重启后中断状态为 `unknown`，发布状态通过目标 SHA-256 核实。FLS 定向测试 55 项、46 个 subtests 已通过。
+**已交付单文件拉取子批：** FLS `4dd1b2e` / `20261125.11` 新增 `POST /api/scripts/pull`、`GET /api/scripts/pull/<job_id>`、`GET /api/scripts/pull-history`、`GET /api/scripts/pull-options` 和取消接口。作业以 `request_id` 幂等，限制 64 MiB，流式报告下载字节和可信 Content-Length，使用同目录暂存及不覆盖发布；历史不保存原始 URL 或代理凭据，重启后中断状态为 `unknown`，发布状态通过目标 SHA-256 核实。FLS 定向测试 55 项、46 个 subtests 已通过；Module/Windows Desktop/Windows EXE workflows `45616233697`、`45616233463`、`45616233704` 全绿。
 
-APP 工作区目标版本 `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页提供 URL 拉取入口、代理选项、下载字节进度、取消、作业轮询/恢复和成功后刷新目录；初次打开会自动选中活动作业。`flutter analyze` 通过；Termux 宿主上的 `flutter test` 在 Flutter tester 构建阶段因仅支持 Linux/Windows/macOS 而退出，新增测试待 develop CI 验证。不得把本地静态分析当作 Widget 测试通过。
+APP `ca841b5` / `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页提供 URL 拉取入口、代理选项、下载字节进度、取消、作业轮询/恢复和成功后刷新目录；初次打开会自动选中活动作业。Android CI `45617619148` 全绿，含格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传。Termux 宿主的 Flutter tester 不支持 Android，因此本地 `flutter test` 不可用，以 CI 测试为准。
 
 后续按以下顺序扩展该脚本域；每项均留在各自 `develop`，所有页面都完成并经矩阵/CI/用户验收前不合并 `main`：
 
