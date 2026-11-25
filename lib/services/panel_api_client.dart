@@ -368,6 +368,9 @@ class PanelApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final errorRedactValues = [
           ...redactValues,
+          if (uri.path.startsWith('/api/env/') && body is Map)
+            for (final key in ['value', 'env_text'])
+              if (body[key] is String) body[key] as String,
           if (cookie != null) cookie.split('=').last,
         ];
         throw PanelApiException(
@@ -388,6 +391,7 @@ class PanelApiClient {
             ),
             includeScriptFileDetails: _isScriptFilePath(Uri.parse(path).path),
             includeDependencyDetails: _isDependencyPath(Uri.parse(path).path),
+            includeEnvironmentDetails: uri.path.startsWith('/api/env/'),
           ),
         );
       }
@@ -464,10 +468,22 @@ class PanelApiClient {
     required bool includeOnlineScriptDetails,
     required bool includeScriptFileDetails,
     required bool includeDependencyDetails,
+    bool includeEnvironmentDetails = false,
   }) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
     final keys = <String>['saved', 'reload_required'];
+    if (includeEnvironmentDetails) {
+      keys.addAll(const [
+        'resolved',
+        'request_id',
+        'action',
+        'conflict',
+        'confirm_required',
+        'changed_count',
+        'skipped_count',
+      ]);
+    }
     if (includeTaskActionDetails) {
       keys.addAll(const [
         'action',

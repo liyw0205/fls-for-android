@@ -3,6 +3,7 @@
 ## 基线与证据范围
 
 - 本批从 FLS `develop` `160a78a` / `20261126.1`、APP `develop` `c8054ce` / `0.1.44+57` 起步；当前 FLS 为 `5c5c0ae` / `20261126.2`，APP 为 `9b73207` / `0.1.45+58`。FLS 相关定向测试 34 项及 Module/Desktop/EXE workflow `45682749082`、`45682748710`、`45682748871` 通过；APP Android CI `45683315548` 通过格式、分析、142 项 Flutter 测试和 arm64 构建，artifact `15055777025`。
+- 最新已验证基线：FLS `5da1491` / `20261126.3`，APP `29d90cd` / `0.1.46+59`；FLS Module/Desktop/EXE 工作流 `45701269659`、`45701269937`、`45701269593` 和 APP Android CI `45701974657` 均成功，APP artifact `15064197507`。本批从该基线推进全局变量；候选 FLS `20261126.4`、APP `0.1.47+60`。
 - 两仓均在 `develop`。以下历史子批证据按各自提交记录；CI 通过不等于真实面板手动验收。真实隔离面板验收由用户完成，不做 ADB 测试。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。
@@ -22,7 +23,7 @@
 | FLS 面板在线脚本市场与安装/更新 | APP `develop` 已有目录/详情/文档/安装进度/历史、源同步及历史、源 JSON 编辑、独立任务导入、外部任务源同步与失败项恢复、任务操作历史/确认/调度器恢复/归档；区别于不启动面板的本机容器脚本市场 | `/catalog`、`/detail/<id>`、`/install-options/<id>`、`/doc/<id>`、安装日志/历史、`/refresh*`、`/import-tasks*`、`/task-link*`、`/source`、`/refresh-options` | FLS `5d54e68` 加入源缓存大小限制、`cache_revision` 冲突保护、代理白名单及 `has_task_source` DTO；409 项用例/305 个 subtests及三项打包 workflow 通过。APP `6afa14c` 的 Android CI #45568326814 已通过 116 项测试、静态分析和 arm64 APK 构建；真实隔离面板验收待用户完成。它不是全量原生迁移完成证明 |
 | 依赖管理、Python/Node 运行时 | `develop` 新增原生“运行环境”页：依赖搜索/分页、核心依赖刷新、依赖安装/卸载确认、运行器检测/安装、作业日志/取消/重试/历史；本机 Python/Full 容器镜像管理仍为独立能力 | `GET /api/deps/packages?q=&page=&limit=` 返回有界已装依赖清单；`POST /api/deps/refresh` 返回核心依赖状态；`POST /api/deps/uninstall` 只接受已安装规范包名、request_id 幂等且不经 shell；`GET /api/runtime/status` 返回脱敏运行器 DTO；安装/取消/重试/日志/历史复用 `/api/deps/*` 和 `/api/install/runtime/<runtime>`，作业新增 `operation` 并兼容旧记录 | FLS `20261126.3` 增加运行环境 API、作业操作类型兼容和并发/重启后不确定包操作保护；定向依赖 API 12 项、安装恢复 44 项、运行时状态 7 项通过。APP `0.1.46+59` manager/DTO/Widget 已实现，Termux Flutter tester 不支持 Android 宿主，CI 与真实面板手动验收待完成。仍需核对安装需求语法、Web 依赖状态展示和不同部署平台运行器能力；此域完成不代表全量原生渲染完成 |
 | 系统日志、日志文件与清理 | APP 原生日志列表/详情/搜索/下载；分组删除仍由 WebView | `/api/logs`、`/api/logfile/<filename>`、`/api/logfile/<filename>/download`；`/api/logs/groups/delete` 仍为 Web 操作 | 原生读取与下载已完成；分组清理需单独补结构化确认/写入契约 |
-| 全局环境变量 | WebView | `/api/env/action` 有动作写 API；`/env`、`/env/view`、`/env/new`、`/env/edit/<key>`、`/env/delete/<key>`、`/env/import` 页面 | 补结构化变量列表/详情/验证契约；敏感值在 APP 响应、缓存、日志和复制中脱敏，更新需明确副作用 |
+| 全局环境变量 | 本批新增原生搜索/分页、新建、编辑/改名、删除、查看/替换全文、从任务导入及覆盖开关；冲突保留草稿并核对当前值，未知结果先查询原提交 | `/api/env/variables`、`/variable/<key>?reveal=1`、`/snapshot?reveal=1`、`/task-sources`、`/requests/<request_id>`、`POST /api/env/mutate`；复用原有全局变量幂等/回执服务，单值/全文/来源版本保护 | 列表及来源不返回变量值；内容显式读取、全接口 no-store、APP 不持久化草稿。后端环境 API/恢复及相关回归 41 项通过，APP manager/widget 契约待本批 CI；真实面板手动验收待用户。单值 64 KiB、全文 1 MiB、导入最多 200 项；页面离开后原提交恢复需用户保存提交 ID，尚无持久化敏感草稿 |
 | 应用配置 | WebView | `POST /api/config/apply`；`/config` 页面承担读取/编辑表单 | 核对配置 schema、只读字段、应用/重启副作用及错误回滚；需要稳定 schema/配置读 API 后再迁移表单 |
 | 代理配置、测速/质量、诊断 | WebView | `/api/proxy/test-form`、`/api/proxy/quality-form`、`/api/proxy/test/<id>`、`/api/proxy/quality/<id>`、`/api/proxy/diagnostics` 和重试；`/api/proxy/action` 写动作 | 补代理列表/详情/保存/删除结构化契约；对探测长任务支持可恢复状态、超时和有界日志；凭据不得回显/记录 |
 | 通知渠道、测试发送、投递历史 | WebView | `/api/notify/action`、`/api/notify/test/<id>`、`/api/notify/history`、`/api/notify/retry/<delivery_id>`；渠道编辑页为 HTML 表单 | 补渠道列表/编辑 schema，密钥采用只写或遮蔽语义；明确默认渠道、删除、测试副作用和投递历史分页 |
