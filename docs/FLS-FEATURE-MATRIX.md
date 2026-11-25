@@ -3,7 +3,7 @@
 ## 基线与证据范围
 
 - FLS `develop` 当前提交 `4dd1b2e` / `20261125.11`；新增异步单文件拉取 API，定向测试 55 项、46 个 subtests 通过，Module/Windows Desktop/Windows EXE workflows `45616233697`、`45616233463`、`45616233704` 全绿。
-- APP `develop` 当前提交 `ca841b5` / `0.1.40+51`，新增面板单文件拉取 UI；Android CI `45617619148` 验证格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传全绿。Termux Flutter tester 不支持 Android 宿主；真实隔离面板验收仍待用户手动完成。
+- APP `develop` 功能提交 `ca841b5` / `0.1.40+51` 新增面板单文件拉取 UI；Android CI `45617619148` 验证格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传全绿。后续文档记录提交为 `2290595`。Termux Flutter tester 不支持 Android 宿主；真实隔离面板验收仍待用户手动完成。
 - 两仓均在 `develop`。以下能力和证据按这组提交记录；CI 通过不等于真实面板手动验收。真实隔离面板验收由用户完成，不做 ADB 测试。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。

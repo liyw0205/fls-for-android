@@ -14,7 +14,7 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `ca841b5` / `0.1.40+51` | 原生单文件拉取 UI 已推送；Android CI `45617619148` 全绿，含格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传。真实隔离面板验收待用户反馈 |
+| APP (`fls-for-android`) | `develop` | `2290595` (功能提交 `ca841b5`) / `0.1.40+51` | 原生单文件拉取 UI 已推送；Android CI `45617619148`（head `ca841b5`）全绿，含格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传。真实隔离面板验收待用户反馈 |
 | FLS (`$HOME/fls`) | `develop` | `4dd1b2e` / `20261125.11` | 单文件拉取 API 已推送；55 项定向测试、46 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45616233697`、`45616233463`、`45616233704` 全绿 |
 
 2026-11-25 开始本批时同步并 fetch 核对两仓 `develop`：均无远端领先/落后提交，基线为 FLS `17c52f6`、APP `895ce76`。本批现已推送 FLS `4dd1b2e` 与 APP `ca841b5`，均仅在 `develop`；未合并 `main`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
