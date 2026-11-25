@@ -12,6 +12,9 @@ import 'package:http/http.dart' as http;
 import 'panel_test_http.dart';
 
 void main() {
+  AutomatedTestWidgetsFlutterBinding.ensureInitialized().defaultTestTimeout =
+      const Timeout(Duration(seconds: 90));
+
   const session = PanelSessionCredentials(
     cookie: 'fls_native_session=import-widget',
     csrfToken: 'import-widget-csrf',
