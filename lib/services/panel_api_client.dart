@@ -214,6 +214,108 @@ class PanelApiClient {
   Future<Object?> deleteJson(String path, Object? body) =>
       _sendJson('DELETE', path, body: body);
 
+  Future<Object?> postMultipartFile(
+    String path, {
+    required String filePath,
+    required String filename,
+    required Map<String, String> fields,
+    required void Function(int sentBytes, int totalBytes) onProgress,
+    Duration? timeout,
+  }) async {
+    final uri = _apiUri(path);
+    final multipart = http.MultipartRequest('POST', uri)
+      ..fields.addAll(fields)
+      ..files.add(
+        await http.MultipartFile.fromPath('file', filePath, filename: filename),
+      );
+    final cookie = _sessionCookie;
+    final csrf = _csrfToken;
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'X-Requested-With': 'FLS-APP',
+    };
+    if (cookie != null) headers['Cookie'] = cookie;
+    if (csrf != null) headers['X-CSRF-Token'] = csrf;
+    multipart.headers.addAll(headers);
+    final body = multipart.finalize();
+    final totalBytes = multipart.contentLength;
+    final request = http.StreamedRequest('POST', uri)
+      ..contentLength = totalBytes
+      ..headers.addAll(multipart.headers);
+    final responseFuture = _client
+        .send(request)
+        .timeout(timeout ?? requestTimeout * 60);
+    var sentBytes = 0;
+    try {
+      await for (final chunk in body) {
+        request.sink.add(chunk);
+        sentBytes += chunk.length;
+        onProgress(sentBytes, totalBytes);
+      }
+      request.sink.close();
+    } catch (_) {
+      request.sink.close();
+      rethrow;
+    }
+
+    try {
+      final response = await responseFuture;
+      final newCookie = _sessionCookieFromHeader(
+        response.headers['set-cookie'],
+      );
+      if (newCookie != null) _sessionCookie = newCookie;
+      final bytes = <int>[];
+      await for (final chunk in response.stream.timeout(requestTimeout)) {
+        if (bytes.length + chunk.length > maxResponseBytes) {
+          throw PanelApiException(
+            '面板响应超过 ${maxResponseBytes ~/ (1024 * 1024)} MB 限制',
+            statusCode: response.statusCode,
+            path: uri.path,
+          );
+        }
+        bytes.addAll(chunk);
+      }
+      final text = utf8.decode(bytes, allowMalformed: true).trim();
+      final decoded = text.isEmpty
+          ? null
+          : _decodeJson(text, response.statusCode, uri.path);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final redactValues = [if (cookie != null) cookie.split('=').last];
+        throw PanelApiException(
+          _errorMessage(
+            decoded,
+            response.statusCode,
+            redactValues,
+            redactPanelPaths: true,
+          ),
+          statusCode: response.statusCode,
+          path: uri.path,
+          data: _errorMetadata(
+            decoded,
+            redactValues,
+            includeTaskActionDetails: false,
+            includeOnlineScriptDetails: false,
+            includeScriptFileDetails: true,
+          ),
+        );
+      }
+      if (text.isEmpty) {
+        throw PanelApiException(
+          '面板返回空响应',
+          statusCode: response.statusCode,
+          path: uri.path,
+        );
+      }
+      return decoded;
+    } on TimeoutException {
+      throw PanelApiException('连接面板超时', path: uri.path);
+    } on SocketException {
+      throw PanelApiException('无法连接到面板，请检查地址和网络', path: uri.path);
+    } on http.ClientException {
+      throw PanelApiException('面板连接失败，请检查地址和网络', path: uri.path);
+    }
+  }
+
   Future<Object?> _sendJson(
     String method,
     String path, {
@@ -456,6 +558,11 @@ class PanelApiClient {
               'rename_failed',
               'invalid_url',
               'invalid_request_id',
+              'invalid_file_count',
+              'invalid_fields',
+              'missing_file',
+              'upload_staging_failed',
+              'worker_start_failed',
               'invalid_path',
               'invalid_parent',
               'invalid_proxy',
@@ -730,6 +837,7 @@ class PanelApiClient {
   bool _isScriptFilePath(String path) =>
       path == '/api/scripts/file' ||
       path.startsWith('/api/scripts/pull') ||
+      path.startsWith('/api/scripts/import') ||
       path.startsWith('/api/scripts/repo-pull') ||
       path.startsWith('/api/scripts/debug') ||
       path.startsWith('/api/scripts/rename') ||

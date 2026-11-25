@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import '../models/panel_script_file.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_script_files_manager.dart';
+import '../services/panel_script_import_manager.dart';
 import '../services/panel_script_pull_manager.dart';
+import 'panel_script_import_view.dart';
 import 'panel_script_pull_view.dart';
 
 class PanelScriptFilesView extends StatefulWidget {
@@ -14,11 +16,13 @@ class PanelScriptFilesView extends StatefulWidget {
     super.key,
     required this.manager,
     this.pullManager,
+    this.importManager,
     required this.onUnauthorized,
   });
 
   final PanelScriptFilesManager manager;
   final PanelScriptPullManager? pullManager;
+  final PanelScriptImportManager? importManager;
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
@@ -112,6 +116,21 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       ),
     );
     if (completed == true && mounted) await _load(page: _data?.page ?? 1);
+  }
+
+  Future<void> _openImport() async {
+    final manager = widget.importManager;
+    if (manager == null) return;
+    final imported = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => PanelScriptImportView(
+          manager: manager,
+          currentPath: _path,
+          onUnauthorized: widget.onUnauthorized,
+        ),
+      ),
+    );
+    if (imported == true && mounted) await _load(page: _data?.page ?? 1);
   }
 
   Future<void> _rename(PanelScriptFileItem item) async {
@@ -474,6 +493,12 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       appBar: AppBar(
         title: const Text('面板文件'),
         actions: [
+          if (widget.importManager != null)
+            IconButton(
+              tooltip: '上传与导入',
+              onPressed: _openImport,
+              icon: const Icon(Icons.file_upload_outlined),
+            ),
           if (widget.pullManager != null)
             IconButton(
               tooltip: '从 URL 拉取',

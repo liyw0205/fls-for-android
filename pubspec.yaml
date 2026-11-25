@@ -1,7 +1,7 @@
 name: fls_for_android
 description: "FLS Android client and private local panel runtime."
 publish_to: 'none'
-version: 0.1.42+55
+version: 0.1.43+56
 
 environment:
   sdk: ^3.12.2

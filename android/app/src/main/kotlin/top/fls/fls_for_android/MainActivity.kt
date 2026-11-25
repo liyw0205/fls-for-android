@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import android.provider.Settings
 import java.io.File
 import java.io.FileInputStream
@@ -125,6 +126,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickContainer" -> pickContainer(result)
+                    "pickScriptImport" -> pickScriptImport(result)
                     "copyUriToPath" -> {
                         val args = call.arguments as? Map<*, *>
                         val uri = args?.get("uri") as? String
@@ -132,7 +134,7 @@ class MainActivity : FlutterActivity() {
                         if (uri.isNullOrBlank() || path.isNullOrBlank()) {
                             result.error("invalid_args", "容器文件参数无效", null)
                         } else {
-                            copyUriToPath(uri, path, result)
+                            copyUriToPath(uri, path, result, (args["maxBytes"] as? Number)?.toLong())
                         }
                     }
                     "saveFile" -> {
@@ -399,7 +401,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_PICK_CONTAINER && requestCode != REQUEST_SAVE_CONTAINER) {
+        if (requestCode != REQUEST_PICK_CONTAINER &&
+            requestCode != REQUEST_PICK_SCRIPT_IMPORT &&
+            requestCode != REQUEST_SAVE_CONTAINER) {
             return
         }
         val result = pendingFileResult ?: return
@@ -407,12 +411,17 @@ class MainActivity : FlutterActivity() {
         pendingFileResult = null
         pendingExportPath = null
         if (resultCode != Activity.RESULT_OK || data?.data == null) {
-            result.success(if (requestCode == REQUEST_PICK_CONTAINER) null else false)
+            result.success(
+                if (requestCode == REQUEST_PICK_CONTAINER ||
+                    requestCode == REQUEST_PICK_SCRIPT_IMPORT) null else false,
+            )
             return
         }
         val uri = data.data!!
         if (requestCode == REQUEST_PICK_CONTAINER) {
             result.success(uri.toString())
+        } else if (requestCode == REQUEST_PICK_SCRIPT_IMPORT) {
+            result.success(mapOf("uri" to uri.toString(), "name" to safeDisplayName(uri)))
         } else if (exportPath != null) {
             copyFileToUri(exportPath, uri, result)
         } else {
@@ -420,20 +429,90 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun copyUriToPath(uriString: String, path: String, result: MethodChannel.Result) {
+    private fun pickScriptImport(result: MethodChannel.Result) {
+        if (pendingFileResult != null) {
+            result.error("busy", "已有文件选择操作正在进行", null)
+            return
+        }
+        pendingFileResult = result
+        pendingExportPath = null
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "text/*",
+                    "application/zip",
+                    "application/x-tar",
+                    "application/gzip",
+                    "application/x-gzip",
+                    "application/octet-stream",
+                ),
+            )
+        }
+        try {
+            startActivityForResult(intent, REQUEST_PICK_SCRIPT_IMPORT)
+        } catch (error: Exception) {
+            pendingFileResult = null
+            result.error("picker_failed", error.message, null)
+        }
+    }
+
+    private fun displayName(uri: Uri): String {
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+                    } else null
+                }
+                ?.takeIf { it.isNotBlank() }
+                ?: "upload.bin"
+        } catch (_: Exception) {
+            "upload.bin"
+        }
+    }
+
+    private fun copyUriToPath(
+        uriString: String,
+        path: String,
+        result: MethodChannel.Result,
+        maxBytes: Long? = null,
+    ) {
         Thread {
+            val target = File(path)
             try {
                 val input = contentResolver.openInputStream(Uri.parse(uriString))
-                    ?: throw IllegalStateException("无法读取所选容器文件")
-                File(path).parentFile?.mkdirs()
+                    ?: throw IllegalStateException("无法读取所选文件")
+                target.parentFile?.mkdirs()
                 input.use { source ->
-                    FileOutputStream(path).use { target -> source.copyTo(target) }
+                    FileOutputStream(target).use { output ->
+                        val buffer = ByteArray(128 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val count = source.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (maxBytes != null && total > maxBytes) {
+                                throw IllegalArgumentException("所选文件超过大小限制")
+                            }
+                            output.write(buffer, 0, count)
+                        }
+                    }
                 }
                 runOnUiThread { result.success(true) }
             } catch (error: Exception) {
+                target.delete()
                 runOnUiThread { result.error("copy_failed", error.message, null) }
             }
         }.start()
+    }
+
+    private fun safeDisplayName(uri: Uri): String {
+        val value = displayName(uri).replace('\\', '/').substringAfterLast('/')
+            .filter { it.code >= 32 && it != '\u007f' }
+        return value.takeIf { it.isNotBlank() } ?: "upload.bin"
     }
 
     private fun copyFileToUri(path: String, uri: Uri, result: MethodChannel.Result) {
@@ -460,6 +539,7 @@ class MainActivity : FlutterActivity() {
         private const val REQUEST_PICK_CONTAINER = 5701
         private const val REQUEST_SAVE_CONTAINER = 5702
         private const val REQUEST_NOTIFICATIONS = 5703
+        private const val REQUEST_PICK_SCRIPT_IMPORT = 5704
         private val REQUIRED_PATHS = listOf(
             "runtimeDir",
             "projectDir",
