@@ -206,6 +206,41 @@ void main() {
   });
 
   test(
+    'keeps online install recovery flags but never an install target path',
+    () async {
+      final client = PanelApiClient(
+        baseUrl: 'https://fls.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=signed-cookie',
+          csrfToken: 'csrf-token',
+        ),
+        client: MockClient(
+          (_) async => utf8Response(
+            '{"ok":false,"confirm_required":true,"target_exists":true,"target":"/srv/fls/scripts/demo.sh","request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","retry_allowed":true,"msg":"请确认覆盖：/srv/fls/scripts/demo.sh"}',
+            409,
+          ),
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.postJson('/api/online-scripts/install/demo', const {}),
+        throwsA(
+          isA<PanelApiException>()
+              .having((error) => error.data, 'data', {
+                'confirm_required': true,
+                'target_exists': true,
+                'request_id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'retry_allowed': true,
+                'msg': '请确认覆盖：[面板路径]',
+              })
+              .having((error) => error.message, 'message', '请确认覆盖：[面板路径]'),
+        ),
+      );
+    },
+  );
+
+  test(
     'retains safe task action recovery details on mounted panel paths',
     () async {
       final client = PanelApiClient(

@@ -11,9 +11,11 @@ import '../models/panel_task_summary.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_credential_store.dart';
 import '../services/panel_dashboard_manager.dart';
+import '../services/panel_online_scripts_manager.dart';
 import '../services/panel_records_manager.dart';
 import '../services/panel_tasks_manager.dart';
 import 'panel_collections_view.dart';
+import 'panel_online_scripts_view.dart';
 import 'panel_records_view.dart';
 import 'panel_task_detail_view.dart';
 import 'panel_task_editor_view.dart';
@@ -91,6 +93,7 @@ class PanelTasksView extends StatefulWidget {
 class _PanelTasksViewState extends State<PanelTasksView> {
   final _searchController = TextEditingController();
   final _collectionsKey = GlobalKey<PanelCollectionsViewState>();
+  final _onlineScriptsKey = GlobalKey<PanelOnlineScriptsViewState>();
   final _recordsKey = GlobalKey<PanelRecordsViewState>();
   PanelApiClient? _api;
   PanelDashboardManager? _dashboardManager;
@@ -505,8 +508,10 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       await _loadTaskPage(page: _taskPage?.page ?? 1);
     } else if (_selectedPanelTab == 2) {
       await _collectionsKey.currentState?.refresh();
-    } else {
+    } else if (_selectedPanelTab == 3) {
       await _recordsKey.currentState?.refresh();
+    } else {
+      await _onlineScriptsKey.currentState?.refresh();
     }
   }
 
@@ -994,7 +999,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
               0 => '刷新概览',
               1 => '刷新任务',
               2 => '刷新合集',
-              _ => '刷新记录',
+              3 => '刷新记录',
+              _ => '刷新脚本',
             },
             onPressed: _manager == null || _loading || _dashboardLoading
                 ? null
@@ -1069,7 +1075,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   unawaited(_loadTaskPage());
                 } else if (index == 2) {
                   unawaited(_collectionsKey.currentState?.refresh());
-                } else {
+                } else if (index == 3) {
                   unawaited(_recordsKey.currentState?.refresh());
                 }
               },
@@ -1093,6 +1099,11 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   icon: Icon(Icons.receipt_long_outlined),
                   selectedIcon: Icon(Icons.receipt_long),
                   label: '记录',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.terminal_outlined),
+                  selectedIcon: Icon(Icons.terminal),
+                  label: '脚本',
                 ),
               ],
             )
@@ -1126,6 +1137,17 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       return PanelRecordsView(
         key: _recordsKey,
         manager: PanelRecordsManager(api),
+        onUnauthorized: (error) async {
+          await _expireSession(error);
+        },
+      );
+    }
+    if (_selectedPanelTab == 4) {
+      final api = _api;
+      if (api == null) return _buildConnectionError(context);
+      return PanelOnlineScriptsView(
+        key: _onlineScriptsKey,
+        manager: PanelOnlineScriptsManager(api),
         onUnauthorized: (error) async {
           await _expireSession(error);
         },

@@ -178,13 +178,19 @@ class PanelApiClient {
             : _decodeJson(text, response.statusCode, uri.path);
         final redactValues = [if (cookie != null) cookie.split('=').last];
         throw PanelApiException(
-          _errorMessage(decoded, response.statusCode, redactValues),
+          _errorMessage(
+            decoded,
+            response.statusCode,
+            redactValues,
+            redactPanelPaths: false,
+          ),
           statusCode: response.statusCode,
           path: uri.path,
           data: _errorMetadata(
             decoded,
             redactValues,
             includeTaskActionDetails: false,
+            includeOnlineScriptDetails: false,
           ),
         );
       }
@@ -257,13 +263,21 @@ class PanelApiClient {
           if (cookie != null) cookie.split('=').last,
         ];
         throw PanelApiException(
-          _errorMessage(decoded, response.statusCode, errorRedactValues),
+          _errorMessage(
+            decoded,
+            response.statusCode,
+            errorRedactValues,
+            redactPanelPaths: _isOnlineScriptPath(Uri.parse(path).path),
+          ),
           statusCode: response.statusCode,
           path: uri.path,
           data: _errorMetadata(
             decoded,
             errorRedactValues,
             includeTaskActionDetails: _isTaskActionPath(Uri.parse(path).path),
+            includeOnlineScriptDetails: _isOnlineScriptPath(
+              Uri.parse(path).path,
+            ),
           ),
         );
       }
@@ -312,8 +326,9 @@ class PanelApiClient {
   String _errorMessage(
     Object? payload,
     int statusCode,
-    List<String> redactValues,
-  ) {
+    List<String> redactValues, {
+    required bool redactPanelPaths,
+  }) {
     if (payload is Map<String, dynamic>) {
       final rawMessage =
           (payload['msg'] ?? payload['error'] ?? payload['message'])
@@ -324,6 +339,7 @@ class PanelApiClient {
         for (final value in redactValues.where((value) => value.isNotEmpty)) {
           message = message.replaceAll(value, '[已隐藏]');
         }
+        if (redactPanelPaths) message = _redactPanelPaths(message);
         return message.length <= 500
             ? message
             : '${message.substring(0, 500)}…';
@@ -340,6 +356,7 @@ class PanelApiClient {
     Object? payload,
     List<String> redactValues, {
     required bool includeTaskActionDetails,
+    required bool includeOnlineScriptDetails,
   }) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
@@ -360,12 +377,36 @@ class PanelApiClient {
         'target_collection',
       ]);
     }
+    if (includeOnlineScriptDetails) {
+      keys.addAll(const [
+        'confirm_required',
+        'target_exists',
+        'request_id',
+        'install_id',
+        'running',
+        'accepted',
+        'retry_allowed',
+        'status',
+        'phase',
+        'msg',
+      ]);
+    }
     for (final key in keys) {
       final value = payload[key];
       if (value is bool || value is String || value is num) {
-        metadata[key] = key == 'msg' && value is String
-            ? _redactText(value, redactValues)
-            : value;
+        if (value is String &&
+            const {'request_id', 'install_id'}.contains(key) &&
+            !RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(value)) {
+          continue;
+        }
+        var safeValue = value;
+        if (value is String && const {'msg', 'status', 'phase'}.contains(key)) {
+          safeValue = _redactText(value, redactValues);
+          if (includeOnlineScriptDetails && key == 'msg') {
+            safeValue = _redactPanelPaths(safeValue as String);
+          }
+        }
+        metadata[key] = safeValue;
       }
     }
     final expectedCollections = payload['expected_collections'];
@@ -427,6 +468,9 @@ class PanelApiClient {
       path.startsWith('/api/task/action/') ||
       path.startsWith('/api/collection/add-task/');
 
+  bool _isOnlineScriptPath(String path) =>
+      path.startsWith('/api/online-scripts/');
+
   String _redactText(String text, List<String> values) {
     var result = text;
     for (final value in values.where((value) => value.isNotEmpty)) {
@@ -434,6 +478,13 @@ class PanelApiClient {
     }
     return result.length <= 500 ? result : '${result.substring(0, 500)}…';
   }
+
+  String _redactPanelPaths(String text) => text
+      .replaceAll(
+        RegExp(r'/(?:data|home|srv|opt|var|tmp|root|storage|mnt)/[^\s,，。;；]+'),
+        '[面板路径]',
+      )
+      .replaceAll(RegExp(r'[A-Za-z]:\\[^\s,，。;；]+'), '[面板路径]');
 
   Uri _apiUri(String path) {
     final relative = Uri.tryParse(path);

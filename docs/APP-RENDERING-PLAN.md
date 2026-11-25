@@ -1,6 +1,6 @@
 # FLS APP 原生渲染方案
 
-> 本文记录本机容器脚本、APP 版本更新及下一步远程面板在线脚本的原生呈现方案，不代表 APP 最终只渲染这些功能。FLS 全量原生前端目标和其余业务域迁移顺序见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md)。
+> 本文记录本机容器脚本、APP 版本更新及下一步 FLS 面板在线脚本的原生呈现方案，不代表 APP 最终只渲染这些功能。全量原生前端目标、双仓开发及合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md)。
 
 ## 目标
 
@@ -34,15 +34,27 @@
 
 ### FLS 面板在线脚本（下一纵切）
 
-这是远程/本机 FLS 面板上的市场功能，与上面的 APP 本机容器脚本是不同对象：数据、安装目标、权限和生命周期都不同，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。
+这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。FLS `origin/develop` 已拉到 `bdbbbe9`（`20261125.5`）；本地待提交候选为 `20261125.6`。APP `develop` 已有未提交原生首批实现，候选版本为 `0.1.36+41`。本批不是全量迁移；剩余范围见第 5 项及 [全量路线图](GOAL-ROADMAP.md)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 和 `tests/test_online_native_api.py` 为准。
 
-- 目录通过 FLS JSON API 搜索和分页，原生行展示名称、类型、来源、任务/文档能力及安装状态；刷新源、刷新历史和失败恢复继续调用面板 API。
-- 详情页原生呈现脚本元数据与服务端提供的 Markdown/纯文本文档。只把不可信内容作为文本/Markdown 渲染，不以内嵌 Web 页面替代原生内容。
-- 安装选项明确呈现代理、覆盖/更新和是否导入任务。任务选择由安全 DTO 提供；任务环境变量值不回传，凭据不显示在日志或错误中。
-- 安装后以服务端作业 ID 恢复状态，展示阶段、可取消状态及有界日志；下载总量可靠时显示 `已下载/总量` 和百分比，总量未知时显示已接收字节与不定进度，不推算虚假百分比。
-- 完成后的任务导入确认、调度器重载、停止/重试及安装历史恢复仍由 FLS 状态 API 驱动；页面离开或 APP 重启后可重新查询原作业，不重复提交安装。
+| 接入顺序 | 现有接口 | APP 行为与验收 |
+| --- | --- | --- |
+| 1. 浏览 | `GET` `/catalog`、`/detail/<script_id>`、`/doc/<script_id>` | 服务端搜索/分页，详情保留来源和文档入口。文档有 1 MiB 上限且限制 HTTPS 重定向；Markdown 用 `NativeMarkdownView`，HTML 与纯文本不交给 WebView。 |
+| 2. 安装/更新 | `GET` `/install-options/<script_id>`；`POST` `/install/<script_id>` | 代理与任务按服务端选项展示；支持分页选择，默认不导入或启用。覆盖文件须明确确认。区分 409 覆盖确认、已有作业运行和普通冲突；已有作业直接定位，不重复提交。 |
+| 3. 状态/恢复 | `GET` `/log/<install_id>?state_only=1`、`/install-history`；`POST` `/install-stop/<install_id>`、`/install-retry/<install_id>`、`/install-start-retry/<install_id>`、`/install-task-confirm/<install_id>`、`/install-task-retry/<install_id>`、`/install-reload/<install_id>` | 状态轻量轮询，日志按需读取有限行数。可靠总量才显示 `xx MB / xx MB · xx%`；未知总量或 Git 操作使用不定进度。轮询不得把下载完成当作安装完成；任务导入和调度器恢复分别显示。历史以 `snapshot` 分页，409 后从第一页重读。 |
+| 4. 源同步 | `POST` `/refresh`、`/refresh-recover/<request_id>`、`/refresh-confirm/<request_id>`、`/refresh-retry/<request_id>`；`GET` `/refresh-status/<request_id>`、`/refresh-history`、`/refresh-task-link-failures/<request_id>`、`/refresh-log/<request_id>` | 刷新在服务端运行，按请求 ID 恢复，成功后重新读取目录。复用源确认、重试和恢复契约；同步失败不清空现有目录。 |
+| 5. 补齐该域 | 既有 `/import-tasks*`、`/task-link*`、`/refresh-task-link*`；手工编辑源缓存目前是 Web 表单 `/online-scripts/source` | 核对后再迁移独立导入、任务关联、同步失败明细/恢复及手工编辑源缓存。手工编辑需 FLS 补有界 JSON 读写、校验与 `cache_revision` 冲突保护。 |
 
-FLS `develop` 的 `bdbbbe9` 已提供 `GET /api/online-scripts/catalog`、`detail/<script_id>`、`install-options/<script_id>`、`doc/<script_id>`，并在安装状态/历史响应中增加白名单下载进度；另提供失败安装的 JSON 重试和启动回执恢复路由。目录/详情/文档 API 禁用缓存，文档最大 1 MiB 并限制 HTTPS 重定向；任务环境变量值和代理凭据不回传。FLS 定向测试及三个打包工作流已通过，APP manager 尚未实现；字段、边界及失败语义以 FLS `tests/test_online_native_api.py` 和在线安装回归测试为准。
+APP 当前在 `PanelTasksView` 接入独立 DTO、`PanelOnlineScriptsManager` 和原生页面，复用 `PanelApiClient` 与现有 `_expireSession`。已覆盖目录/搜索/分页、详情/文档、安装选项、任务选择、覆盖确认、安装状态/日志/停止/恢复和历史；源刷新、源编辑、单独导入/任务关联仍未完成。提交前生成请求 ID，结果未知或返回 `accepted` 时先按原 ID 查状态；仅在服务端明确允许时重试。按面板隔离恢复标识，重进页面或重启后也能从历史找回作业。401 必须退出全部在线脚本嵌套页面并回到重新连接状态，不能停留在旧会话页面。
+
+写操作接入前的两项 FLS `develop` 契约修整已在本地候选中完成：`install-options` 搜索不再匹配任务环境变量值；覆盖冲突只返回 `target_exists` 和 `confirm_required`，不返回服务器目标路径。对应 Python 回归测试已补充。继续检查安装拒绝/重试、日志和历史序列化的敏感字段白名单。APP 的错误元数据扩展按在线脚本路由和字段类型白名单处理 `confirm_required`、`target_exists`、`request_id`、`install_id`、`running`、`accepted`、`retry_allowed` 等，不保留目标路径、任意返回 URL、代理凭据或变量值；原始错误不直接展示。
+
+APP 具体落地次序：
+
+1. 保持独立 `panel_online_script.dart`、`panel_online_scripts_manager.dart`、`panel_online_scripts_view.dart` 及相应测试；不改造本机容器 `OnlineScriptsManager`。
+2. 当前已在 `PanelTasksView` 增加“脚本”入口，复用面板会话。修正 401 后嵌套路由退出行为；面板变化/离开页面时继续废弃旧请求和计时器。主导航之后按全站信息架构收敛分组，避免每个新 Web 菜单都占一个底栏项。
+3. 完成在线脚本域剩余源刷新/历史、独立导入、任务关联/恢复和源缓存编辑；核对每个 Web 操作均有原生入口、失败恢复和权限/冲突处理。每个阶段可以交付在 `develop`，但不得标记未实现的 Web 操作为原生完成。
+4. DTO/manager 测试固定 API 方法、路径、查询参数、JSON body、cookie/CSRF headers、分页/快照、进度不确定状态和错误元数据白名单。Widget 测试覆盖空目录、搜索结果、无文档/HTML 文档、窄屏/大字号、确认覆盖、安装受理后断网、轮询恢复、停止、任务导入确认和源刷新失败。
+5. 随后按 [全量功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移 FLS Web 中所有适用页面、表单、状态、导航和操作，不止版本/镜像/脚本；FLS 缺 JSON 契约时先在 FLS `develop` 补 API 与回归测试，再由 APP 接入。每批执行本地检查并推送两个 `develop`，由对应 GitHub Actions 验证；不合并 `main`，直到全量原生渲染通过矩阵、CI 与用户手动验收。不做 ADB。
 
 ### APP 更新
 
@@ -54,7 +66,7 @@ FLS `develop` 的 `bdbbbe9` 已提供 `GET /api/online-scripts/catalog`、`detai
 
 - 页面只依赖结构化模型，不直接拼 HTTP 或启动 WebView。
 - `OnlineScriptsManager` 负责目录、文档、远端文件/仓库下载、路径与归档校验和可取消安装任务。
-- `PanelOnlineScriptsManager` 独立负责当前面板 session/CSRF 下的远程目录、文档、安装作业、日志、停止与恢复；不直接访问脚本文件系统。
+- 计划新增的 `PanelOnlineScriptsManager` 独立负责当前面板 session/CSRF 下的目录、文档、安装作业、日志、停止与恢复；不直接访问脚本文件系统。
 - `LocalPanelHost` 负责通过 Android MethodChannel 在现有 rootfs 中运行一次性命令；该命令不启动 `LocalPanelService`。
 - `AppUpdateManager` 负责 Release 元数据、版本比较、Compare commits 和 APK 地址校验。
 - Markdown 使用成熟解析器输出 Flutter widget，不把不可信 HTML 直接交给 WebView 渲染。
@@ -76,7 +88,7 @@ FLS `develop` 的 `bdbbbe9` 已提供 `GET /api/online-scripts/catalog`、`detai
 4. **已完成：可重复的网络边界测试**。CI 已通过无 `Content-Length` 时只显示已接收字节和不定进度，以及分块慢速传输时进度随接收字节前进的 manager/UI 测试。
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
 
-6. **当前下一步：远程面板在线脚本**。FLS `develop` 的 `bdbbbe9`（`20261125.5`）已推送，206 项定向测试和 Module/Windows Desktop/Windows EXE 工作流通过；接下来在 APP `develop` 实现独立 DTO、manager、目录/详情/任务选择/安装进度与恢复页面。完成这一纵切不代表整个 FLS Web 已迁移；继续按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 逐域实现全量原生前端。
+6. **当前纵切：FLS 面板在线脚本（部分实现，未提交）**。FLS `origin/develop` 已拉至 `bdbbbe9`（`20261125.5`），本地后端安全契约候选版本 `20261125.6`；APP 原生页面候选版本 `0.1.36+41`。本地已完成目录/详情/文档/安装与恢复的首批代码和测试，尚待检查 401 嵌套路由、跑验证、提交/推送并由 Android CI 验证。随后补齐该域剩余操作，再按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 迁移其余所有适用 Web 页面。任何单域完成都不等于全 APP 原生化，两个 `main` 在全量验收前保持不动。
 
 ### 手动验收清单
 
@@ -84,6 +96,7 @@ FLS `develop` 的 `bdbbbe9` 已提供 `GET /api/online-scripts/catalog`、`detai
 2. 在限速网络下下载，检查已接收/总量/百分比与网络面板或下载字节相符；传输期间取消，确认旧版本仍可用且没有暂存文件残留。
 3. 更新已有仓库时保留一个本地新增文件；让依赖安装失败或取消，确认上游旧文件恢复、本地文件保留、提交版本未前移、面板未启动。
 4. 在竖屏、横屏和系统大字体下检查目录、详情操作、安装进度和日志区域，无重叠且取消操作可触达。
+5. 面板页面接入后，在隔离 `develop` 面板验收目录、安装/更新、停止、任务导入和源刷新；中途断网或重启 APP，从历史恢复原作业，确认没有再次安装或重复导入。
 
 反馈时记录 APP 版本、Android 版本、容器档位、面板起始状态、网络类型/限速、执行步骤、实际进度与预期、失败日志或截图。未执行的手动项保持待验收状态，不影响继续开发和 CI 发布。
 
