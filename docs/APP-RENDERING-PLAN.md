@@ -1,6 +1,6 @@
 # FLS APP 原生渲染方案
 
-> 本文只记录在线脚本和版本更新等已迁移页面的实现方案，不代表 APP 最终只渲染这些功能。FLS 全量原生前端目标和其余业务域迁移顺序见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md)。
+> 本文记录本机容器脚本、APP 版本更新及下一步远程面板在线脚本的原生呈现方案，不代表 APP 最终只渲染这些功能。FLS 全量原生前端目标和其余业务域迁移顺序见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md)。
 
 ## 目标
 
@@ -32,6 +32,18 @@
 - 长命令输出进入可展开的终端日志区；最近日志自动滚动，用户可暂停滚动和复制日志。
 - 安装不启动 FLS 面板。需要容器运行环境；容器不存在或损坏时，操作入口转到“环境”页。
 
+### FLS 面板在线脚本（下一纵切）
+
+这是远程/本机 FLS 面板上的市场功能，与上面的 APP 本机容器脚本是不同对象：数据、安装目标、权限和生命周期都不同，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。
+
+- 目录通过 FLS JSON API 搜索和分页，原生行展示名称、类型、来源、任务/文档能力及安装状态；刷新源、刷新历史和失败恢复继续调用面板 API。
+- 详情页原生呈现脚本元数据与服务端提供的 Markdown/纯文本文档。只把不可信内容作为文本/Markdown 渲染，不以内嵌 Web 页面替代原生内容。
+- 安装选项明确呈现代理、覆盖/更新和是否导入任务。任务选择由安全 DTO 提供；任务环境变量值不回传，凭据不显示在日志或错误中。
+- 安装后以服务端作业 ID 恢复状态，展示阶段、可取消状态及有界日志；下载总量可靠时显示 `已下载/总量` 和百分比，总量未知时显示已接收字节与不定进度，不推算虚假百分比。
+- 完成后的任务导入确认、调度器重载、停止/重试及安装历史恢复仍由 FLS 状态 API 驱动；页面离开或 APP 重启后可重新查询原作业，不重复提交安装。
+
+FLS `develop` 的 `bdbbbe9` 已提供 `GET /api/online-scripts/catalog`、`detail/<script_id>`、`install-options/<script_id>`、`doc/<script_id>`，并在安装状态/历史响应中增加白名单下载进度；另提供失败安装的 JSON 重试和启动回执恢复路由。目录/详情/文档 API 禁用缓存，文档最大 1 MiB 并限制 HTTPS 重定向；任务环境变量值和代理凭据不回传。FLS 定向测试及三个打包工作流已通过，APP manager 尚未实现；字段、边界及失败语义以 FLS `tests/test_online_native_api.py` 和在线安装回归测试为准。
+
 ### APP 更新
 
 - 本机页工具栏提供 APP 更新入口，进入后显示当前版本、最新版本和变更提交。
@@ -42,6 +54,7 @@
 
 - 页面只依赖结构化模型，不直接拼 HTTP 或启动 WebView。
 - `OnlineScriptsManager` 负责目录、文档、远端文件/仓库下载、路径与归档校验和可取消安装任务。
+- `PanelOnlineScriptsManager` 独立负责当前面板 session/CSRF 下的远程目录、文档、安装作业、日志、停止与恢复；不直接访问脚本文件系统。
 - `LocalPanelHost` 负责通过 Android MethodChannel 在现有 rootfs 中运行一次性命令；该命令不启动 `LocalPanelService`。
 - `AppUpdateManager` 负责 Release 元数据、版本比较、Compare commits 和 APK 地址校验。
 - Markdown 使用成熟解析器输出 Flutter widget，不把不可信 HTML 直接交给 WebView 渲染。
@@ -62,6 +75,8 @@
 3. **已完成：原生渲染与故障恢复**。脚本和 Release Markdown 在 Flutter 原生渲染；安装可取消，依赖命令走独立 PRoot 进程，失败/取消回滚已覆盖文件。归档路径和条目数经过校验，安装日志可查看、暂停自动滚动和复制。目录、详情、更新页有窄屏、横屏、大字号与主要交互组件测试。
 4. **已完成：可重复的网络边界测试**。CI 已通过无 `Content-Length` 时只显示已接收字节和不定进度，以及分块慢速传输时进度随接收字节前进的 manager/UI 测试。
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
+
+6. **当前下一步：远程面板在线脚本**。FLS `develop` 的 `bdbbbe9`（`20261125.5`）已推送，206 项定向测试和 Module/Windows Desktop/Windows EXE 工作流通过；接下来在 APP `develop` 实现独立 DTO、manager、目录/详情/任务选择/安装进度与恢复页面。完成这一纵切不代表整个 FLS Web 已迁移；继续按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 逐域实现全量原生前端。
 
 ### 手动验收清单
 
