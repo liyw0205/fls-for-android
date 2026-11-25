@@ -68,7 +68,7 @@ void main() {
           ),
         ),
       );
-      await _pumpUntil(tester, () => find.text('最近拉取').evaluate().isNotEmpty);
+      await pumpUntilFound(tester, find.text('最近拉取'));
       expect(find.text('保存到 folder'), findsOneWidget);
 
       await tester.enterText(
@@ -84,7 +84,7 @@ void main() {
       await tester.tap(find.text('Fast relay · http').last);
       await tester.pumpAndSettle();
       await tester.tap(find.text('开始拉取'));
-      await _pumpUntil(tester, () => find.text('已完成').evaluate().isNotEmpty);
+      await pumpUntilFound(tester, find.text('已完成'));
 
       expect(find.text('script.py'), findsWidgets);
       expect(find.textContaining('100%'), findsOneWidget);
@@ -144,7 +144,7 @@ void main() {
           ),
         ),
       );
-      await _pumpUntil(tester, () => find.text('总量未知').evaluate().isNotEmpty);
+      await pumpUntilFound(tester, find.textContaining('总量未知'));
       expect(
         tester
             .widget<LinearProgressIndicator>(
@@ -154,18 +154,10 @@ void main() {
         isNull,
       );
       await tester.tap(find.byTooltip('取消拉取').last);
-      await tester.pump(const Duration(milliseconds: 50));
+      await pumpUntilFound(tester, find.text('正在取消'));
       expect(cancelCount, 1);
     },
   );
-}
-
-Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 5));
-  while (!condition() && DateTime.now().isBefore(deadline)) {
-    await tester.pump(const Duration(milliseconds: 20));
-  }
-  expect(condition(), isTrue);
 }
 
 Map<String, dynamic> _job({
