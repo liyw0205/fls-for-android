@@ -14,10 +14,10 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `2290595` (功能提交 `ca841b5`) / `0.1.40+51` | 原生单文件拉取 UI 已推送；Android CI `45617619148`（head `ca841b5`）全绿，含格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传。真实隔离面板验收待用户反馈 |
-| FLS (`$HOME/fls`) | `develop` | `4dd1b2e` / `20261125.11` | 单文件拉取 API 已推送；55 项定向测试、46 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45616233697`、`45616233463`、`45616233704` 全绿 |
+| APP (`fls-for-android`) | `develop` | `aaf3992` (功能提交 `ca841b5`) / `0.1.41+52` | 单文件拉取增加目标目录变更的明确状态；Android CI `45626774188` 全绿，含格式、分析、131 项 Flutter 测试、arm64 APK 和 develop artifact `15029326082`。真实隔离面板验收待用户反馈 |
+| FLS (`$HOME/fls`) | `develop` | `c21c1f5` / `20261125.12` | 单文件拉取增加目录身份与发布回执校验；59 项定向测试、46 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45626660446`、`45626660450`、`45626660376` 全绿。Android/Termux 本机全量 pytest 被既有备份测试依赖缺失的 `os.link` 阻断 |
 
-2026-11-25 开始本批时同步并 fetch 核对两仓 `develop`：均无远端领先/落后提交，基线为 FLS `17c52f6`、APP `895ce76`。本批现已推送 FLS `4dd1b2e` 与 APP `ca841b5`，均仅在 `develop`；未合并 `main`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
+2026-11-25 开始本批时同步并 fetch 核对两仓 `develop`：均无远端领先/落后提交，基线为 FLS `17c52f6`、APP `895ce76`。其后已推送 FLS `4dd1b2e`、`c21c1f5` 与 APP `ca841b5`、`aaf3992`，均仅在 `develop`；未合并 `main`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
 
 开发验证不发正式 tag/Release。FLS 打包工作流的手动触发也可能发布 Release，不能用它代替普通的 `develop` push 构建。APP `develop` push CI 在测试/构建通过后上传 14 天有效的 arm64 APK artifact，供用户手动验收；该产物不进入正式更新渠道。远程联调仅在隔离 FLS 实例使用候选提交，不替换稳定面板。
 
@@ -41,7 +41,7 @@ FLS `develop` 已为原生任务管理补齐 `GET /api/tasks` 安全白名单分
 
 ## 当前纵切：FLS 面板脚本文件原生化
 
-本批已在两仓 `develop` 推送面板单文件拉取：FLS `4dd1b2e` / `20261125.11` 新增异步作业、进度、取消和可恢复状态 API，定向测试 55 项及 46 个 subtests 通过，三个打包工作流全绿。APP `ca841b5` / `0.1.40+51` 新增原生拉取页、代理选择、进度显示和活动作业恢复；Android CI `45617619148` 全绿，130 项 Flutter 测试、arm64 APK 和 develop artifact 均通过。Termux 无法本地运行 Flutter tester；CI 已验证新增测试。隔离面板手动验收仍待用户。后续仍需实现 Git 仓库拉取、归档上传/导入、脚本调试及功能矩阵中其他面板域。
+本批已在两仓 `develop` 推送面板单文件拉取：FLS `4dd1b2e` / `20261125.11` 新增异步作业 API；后续 `c21c1f5` / `20261125.12` 加固目录 FD 发布、目录身份校验、inode+SHA-256 发布回执和取消状态持久化。相关定向测试 59 项及 46 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流全绿。APP `ca841b5` / `0.1.40+51` 提供原生拉取页；`aaf3992` / `0.1.41+52` 对目标目录变化给出明确失败状态。Android CI `45626774188` 全绿，131 项 Flutter 测试、arm64 APK 和 develop artifact `15029326082` 均通过。Termux 无法本地运行 Flutter tester；CI 已验证新增测试。隔离面板手动验收仍待用户。后续仍需实现 Git 仓库拉取、归档上传/导入、脚本调试及功能矩阵中其他面板域。
 
 面板在线脚本已实现目录、详情、文档、安装/更新与进度、源同步/缓存编辑、独立任务导入和恢复管理。FLS `develop` `05220cf` 新增目录/文件 JSON API：分页搜索、UTF-8 快照、revision 保存和新建；限制 2 MiB，拒绝路径穿越与符号链接。随后 `0eb515c` (`20261125.9`) 新增改名引用预览、revision 确认、operation_id 幂等、状态和继续/回滚恢复；相关 27 项定向测试与三项打包工作流全部通过。FLS `17c52f6` (`20261125.10`) 增加普通文件删除影响预览和 revision 确认，相关 37 项定向测试与三个打包工作流全绿。APP `develop` 的目录/编辑/改名/删除原生纵切已由 Android CI `45601238206` 全绿验证：格式、分析、126 项 Flutter 测试、arm64 APK 构建及 develop artifact 上传；artifact 对应精确 head SHA `3da1ce6c985908cabfaf05fa5cf80b2e2fde42fd`。文件拉取/归档导入及脚本调试仍未迁移，下一纵切需由 FLS `develop` 先补可恢复的 JSON 作业契约，再由 APP 接入；其余面板域继续按矩阵分批推进。Termux FLS 全量测试仍有 19 项环境或既有字段断言失败，不能记作全量通过。CI 不替代隔离面板手动验收，也不构成全量原生化完成证明。
 

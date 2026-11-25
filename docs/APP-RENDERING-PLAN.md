@@ -86,11 +86,11 @@ APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口�
 
 ### 当前纵切：面板脚本拉取/导入与调试
 
-FLS `develop` 基线 `17c52f6` 后已推送 `4dd1b2e` (`20261125.11`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 原本是同步 Web 表单；本批为远程单文件补了可恢复作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
+FLS `develop` 基线 `17c52f6` 后已推送 `4dd1b2e` (`20261125.11`) 和 `c21c1f5` (`20261125.12`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 原本是同步 Web 表单；本批为远程单文件补了可恢复作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
 
-**已交付单文件拉取子批：** FLS `4dd1b2e` / `20261125.11` 新增 `POST /api/scripts/pull`、`GET /api/scripts/pull/<job_id>`、`GET /api/scripts/pull-history`、`GET /api/scripts/pull-options` 和取消接口。作业以 `request_id` 幂等，限制 64 MiB，流式报告下载字节和可信 Content-Length，使用同目录暂存及不覆盖发布；历史不保存原始 URL 或代理凭据，重启后中断状态为 `unknown`，发布状态通过目标 SHA-256 核实。FLS 定向测试 55 项、46 个 subtests 已通过；Module/Windows Desktop/Windows EXE workflows `45616233697`、`45616233463`、`45616233704` 全绿。
+**已交付单文件拉取子批：** FLS `4dd1b2e` / `20261125.11` 新增异步拉取/状态/历史/代理选项/取消接口。`c21c1f5` / `20261125.12` 加固目录 FD 发布和父目录身份检查；发布恢复需同时匹配 inode 与 SHA-256，取消只有在状态落盘后才设置取消事件。作业以 `request_id` 幂等，限制 64 MiB，流式报告下载字节和可信 Content-Length，使用同目录暂存及不覆盖发布；历史不保存原始 URL 或代理凭据，重启后中断状态为 `unknown`。相关定向测试 59 项、46 个 subtests 已通过；Module/Windows Desktop/Windows EXE workflows `45626660446`、`45626660450`、`45626660376` 全绿。Termux 本机全量 pytest 被已有备份测试对 `os.link` 的平台假设阻断，不将其记为全量通过。
 
-APP `ca841b5` / `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页提供 URL 拉取入口、代理选项、下载字节进度、取消、作业轮询/恢复和成功后刷新目录；初次打开会自动选中活动作业。Android CI `45617619148` 全绿，含格式、分析、130 项 Flutter 测试、arm64 APK 构建和 develop artifact 上传。Termux 宿主的 Flutter tester 不支持 Android，因此本地 `flutter test` 不可用，以 CI 测试为准。
+APP `ca841b5` / `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页提供 URL 拉取入口、代理选项、下载字节进度、取消、作业轮询/恢复和成功后刷新目录；初次打开会自动选中活动作业。`aaf3992` / `0.1.41+52` 为 `path_changed` 错误增加明确的“目标目录已变化，未发布”状态。Android CI `45626774188` 全绿，含格式、分析、131 项 Flutter 测试、arm64 APK 构建和 develop artifact `15029326082`。Termux 宿主的 Flutter tester 不支持 Android，因此本地 `flutter test` 不可用，以 CI 测试为准。
 
 后续按以下顺序扩展该脚本域；每项均留在各自 `develop`，所有页面都完成并经矩阵/CI/用户验收前不合并 `main`：
 
