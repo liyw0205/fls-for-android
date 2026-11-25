@@ -80,37 +80,37 @@ class PanelOnlineScriptsManager {
   }
 
   static String sanitizeDiagnostic(String value) => value
-      .replaceAll(
+      .replaceAllMapped(
         RegExp(r'(https?://)[^/\s:@]+(?::[^/\s@]*)?@', caseSensitive: false),
-        r'$1[已隐藏]@',
+        (match) => '${match[1]}[已隐藏]@',
       )
-      .replaceAll(
+      .replaceAllMapped(
         RegExp(
           r'''(["']?(?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|key|secret|password|passwd|pwd|cookie)["']\s*:\s*["']?)([^"'\s,}]+)(["']?)''',
           caseSensitive: false,
         ),
-        r'$1[已隐藏]$3',
+        (match) => '${match[1]}[已隐藏]${match[3]}',
       )
-      .replaceAll(
+      .replaceAllMapped(
         RegExp(
           r'''([?&](?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|key|secret|password|passwd|pwd|authorization|cookie)=)[^&#\s<>"']+''',
           caseSensitive: false,
         ),
-        r'$1[已隐藏]',
+        (match) => '${match[1]}[已隐藏]',
       )
-      .replaceAll(
+      .replaceAllMapped(
         RegExp(
           r'(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+',
           caseSensitive: false,
         ),
-        r'$1[已隐藏]',
+        (match) => '${match[1]}[已隐藏]',
       )
-      .replaceAll(
+      .replaceAllMapped(
         RegExp(
           r'''((?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|key|secret|password|passwd|pwd|cookie)\s*[:=]\s*)[^\s,;&<>"']+''',
           caseSensitive: false,
         ),
-        r'$1[已隐藏]',
+        (match) => '${match[1]}[已隐藏]',
       );
 
   Future<Map<String, dynamic>> fetchRefreshTaskLinkFailures(

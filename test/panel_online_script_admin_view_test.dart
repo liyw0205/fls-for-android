@@ -68,15 +68,16 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('源 JSON'));
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     final editor = tester.widget<TextField>(find.byType(TextField));
     editor.controller!.text = '[{"id":"draft"}]';
     await tester.pump();
     await tester.tap(find.text('保存'));
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(find.text('缓存已被其他操作修改。当前草稿保留；可查看新版本后决定是否替换。'), findsOneWidget);
     expect(find.text('查看当前'), findsOneWidget);
@@ -93,9 +94,10 @@ void main() {
     expect(sourceReads, 2);
 
     await tester.tap(find.text('查看当前'));
-    await tester.pumpAndSettle();
+    await tester.pump();
     await tester.tap(find.text('使用服务器版本').last);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
       currentJson,
@@ -178,11 +180,14 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('任务记录'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('demo'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.textContaining('token=[已隐藏]'), findsOneWidget);
     expect(find.textContaining('private-value'), findsNothing);
