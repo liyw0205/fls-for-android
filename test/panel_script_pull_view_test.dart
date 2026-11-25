@@ -142,7 +142,8 @@ void main() {
         hasLength(1),
       );
 
-      await tester.ensureVisible(find.text('返回并刷新目录'));
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('返回并刷新目录'));
       await tester.pumpAndSettle();
       expect(find.text('远程拉取'), findsNothing);
@@ -203,8 +204,9 @@ void main() {
             .value,
         isNull,
       );
-      await pumpUntilFound(tester, find.byTooltip('取消拉取'));
-      await tester.ensureVisible(find.byTooltip('取消拉取'));
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('取消拉取'), findsOneWidget);
       await tester.tap(find.byTooltip('取消拉取'));
       await pumpUntilFound(tester, find.text('正在取消'));
       expect(cancelCount, 1);
