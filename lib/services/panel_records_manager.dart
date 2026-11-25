@@ -73,7 +73,7 @@ class PanelRecordsManager {
     }
   }
 
-  Future<List<int>> downloadLogFile(String filename) {
+  Future<List<int>> downloadLogFile(String filename) async {
     if (filename.isEmpty || filename.contains('/') || filename.contains('\\')) {
       throw ArgumentError('日志文件名无效');
     }

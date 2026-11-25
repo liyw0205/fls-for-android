@@ -542,10 +542,13 @@ class _PanelLogFileViewState extends State<PanelLogFileView> {
     ];
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          widget.file.filename,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220),
+          child: Text(
+            widget.file.filename,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         actions: [
           IconButton(
