@@ -14,6 +14,7 @@ void main() {
     'opens a panel file, compares a revision conflict, and preserves the draft',
     (tester) async {
       final putBodies = <Map<String, dynamic>>[];
+      final requests = <String>[];
       var putCount = 0;
       final api = PanelApiClient(
         baseUrl: 'https://panel.example',
@@ -22,6 +23,7 @@ void main() {
           csrfToken: 'file-csrf',
         ),
         client: MockClient((request) async {
+          requests.add('${request.method} ${request.url}');
           if (request.method == 'GET' &&
               request.url.path == '/api/scripts/tree') {
             return _jsonResponse(_tree());
@@ -66,6 +68,7 @@ void main() {
         () =>
             find.text('demo.py').evaluate().isNotEmpty &&
             find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        diagnostics: () => requests.join(' | '),
       );
       expect(find.text('demo.py'), findsOneWidget);
       await tester.tap(find.text('demo.py'));
@@ -104,6 +107,7 @@ void main() {
   testWidgets('verifies a saved draft after the write response is unknown', (
     tester,
   ) async {
+    final requests = <String>[];
     var fileReads = 0;
     final api = PanelApiClient(
       baseUrl: 'https://panel.example',
@@ -112,6 +116,7 @@ void main() {
         csrfToken: 'file-csrf',
       ),
       client: MockClient((request) async {
+        requests.add('${request.method} ${request.url}');
         if (request.url.path == '/api/scripts/tree') {
           return _jsonResponse(_tree());
         }
@@ -147,6 +152,7 @@ void main() {
       () =>
           find.text('demo.py').evaluate().isNotEmpty &&
           find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      diagnostics: () => requests.join(' | '),
     );
     await tester.tap(find.text('demo.py'));
     await _pumpUntil(tester, () {
@@ -200,7 +206,11 @@ http.Response _jsonResponse(Object value, [int status = 200]) => http.Response(
   headers: {'content-type': 'application/json'},
 );
 
-Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  String Function()? diagnostics,
+}) async {
   for (var attempt = 0; attempt < 80; attempt++) {
     if (condition()) return;
     await tester.pump(const Duration(milliseconds: 50));
@@ -215,6 +225,6 @@ Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
     'widget state did not reach the expected condition; '
     'file=${find.text("demo.py").evaluate().length}, '
     'progress=${find.byType(LinearProgressIndicator).evaluate().length}, '
-    'banners=$banners',
+    'banners=$banners, requests=${diagnostics?.call() ?? ""}',
   );
 }
