@@ -23,6 +23,7 @@ void main() {
   testWidgets('selects, uploads, resumes job state, and returns to directory', (
     tester,
   ) async {
+    debugPrint('import-widget: setup');
     final temp = await Directory.systemTemp.createTemp('fls-import-widget-');
     addTearDown(() => temp.delete(recursive: true));
     final source = File('${temp.path}/bundle.zip');
@@ -50,6 +51,7 @@ void main() {
     );
     addTearDown(api.close);
 
+    debugPrint('import-widget: pump root');
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -75,25 +77,35 @@ void main() {
         ),
       ),
     );
+    debugPrint('import-widget: tap open');
     await tester.tap(find.text('open'));
+    debugPrint('import-widget: pump route');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    debugPrint('import-widget: wait for picker');
     await pumpUntilFound(tester, find.byTooltip('选择文件'));
 
+    debugPrint('import-widget: tap picker');
     await tester.tap(find.byTooltip('选择文件'));
+    debugPrint('import-widget: wait for file');
     await pumpUntilFound(tester, find.text('bundle.zip'));
     expect(find.text('bundle.zip'), findsOneWidget);
     expect(find.text('scripts/jobs/'), findsOneWidget);
 
+    debugPrint('import-widget: tap upload');
     await tester.tap(find.text('上传并导入'));
+    debugPrint('import-widget: wait for completion');
     await pumpUntilFound(tester, find.text('已完成'));
     expect(find.text('jobs/bundle'), findsWidgets);
     expect(find.text('返回目录'), findsOneWidget);
     expect(seenPaths, contains('/api/scripts/import/${'b' * 32}'));
 
+    debugPrint('import-widget: tap return');
     await tester.tap(find.text('返回目录'));
+    debugPrint('import-widget: pump return');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    debugPrint('import-widget: done');
     expect(find.text('open'), findsOneWidget);
   });
 }
