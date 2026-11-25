@@ -92,7 +92,9 @@ void main() {
       expect(unauthorized, 0);
       expect(historyReads, greaterThanOrEqualTo(2));
       expect(
-        requests.where((item) => item.contains('/api/scripts/pull ')),
+        requests.where(
+          (item) => item == 'POST https://panel.example/api/scripts/pull',
+        ),
         hasLength(1),
       );
 
@@ -153,7 +155,8 @@ void main() {
             .value,
         isNull,
       );
-      await tester.tap(find.byTooltip('取消拉取').last);
+      await tester.ensureVisible(find.text('取消'));
+      await tester.tap(find.text('取消'));
       await pumpUntilFound(tester, find.text('正在取消'));
       expect(cancelCount, 1);
     },
