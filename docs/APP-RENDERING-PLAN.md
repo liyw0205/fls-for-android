@@ -86,7 +86,7 @@ APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口�
 
 ### 当前纵切：其余面板业务的全量原生迁移
 
-本批从已同步的 FLS `develop` 基线 `160a78a` / `20261126.1` 开始；脚本文件/归档导入、面板调试与 APP 原生页面现已分别递增开发版本，候选提交和工作流结果回填到路线图。两仓仍只在各自 `develop`；全量适用业务覆盖和用户手动验收前不合并 `main`。本机容器的镜像/脚本安装和 APP 更新仍是独立业务，不替代面板业务。
+本批从已同步的 FLS `develop` 基线 `160a78a` / `20261126.1` 开始，已推送 FLS `5c5c0ae` / `20261126.2`、APP `bfa268c` / `0.1.45+58` 和测试修正 `9b73207`。FLS 34 项定向/相关恢复测试和三项打包 workflow 全绿；APP Android CI `45683315548` 通过 142 项 Flutter 测试、静态分析及 arm64 APK 构建，develop artifact `15055777025`。APP 首轮 CI 曾发现两项 Widget 测试问题，后续修正并由上述 CI run 验证。两仓仍只在各自 `develop`；全量适用业务覆盖和用户手动验收前不合并 `main`。本机容器的镜像/脚本安装和 APP 更新仍是独立业务，不替代面板业务。
 
 FLS `fls_manager/routes/scripts/native_debug.py` 新增 `GET/POST /api/scripts/debug-runs`、`GET /api/scripts/debug-runs/<id>` 和 `POST /api/scripts/debug-runs/<id>/stop`。JSON 写入经原生 session/CSRF 保护，启动以 `request_id` 幂等、绑定脚本相对路径，并先持久化记录再启动进程；返回白名单字段和有界脱敏日志。Web GET `/scripts/debug/<path>` 的既有启动行为保持兼容，APP 不调用该路由；面板重启后无法确认的作业为 `unknown`，不允许强制停止。
 
@@ -105,7 +105,7 @@ Git 仓库拉取现已补齐 FLS JSON 作业 API，APP 原生复用拉取页并�
 3. **APP 原生调试页。** 已在文件编辑页接入“调试运行”入口、最近调试记录、状态/日志页与明确停止确认。页面退出只停止轮询；重进按 `debug_id` 恢复状态和日志。日志有界、自动滚动可暂停并可复制；失败/未知/退出码清晰呈现。FLS API 和 APP 不持久化面板绝对路径或命令到 APP 本地。
 4. **测试及全量面板覆盖。** FLS 定向测试覆盖 session/CSRF、路径越界/缺失、请求幂等与冲突、持久化失败、启动失败、停止与重启后未知状态、日志/错误脱敏和请求边界；APP manager/widget 测试覆盖请求契约、启动/恢复/显式停止、历史和窄屏。Termux Flutter tester 不支持 Android 宿主，APP 测试以推送后的 Android CI 为准。调试完成后继续按 [FLS 功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移所有适用 Web 页面、表单、状态与操作；不能把脚本/版本单域交付视为 APP 全量原生化完成。
 
-本批两仓已递增版本号；推送后运行 FLS 定向/相关回归测试与开发分支打包工作流、APP 格式/分析/Flutter 测试/arm64 CI。真实隔离面板由用户手动验收，不做 ADB；只有全量原生渲染和用户验收完成后才讨论将两个 `develop` 合并到 `main`。
+本批 FLS `develop` 推送触发 Module `45682749082`、Windows Desktop `45682748710`、Windows EXE `45682748871`，均成功；各 Release job 按分支策略跳过，未生成正式 Release。APP `develop` CI `45683315548` 格式、分析、142 项测试和 arm64 APK 构建通过，artifact `15055777025` 可供用户手动验收。真实隔离面板由用户手动验收，不做 ADB；只有全量原生渲染和用户验收完成后才讨论将两个 `develop` 合并到 `main`。
 
 ### APP 更新
 
