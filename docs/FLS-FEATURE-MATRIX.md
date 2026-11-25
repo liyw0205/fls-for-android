@@ -3,7 +3,7 @@
 ## 基线与证据范围
 
 - FLS 源码：`$HOME/fls` 的 `develop` 已更新并推送至 `bdbbbe9`（`20261125.5`）；206 项在线脚本生命周期及任务导入定向测试和 Module/Windows Desktop/Windows EXE 工作流通过。
-- APP 源码：`fls-for-android` 的 `develop` 版本为 `0.1.35+40`，包含原生历史/日志页；最近已知 Android CI `45519285447` 通过。当前仅全量迁移路线文档有待提交。真实隔离面板验收仍由用户手动完成。
+- APP 源码：`fls-for-android` 的 `develop` 版本为 `0.1.35+40`，包含原生历史/日志页；全量迁移方案已推送至 `cf20490`，Android CI `45540288551` 通过。真实隔离面板验收仍由用户手动完成。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。
 
