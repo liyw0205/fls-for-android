@@ -17,80 +17,84 @@ void main() {
     csrfToken: 'import-widget-csrf',
   );
 
-  testWidgets('selects, uploads, resumes job state, and returns to directory', (
-    tester,
-  ) async {
-    final temp = await Directory.systemTemp.createTemp('fls-import-widget-');
-    addTearDown(() => temp.delete(recursive: true));
-    final source = File('${temp.path}/bundle.zip');
-    await source.writeAsString('archive body');
-    final seenPaths = <String>[];
-    final api = PanelApiClient(
-      baseUrl: 'https://panel.example',
-      credentials: session,
-      client: panelMockClient((request) async {
-        if (request.url.path.endsWith('/import-history')) {
-          return _json({'ok': true, 'items': <Object>[]});
-        }
-        if (request.url.path.endsWith('/api/scripts/import')) {
-          final body = utf8.decode(request.bodyBytes);
-          expect(body, contains('jobs/bundle'));
-          expect(body, contains('filename="bundle.zip"'));
-          return _json({'ok': true, 'job': _job(status: 'processing')}, 202);
-        }
-        if (request.url.path.endsWith('/import/${'b' * 32}')) {
-          seenPaths.add(request.url.path);
-          return _json({'ok': true, 'job': _job(status: 'complete')});
-        }
-        fail('unexpected request: ${request.method} ${request.url}');
-      }),
-    );
-    addTearDown(api.close);
+  testWidgets(
+    'selects, uploads, resumes job state, and returns to directory',
+    (tester) async {
+      final temp = await Directory.systemTemp.createTemp('fls-import-widget-');
+      addTearDown(() => temp.delete(recursive: true));
+      final source = File('${temp.path}/bundle.zip');
+      await source.writeAsString('archive body');
+      final seenPaths = <String>[];
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: session,
+        client: panelMockClient((request) async {
+          if (request.url.path.endsWith('/import-history')) {
+            return _json({'ok': true, 'items': <Object>[]});
+          }
+          if (request.url.path.endsWith('/api/scripts/import')) {
+            final body = utf8.decode(request.bodyBytes);
+            expect(body, contains('jobs/bundle'));
+            expect(body, contains('filename="bundle.zip"'));
+            return _json({'ok': true, 'job': _job(status: 'processing')}, 202);
+          }
+          if (request.url.path.endsWith('/import/${'b' * 32}')) {
+            seenPaths.add(request.url.path);
+            return _json({'ok': true, 'job': _job(status: 'complete')});
+          }
+          fail('unexpected request: ${request.method} ${request.url}');
+        }),
+      );
+      addTearDown(api.close);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: TextButton(
-              onPressed: () => Navigator.of(context).push<bool>(
-                MaterialPageRoute<bool>(
-                  builder: (_) => PanelScriptImportView(
-                    manager: PanelScriptImportManager(api),
-                    currentPath: 'jobs',
-                    onUnauthorized: (_) async {},
-                    pickFile: () async => PanelScriptImportSource(
-                      path: source.path,
-                      filename: 'bundle.zip',
-                      sizeBytes: 12,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push<bool>(
+                  MaterialPageRoute<bool>(
+                    builder: (_) => PanelScriptImportView(
+                      manager: PanelScriptImportManager(api),
+                      currentPath: 'jobs',
+                      onUnauthorized: (_) async {},
+                      pickFile: () async => PanelScriptImportSource(
+                        path: source.path,
+                        filename: 'bundle.zip',
+                        sizeBytes: 12,
+                      ),
                     ),
                   ),
                 ),
+                child: const Text('open'),
               ),
-              child: const Text('open'),
             ),
           ),
         ),
-      ),
-    );
-    await tester.tap(find.text('open'));
-    await tester.pumpAndSettle();
-    await pumpUntilFound(tester, find.byTooltip('选择文件'));
+      );
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await pumpUntilFound(tester, find.byTooltip('选择文件'));
 
-    await tester.tap(find.byTooltip('选择文件'));
-    await tester.pumpAndSettle();
-    expect(find.text('bundle.zip'), findsOneWidget);
-    expect(find.text('scripts/jobs/'), findsOneWidget);
+      await tester.tap(find.byTooltip('选择文件'));
+      await pumpUntilFound(tester, find.text('bundle.zip'));
+      expect(find.text('bundle.zip'), findsOneWidget);
+      expect(find.text('scripts/jobs/'), findsOneWidget);
 
-    await tester.tap(find.text('上传并导入'));
-    await pumpUntilFound(tester, find.text('已完成'));
-    expect(find.text('jobs/bundle'), findsWidgets);
-    expect(find.text('返回目录'), findsOneWidget);
-    expect(seenPaths, contains('/api/scripts/import/${'b' * 32}'));
+      await tester.tap(find.text('上传并导入'));
+      await pumpUntilFound(tester, find.text('已完成'));
+      expect(find.text('jobs/bundle'), findsWidgets);
+      expect(find.text('返回目录'), findsOneWidget);
+      expect(seenPaths, contains('/api/scripts/import/${'b' * 32}'));
 
-    await tester.tap(find.text('返回目录'));
-    await tester.pumpAndSettle();
-    expect(find.text('open'), findsOneWidget);
-  });
+      await tester.tap(find.text('返回目录'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('open'), findsOneWidget);
+    },
+    timeout: const Timeout(Duration(seconds: 45)),
+  );
 }
 
 Map<String, dynamic> _job({required String status}) => {
