@@ -65,17 +65,21 @@ void main() {
         home: PanelOnlineScriptAdminView(
           manager: PanelOnlineScriptsManager(api),
           onUnauthorized: (_) async {},
+          initialTabIndex: 1,
         ),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.text('源 JSON'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
 
     final editor = tester.widget<TextField>(find.byType(TextField));
+    expect(editor.controller!.text, oldJson);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存'))
+          .onPressed,
+      isNotNull,
+    );
     editor.controller!.text = '[{"id":"draft"}]';
     await tester.pump();
     await tester.tap(find.text('保存'));
@@ -179,16 +183,15 @@ void main() {
         home: PanelOnlineScriptAdminView(
           manager: PanelOnlineScriptsManager(api),
           onUnauthorized: (_) async {},
+          initialTabIndex: 2,
         ),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.text('任务记录'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('demo'), findsOneWidget);
     await tester.tap(find.text('demo').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));

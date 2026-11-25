@@ -10,13 +10,16 @@ class PanelOnlineScriptAdminView extends StatelessWidget {
     super.key,
     required this.manager,
     required this.onUnauthorized,
+    this.initialTabIndex = 0,
   });
 
   final PanelOnlineScriptsManager manager;
   final Future<void> Function(Object error) onUnauthorized;
+  final int initialTabIndex;
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
+    initialIndex: initialTabIndex,
     length: 3,
     child: Scaffold(
       appBar: AppBar(
