@@ -14,8 +14,8 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `3b5b3e0` / `0.1.42+55` | Android CI `45646405352` 全绿：格式、分析、133 项 Flutter 测试、arm64 APK 和 develop artifact `15039340837` 均通过。Termux 本地 Flutter tester 不支持 Android 宿主；隔离面板手动验收待用户反馈 |
-| FLS (`$HOME/fls`) | `develop` | `1bce91e` / `20261125.13` | 新增 Git 仓库异步作业 API；26 项相关测试、2 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45638619678`、`45638619753`、`45638619664` 全绿。Termux 全量 pytest 未通过：20 项失败，包含 `os.link` 不可用及隔离临时目录、备份/启动/日志用例；1316 项通过、1111 个 subtests 通过。相关脚本域定向测试通过 |
+| APP (`fls-for-android`) | `develop` | `3b7b51c` / `0.1.44+57` | Android CI `45671935279` 全绿：格式、分析、137 项 Flutter 测试、arm64 APK 和 develop artifact `15051060616` 均通过。Termux 本地 Flutter tester 不支持 Android 宿主；隔离面板手动验收待用户反馈 |
+| FLS (`$HOME/fls`) | `develop` | `160a78a` / `20261126.1` | 新增本机文件/归档导入异步作业 API；脚本导入相关测试 39 项及 4 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45654317029`、`45654316801`、`45654316897` 全绿。隔离面板手动验收待用户反馈 |
 
 2026-11-25 开始本批时同步并 fetch 核对两仓 `develop`：均无远端领先/落后提交，基线为 FLS `17c52f6`、APP `895ce76`。其后已推送 FLS `4dd1b2e`、`c21c1f5` 与 APP `ca841b5`、`aaf3992`，均仅在 `develop`；未合并 `main`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
 
