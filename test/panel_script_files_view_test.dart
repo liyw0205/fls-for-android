@@ -205,5 +205,16 @@ Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
     if (condition()) return;
     await tester.pump(const Duration(milliseconds: 50));
   }
-  fail('widget state did not reach the expected condition');
+  final banners = tester
+      .widgetList<MaterialBanner>(find.byType(MaterialBanner))
+      .map((banner) => banner.content)
+      .whereType<Text>()
+      .map((text) => text.data)
+      .join(' | ');
+  fail(
+    'widget state did not reach the expected condition; '
+    'file=${find.text("demo.py").evaluate().length}, '
+    'progress=${find.byType(LinearProgressIndicator).evaluate().length}, '
+    'banners=$banners',
+  );
 }
