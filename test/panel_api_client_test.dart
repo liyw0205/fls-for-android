@@ -278,6 +278,48 @@ void main() {
     );
   });
 
+  test('keeps dependency recovery metadata and redacts panel paths', () async {
+    final client = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=signed-cookie',
+        csrfToken: 'csrf-token',
+      ),
+      client: MockClient(
+        (_) async => utf8Response(
+          jsonEncode({
+            'ok': false,
+            'install_id': 'a' * 32,
+            'kind': 'dependency',
+            'operation': 'uninstall',
+            'package': 'requests',
+            'status': 'unknown',
+            'retry_confirmation_required': true,
+            'error': 'log /srv/fls/log/deps-uninstall.log',
+            'private_field': '/srv/fls/private',
+          }),
+          503,
+        ),
+      ),
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.getJson('/api/deps/install-log/${'a' * 32}'),
+      throwsA(
+        isA<PanelApiException>().having((error) => error.data, 'data', {
+          'install_id': 'a' * 32,
+          'kind': 'dependency',
+          'operation': 'uninstall',
+          'package': 'requests',
+          'status': 'unknown',
+          'retry_confirmation_required': true,
+          'error': 'log [面板路径]',
+        }),
+      ),
+    );
+  });
+
   test(
     'retains safe task action recovery details on mounted panel paths',
     () async {

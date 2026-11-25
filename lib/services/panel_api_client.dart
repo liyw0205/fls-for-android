@@ -192,6 +192,7 @@ class PanelApiClient {
             includeTaskActionDetails: false,
             includeOnlineScriptDetails: false,
             includeScriptFileDetails: false,
+            includeDependencyDetails: false,
           ),
         );
       }
@@ -296,6 +297,7 @@ class PanelApiClient {
             includeTaskActionDetails: false,
             includeOnlineScriptDetails: false,
             includeScriptFileDetails: true,
+            includeDependencyDetails: false,
           ),
         );
       }
@@ -373,9 +375,7 @@ class PanelApiClient {
             decoded,
             response.statusCode,
             errorRedactValues,
-            redactPanelPaths:
-                _isOnlineScriptPath(Uri.parse(path).path) ||
-                _isScriptFilePath(Uri.parse(path).path),
+            redactPanelPaths: _isSensitivePanelPath(Uri.parse(path).path),
           ),
           statusCode: response.statusCode,
           path: uri.path,
@@ -387,6 +387,7 @@ class PanelApiClient {
               Uri.parse(path).path,
             ),
             includeScriptFileDetails: _isScriptFilePath(Uri.parse(path).path),
+            includeDependencyDetails: _isDependencyPath(Uri.parse(path).path),
           ),
         );
       }
@@ -462,6 +463,7 @@ class PanelApiClient {
     required bool includeTaskActionDetails,
     required bool includeOnlineScriptDetails,
     required bool includeScriptFileDetails,
+    required bool includeDependencyDetails,
   }) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
@@ -507,6 +509,34 @@ class PanelApiClient {
     }
     if (includeScriptFileDetails) {
       keys.addAll(const ['code', 'msg', 'replayed']);
+    }
+    if (includeDependencyDetails) {
+      keys.addAll(const [
+        'ok',
+        'request_id',
+        'install_id',
+        'original_id',
+        'kind',
+        'operation',
+        'package',
+        'retry_of',
+        'retried_by',
+        'status',
+        'status_label',
+        'running',
+        'returncode',
+        'error',
+        'msg',
+        'receipt_pending',
+        'retry_confirmation_required',
+        'retry_available',
+        'recovery_available',
+        'confirmation_required',
+        'cancel_status',
+        'cancel_status_label',
+        'cancel_request_id',
+        'cancel_error',
+      ]);
     }
     for (final key in keys) {
       final value = payload[key];
@@ -583,10 +613,72 @@ class PanelApiClient {
             }.contains(value)) {
           continue;
         }
+        if (includeDependencyDetails && value is String) {
+          if (const {
+                'request_id',
+                'install_id',
+                'original_id',
+                'retry_of',
+                'retried_by',
+                'cancel_request_id',
+              }.contains(key) &&
+              !RegExp(r'^[A-Za-z0-9_-]{1,80}$').hasMatch(value)) {
+            continue;
+          }
+          if (key == 'kind' &&
+              !const {'dependency', 'runtime'}.contains(value)) {
+            continue;
+          }
+          if (key == 'operation' &&
+              !const {'install', 'uninstall'}.contains(value)) {
+            continue;
+          }
+          if (key == 'status' &&
+              !const {
+                'prepared',
+                'running',
+                'succeeded',
+                'failed',
+                'unknown',
+                'cancelled',
+                'missing',
+                'start_failed',
+                'unreadable',
+                'original_running',
+                'not_started',
+              }.contains(value)) {
+            continue;
+          }
+          if (key == 'cancel_status' &&
+              !const {
+                '',
+                'requested',
+                'cancelled',
+                'completed',
+                'failed',
+                'unknown',
+              }.contains(value)) {
+            continue;
+          }
+        }
         var safeValue = value;
-        if (value is String && const {'msg', 'status', 'phase'}.contains(key)) {
+        if (value is String &&
+            const {
+              'msg',
+              'status',
+              'phase',
+              'error',
+              'status_label',
+              'cancel_status_label',
+              'cancel_error',
+              'package',
+            }.contains(key)) {
           safeValue = _redactText(value, redactValues);
           if (includeOnlineScriptDetails && key == 'msg') {
+            safeValue = _redactPanelPaths(safeValue as String);
+          }
+          if (includeDependencyDetails &&
+              const {'msg', 'error', 'cancel_error'}.contains(key)) {
             safeValue = _redactPanelPaths(safeValue as String);
           }
         }
@@ -833,6 +925,16 @@ class PanelApiClient {
 
   bool _isOnlineScriptPath(String path) =>
       path.startsWith('/api/online-scripts/');
+
+  bool _isDependencyPath(String path) =>
+      path.startsWith('/api/deps/') ||
+      path.startsWith('/api/runtime/') ||
+      path.startsWith('/api/install/runtime/');
+
+  bool _isSensitivePanelPath(String path) =>
+      _isOnlineScriptPath(path) ||
+      _isScriptFilePath(path) ||
+      _isDependencyPath(path);
 
   bool _isScriptFilePath(String path) =>
       path == '/api/scripts/file' ||

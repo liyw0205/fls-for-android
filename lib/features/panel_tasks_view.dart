@@ -13,6 +13,7 @@ import '../services/panel_credential_store.dart';
 import '../services/panel_dashboard_manager.dart';
 import '../services/panel_online_scripts_manager.dart';
 import '../services/panel_records_manager.dart';
+import '../services/panel_runtime_deps_manager.dart';
 import '../services/panel_script_files_manager.dart';
 import '../services/panel_script_import_manager.dart';
 import '../services/panel_script_pull_manager.dart';
@@ -21,6 +22,7 @@ import '../services/panel_tasks_manager.dart';
 import 'panel_collections_view.dart';
 import 'panel_online_scripts_view.dart';
 import 'panel_records_view.dart';
+import 'panel_runtime_deps_view.dart';
 import 'panel_script_files_view.dart';
 import 'panel_task_detail_view.dart';
 import 'panel_task_editor_view.dart';
@@ -972,6 +974,21 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     if (mounted && _manager != null) await _refresh();
   }
 
+  Future<void> _openRuntimeDependencies() async {
+    final api = _api;
+    if (api == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelRuntimeDepsView(
+          manager: PanelRuntimeDepsManager(api),
+          onUnauthorized: (error) async {
+            await _expireSession(error);
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _openPanelFiles() async {
     final api = _api;
     if (api == null) return;
@@ -1039,6 +1056,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
             tooltip: '面板选项',
             onSelected: (value) async {
               if (value == 'auth') await _signIn();
+              if (value == 'runtime-deps') await _openRuntimeDependencies();
               if (value == 'logout') {
                 final api = _api;
                 if (api != null) {
@@ -1070,6 +1088,11 @@ class _PanelTasksViewState extends State<PanelTasksView> {
               }
             },
             itemBuilder: (_) => [
+              if (_hasCredential && _api != null)
+                const PopupMenuItem(
+                  value: 'runtime-deps',
+                  child: Text('依赖与运行器'),
+                ),
               const PopupMenuItem(value: 'auth', child: Text('更换 Token')),
               if (_hasCredential)
                 const PopupMenuItem(value: 'logout', child: Text('断开原生连接')),
