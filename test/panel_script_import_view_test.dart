@@ -24,10 +24,10 @@ void main() {
     tester,
   ) async {
     debugPrint('import-widget: setup');
-    final temp = await Directory.systemTemp.createTemp('fls-import-widget-');
-    addTearDown(() => temp.delete(recursive: true));
+    final temp = Directory.systemTemp.createTempSync('fls-import-widget-');
+    addTearDown(() => temp.deleteSync(recursive: true));
     final source = File('${temp.path}/bundle.zip');
-    await source.writeAsString('archive body');
+    source.writeAsStringSync('archive body');
     final seenPaths = <String>[];
     final api = PanelApiClient(
       baseUrl: 'https://panel.example',
