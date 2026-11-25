@@ -283,6 +283,59 @@ void main() {
       );
     },
   );
+
+  testWidgets('shows a completed Git repository with a full progress bar', (
+    tester,
+  ) async {
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=pull-session',
+        csrfToken: 'pull-csrf',
+      ),
+      client: panelMockClient((request) async {
+        if (request.url.path == '/api/scripts/pull-options') {
+          return _jsonResponse({'ok': true, 'proxies': []});
+        }
+        if (request.url.path == '/api/scripts/pull-history') {
+          return _jsonResponse({'ok': true, 'items': <Object>[]});
+        }
+        if (request.url.path == '/api/scripts/repo-pull-history') {
+          return _jsonResponse({
+            'ok': true,
+            'items': [_repoJob(status: 'complete')],
+          });
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      }),
+    );
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelScriptPullView(
+          manager: PanelScriptPullManager(api),
+          currentPath: '',
+          onUnauthorized: (_) async {},
+        ),
+      ),
+    );
+    await pumpUntilFound(tester, find.text('最近拉取'));
+
+    await tester.tap(find.text('folder/repo'));
+    await tester.pump();
+
+    expect(find.text('已完成'), findsOneWidget);
+    expect(find.textContaining('个对象'), findsNothing);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byType(LinearProgressIndicator).last,
+          )
+          .value,
+      1,
+    );
+  });
 }
 
 Map<String, dynamic> _job({
@@ -314,14 +367,19 @@ http.Response _jsonResponse(Object body, [int status = 200]) => http.Response(
   headers: {'content-type': 'application/json'},
 );
 
-Map<String, dynamic> _repoJob() => {
+Map<String, dynamic> _repoJob({String status = 'cloning'}) => {
   'id': 'd' * 32,
   'request_id': 'c' * 32,
   'kind': 'repo',
   'path': 'folder/repo',
   'source_host': 'example.invalid',
-  'status': 'cloning',
-  'progress': {'phase': 'receiving', 'current': 1, 'total': 4, 'label': '接收对象'},
+  'status': status,
+  'progress': {
+    'phase': status == 'complete' ? 'complete' : 'receiving',
+    'current': status == 'complete' ? 4 : 1,
+    'total': 4,
+    'label': '接收对象',
+  },
   'error_code': '',
   'created_at': '2026-11-25T10:00:00+08:00',
   'updated_at': '2026-11-25T10:00:01+08:00',

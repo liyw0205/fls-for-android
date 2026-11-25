@@ -310,7 +310,7 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
   Widget _progress(PanelScriptPullJob job) {
     final progress = job.progress;
     if (job.kind == 'repo') {
-      final count = progress.current == null
+      final count = job.isComplete || progress.current == null
           ? ''
           : progress.objectTotal == null
           ? ' · ${progress.current} 个对象'
@@ -320,9 +320,16 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
         children: [
           Text(_statusLabel(job)),
           const SizedBox(height: 8),
-          const LinearProgressIndicator(minHeight: 4),
+          LinearProgressIndicator(
+            value: job.isComplete
+                ? 1
+                : job.isActive
+                ? null
+                : 0,
+            minHeight: 4,
+          ),
           const SizedBox(height: 6),
-          Text('${progress.label}$count'),
+          Text('${job.isComplete ? '已完成' : progress.label}$count'),
         ],
       );
     }

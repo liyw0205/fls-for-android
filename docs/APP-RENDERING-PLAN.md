@@ -92,7 +92,7 @@ FLS `develop` 基线 `17c52f6` 后已推送 `4dd1b2e` (`20261125.11`) 和 `c21c1
 
 APP `ca841b5` / `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页提供 URL 拉取入口、代理选项、下载字节进度、取消、作业轮询/恢复和成功后刷新目录；初次打开会自动选中活动作业。`aaf3992` / `0.1.41+52` 为 `path_changed` 错误增加明确的“目标目录已变化，未发布”状态。Android CI `45626774188` 全绿，含格式、分析、131 项 Flutter 测试、arm64 APK 构建和 develop artifact `15029326082`。Termux 宿主的 Flutter tester 不支持 Android，因此本地 `flutter test` 不可用，以 CI 测试为准。
 
-Git 仓库拉取现已在本批补齐 FLS JSON 作业 API，APP 原生复用拉取页并以模式切换区分单文件和 Git 仓库。每项均留在各自 `develop`，脚本域剩余功能和全 APP 功能矩阵/CI/用户验收完成前不合并 `main`：
+Git 仓库拉取现已补齐 FLS JSON 作业 API，APP 原生复用拉取页并以模式切换区分单文件和 Git 仓库。已 fetch 核对 FLS `develop` 为 `1bce91e` / `20261125.13`，其 26 项相关测试、2 个 subtests 和三项打包 workflow 均通过；APP 候选为 `0.1.42+54`，含对象阶段/不定进度与完成态满格显示，格式和静态分析通过，Flutter 测试及 arm64 构建等待本批 Android CI。Termux Flutter tester 不支持 Android 宿主。两仓均只在各自 `develop` 推进；脚本域剩余功能、全 APP 矩阵/CI 和用户验收完成前不合并 `main`：
 
 1. **本地上传/归档导入。** APP 用 multipart 上传普通文件、ZIP、TAR、TGZ；传输上传进度由 APP 展示，服务端完成安全提取/写入后用作业状态确认。复用现有路径/归档安全检查；限制上传体积、文件数和展开总量，拒绝链接、特殊文件、路径穿越。默认不覆盖已存在目标，冲突需显式确认；在同目录 staging 后原子发布，失败清理 staging，目录中已有文件不被部分覆盖。
 2. **调试运行。** 新增明确的 POST 启动、状态/历史、停止和有界日志 API；启动使用 request ID 幂等，记录只能包含相对脚本路径、状态/退出码和脱敏错误，日志限制行数/字节且不得向 APP 返回服务器绝对路径。服务重启导致进程结果无法确认时表达 `unknown`，不能谎报停止或成功。
