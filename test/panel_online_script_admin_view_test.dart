@@ -68,10 +68,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PanelOnlineScriptAdminView(
+        home: PanelOnlineScriptSourceEditorView(
           manager: PanelOnlineScriptsManager(api),
           onUnauthorized: (_) async {},
-          initialTabIndex: 1,
         ),
       ),
     );
@@ -186,10 +185,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PanelOnlineScriptAdminView(
+        home: PanelOnlineScriptTaskHistoryView(
           manager: PanelOnlineScriptsManager(api),
           onUnauthorized: (_) async {},
-          initialTabIndex: 2,
         ),
       ),
     );

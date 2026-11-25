@@ -10,16 +10,13 @@ class PanelOnlineScriptAdminView extends StatelessWidget {
     super.key,
     required this.manager,
     required this.onUnauthorized,
-    this.initialTabIndex = 0,
   });
 
   final PanelOnlineScriptsManager manager;
   final Future<void> Function(Object error) onUnauthorized;
-  final int initialTabIndex;
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    initialIndex: initialTabIndex,
     length: 3,
     child: Scaffold(
       appBar: AppBar(
@@ -35,8 +32,14 @@ class PanelOnlineScriptAdminView extends StatelessWidget {
       body: TabBarView(
         children: [
           _RefreshTab(manager: manager, onUnauthorized: onUnauthorized),
-          _SourceEditorTab(manager: manager, onUnauthorized: onUnauthorized),
-          _TaskHistoryTab(manager: manager, onUnauthorized: onUnauthorized),
+          PanelOnlineScriptSourceEditorView(
+            manager: manager,
+            onUnauthorized: onUnauthorized,
+          ),
+          PanelOnlineScriptTaskHistoryView(
+            manager: manager,
+            onUnauthorized: onUnauthorized,
+          ),
         ],
       ),
     ),
@@ -581,17 +584,23 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
   }
 }
 
-class _SourceEditorTab extends StatefulWidget {
-  const _SourceEditorTab({required this.manager, required this.onUnauthorized});
+class PanelOnlineScriptSourceEditorView extends StatefulWidget {
+  const PanelOnlineScriptSourceEditorView({
+    super.key,
+    required this.manager,
+    required this.onUnauthorized,
+  });
 
   final PanelOnlineScriptsManager manager;
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
-  State<_SourceEditorTab> createState() => _SourceEditorTabState();
+  State<PanelOnlineScriptSourceEditorView> createState() =>
+      _PanelOnlineScriptSourceEditorViewState();
 }
 
-class _SourceEditorTabState extends State<_SourceEditorTab> {
+class _PanelOnlineScriptSourceEditorViewState
+    extends State<PanelOnlineScriptSourceEditorView> {
   final _controller = TextEditingController();
   String _revision = '';
   String? _conflictRevision;
@@ -846,17 +855,23 @@ class _SourceEditorTabState extends State<_SourceEditorTab> {
 
 bool _validRequestId(String value) => RegExp(r'^[a-f0-9]{32}$').hasMatch(value);
 
-class _TaskHistoryTab extends StatefulWidget {
-  const _TaskHistoryTab({required this.manager, required this.onUnauthorized});
+class PanelOnlineScriptTaskHistoryView extends StatefulWidget {
+  const PanelOnlineScriptTaskHistoryView({
+    super.key,
+    required this.manager,
+    required this.onUnauthorized,
+  });
 
   final PanelOnlineScriptsManager manager;
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
-  State<_TaskHistoryTab> createState() => _TaskHistoryTabState();
+  State<PanelOnlineScriptTaskHistoryView> createState() =>
+      _PanelOnlineScriptTaskHistoryViewState();
 }
 
-class _TaskHistoryTabState extends State<_TaskHistoryTab> {
+class _PanelOnlineScriptTaskHistoryViewState
+    extends State<PanelOnlineScriptTaskHistoryView> {
   String _kind = 'import';
   List<Map<String, dynamic>> _items = const [];
   String? _error;
