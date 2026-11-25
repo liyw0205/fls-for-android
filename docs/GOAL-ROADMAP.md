@@ -14,8 +14,8 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `aaf3992` (功能提交 `ca841b5`) / `0.1.41+52` | 单文件拉取增加目标目录变更的明确状态；Android CI `45626774188` 全绿，含格式、分析、131 项 Flutter 测试、arm64 APK 和 develop artifact `15029326082`。真实隔离面板验收待用户反馈 |
-| FLS (`$HOME/fls`) | `develop` | `c21c1f5` / `20261125.12` | 单文件拉取增加目录身份与发布回执校验；59 项定向测试、46 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45626660446`、`45626660450`、`45626660376` 全绿。Android/Termux 本机全量 pytest 被既有备份测试依赖缺失的 `os.link` 阻断 |
+| APP (`fls-for-android`) | `develop` | `0.1.42+53`（Git 仓库拉取原生 UI，本批提交待 CI） | manager/widget 契约已扩展单文件与 Git 仓库两类作业；本机格式检查、静态分析通过。Termux Flutter tester 不支持 Android 宿主，本批测试待 Android CI。用户手动验收待反馈 |
+| FLS (`$HOME/fls`) | `develop` | `1bce91e` / `20261125.13` | 新增 Git 仓库异步作业 API；26 项相关测试、2 个 subtests 通过；Module、Windows Desktop、Windows EXE 工作流 `45638619678`、`45638619753`、`45638619664` 全绿。Termux 全量 pytest 未通过：20 项失败，包含 `os.link` 不可用及隔离临时目录、备份/启动/日志用例；1316 项通过、1111 个 subtests 通过。相关脚本域定向测试通过 |
 
 2026-11-25 开始本批时同步并 fetch 核对两仓 `develop`：均无远端领先/落后提交，基线为 FLS `17c52f6`、APP `895ce76`。其后已推送 FLS `4dd1b2e`、`c21c1f5` 与 APP `ca841b5`、`aaf3992`，均仅在 `develop`；未合并 `main`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
 
@@ -38,6 +38,8 @@ FLS `5d54e68` 在已有目录、文档、安装进度和失败重试 API 上，�
 合集管理已开始原生迁移：FLS `develop` 新增分页/搜索合集列表和合集成员/候选任务读取 API，白名单响应不包含任务环境变量等敏感配置；删除和加入操作由现有 revision/expected-state 校验保护。APP `develop` 新增合集列表、详情、创建/编辑/删除、添加/移出任务，并接入面板主导航。FLS 合集及恢复定向测试 37 项通过；APP Android CI 的 88 项测试、静态分析和 arm64 Release APK 构建通过。Termux 不支持 Flutter tester，因此以 CI 结果为准。该域尚未完成真实测试面板验收，也未覆盖 Web 的复制与全部批量操作。
 
 FLS `develop` 已为原生任务管理补齐 `GET /api/tasks` 安全白名单分页/搜索/状态筛选/排序，`pin` JSON 写入改为显式目标状态并支持 request_id；批量合集移出接受 expected membership。APP `develop` 原生任务页已接入服务端分页、搜索、运行/启用筛选、Web 对应排序、跨页选择、单项和批量启停/运行/停止/复制/删除/置顶，以及批量加入/移出合集。批量写入显示逐项结果，破坏性或执行操作二次确认；网络结果未知保留原 request_id 恢复，保存后从后端刷新列表。该后端纵切在此前 42 项定向测试和 APP manager/widget CI 中验证。
+
+当前脚本域继续在 develop 纵向推进：FLS `1bce91e` / `20261125.13` 新增异步 Git clone、对象阶段进度、取消、历史/状态、幂等和重启恢复，并用暂存目录及 no-replace 原子发布；APP `0.1.42+53` 在既有原生拉取页中增加单文件/Git 模式、对象计数和不定进度呈现。Git 传输不提供可信文件字节总量，因此 APP 不展示伪造百分比。归档导入与脚本调试仍是脚本域后续任务；其后仍按完整功能矩阵迁移其他面板业务。本次只更新 `develop`，不合并 `main`。
 
 ## 当前纵切：FLS 面板脚本文件原生化
 

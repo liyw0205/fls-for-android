@@ -44,27 +44,74 @@ class PanelScriptPullManager {
     return _readJob(payload, '/api/scripts/pull');
   }
 
+  Future<PanelScriptPullJob> submitRepository({
+    required String url,
+    required String path,
+    required String requestId,
+    String proxyId = '',
+  }) async {
+    _requirePath(path);
+    if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(requestId)) {
+      throw ArgumentError.value(requestId, 'requestId');
+    }
+    const endpoint = '/api/scripts/repo-pull';
+    final payload = await _api.postJson(endpoint, {
+      'url': url.trim(),
+      'path': path,
+      'proxy_id': proxyId,
+      'request_id': requestId,
+    });
+    return _readJob(payload, endpoint);
+  }
+
   Future<PanelScriptPullHistory> fetchHistory({int limit = 20}) async {
     if (limit < 1 || limit > 100) throw ArgumentError.value(limit, 'limit');
     final path = '/api/scripts/pull-history?limit=$limit';
     try {
-      return PanelScriptPullHistory.fromJson(await _api.getJson(path));
+      final results = await Future.wait<Object?>([
+        _api.getJson(path),
+        _api.getJson('/api/scripts/repo-pull-history?limit=$limit').catchError((
+          Object error,
+        ) {
+          if (error is PanelApiException && error.statusCode == 404) {
+            return {'ok': true, 'items': <Object>[]};
+          }
+          throw error;
+        }),
+      ]);
+      final fileHistory = PanelScriptPullHistory.fromJson(results[0]);
+      final repoHistory = PanelScriptPullHistory.fromJson(results[1]);
+      final items = [...fileHistory.items, ...repoHistory.items]
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return PanelScriptPullHistory(items.take(limit).toList(growable: false));
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: '/api/scripts/pull-history');
     }
   }
 
-  Future<PanelScriptPullJob> fetchJob(String jobId) async {
+  Future<PanelScriptPullJob> fetchJob(
+    String jobId, {
+    String kind = 'file',
+  }) async {
     _requireId(jobId, 'jobId');
-    final path = '/api/scripts/pull/$jobId';
+    final path = '${_endpointForKind(kind)}/$jobId';
     return _readJob(await _api.getJson(path), path);
   }
 
-  Future<PanelScriptPullJob> cancel(String jobId) async {
+  Future<PanelScriptPullJob> cancel(
+    String jobId, {
+    String kind = 'file',
+  }) async {
     _requireId(jobId, 'jobId');
-    final path = '/api/scripts/pull/$jobId/cancel';
+    final path = '${_endpointForKind(kind)}/$jobId/cancel';
     return _readJob(await _api.postJson(path, const {}), path);
   }
+
+  static String _endpointForKind(String kind) => switch (kind) {
+    'file' => '/api/scripts/pull',
+    'repo' => '/api/scripts/repo-pull',
+    _ => throw ArgumentError.value(kind, 'kind'),
+  };
 
   PanelScriptPullJob _readJob(Object? payload, String path) {
     try {

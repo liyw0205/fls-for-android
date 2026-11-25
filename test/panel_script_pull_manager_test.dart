@@ -47,12 +47,34 @@ void main() {
               'job': _job(status: 'downloading'),
             }, 202);
           }
+          if (request.method == 'POST' &&
+              request.url.path.endsWith('/api/scripts/repo-pull')) {
+            expect(request.headers['x-csrf-token'], session.csrfToken);
+            expect(jsonDecode(request.body), {
+              'url': 'https://example.invalid/repo.git',
+              'path': 'jobs/repo',
+              'proxy_id': 'p1',
+              'request_id': 'c' * 32,
+            });
+            return _jsonResponse({
+              'ok': true,
+              'job': _repoJob(status: 'cloning'),
+            }, 202);
+          }
           if (request.method == 'GET' &&
               request.url.path.endsWith('/api/scripts/pull-history')) {
             expect(request.url.queryParameters, {'limit': '5'});
             return _jsonResponse({
               'ok': true,
               'items': [_job(status: 'downloading')],
+            });
+          }
+          if (request.method == 'GET' &&
+              request.url.path.endsWith('/api/scripts/repo-pull-history')) {
+            expect(request.url.queryParameters, {'limit': '5'});
+            return _jsonResponse({
+              'ok': true,
+              'items': [_repoJob(status: 'cloning')],
             });
           }
           if (request.method == 'GET' &&
@@ -69,6 +91,23 @@ void main() {
               'job': _job(status: 'cancelling'),
             }, 202);
           }
+          if (request.method == 'GET' &&
+              request.url.path.endsWith('/api/scripts/repo-pull/${'d' * 32}')) {
+            return _jsonResponse({
+              'ok': true,
+              'job': _repoJob(status: 'complete'),
+            });
+          }
+          if (request.method == 'POST' &&
+              request.url.path.endsWith(
+                '/api/scripts/repo-pull/${'d' * 32}/cancel',
+              )) {
+            expect(request.headers['x-csrf-token'], session.csrfToken);
+            return _jsonResponse({
+              'ok': true,
+              'job': _repoJob(status: 'cancelling'),
+            }, 202);
+          }
           fail('unexpected request: ${request.method} ${request.url}');
         }),
       );
@@ -82,17 +121,30 @@ void main() {
         requestId: 'a' * 32,
         proxyId: 'p1',
       );
+      final repoSubmitted = await manager.submitRepository(
+        url: 'https://example.invalid/repo.git',
+        path: 'jobs/repo',
+        requestId: 'c' * 32,
+        proxyId: 'p1',
+      );
       final history = await manager.fetchHistory(limit: 5);
       final current = await manager.fetchJob('b' * 32);
       final cancelled = await manager.cancel('b' * 32);
+      final repoCurrent = await manager.fetchJob('d' * 32, kind: 'repo');
+      final repoCancelled = await manager.cancel('d' * 32, kind: 'repo');
 
       expect(options.proxies.single.name, 'Local relay');
       expect(submitted.isActive, isTrue);
       expect(submitted.progress.percent, 42);
-      expect(history.items.single.id, 'b' * 32);
+      expect(repoSubmitted.kind, 'repo');
+      expect(repoSubmitted.progress.label, '接收对象');
+      expect(repoSubmitted.progress.current, 1);
+      expect(history.items, hasLength(2));
       expect(current.isComplete, isTrue);
       expect(cancelled.status, 'cancelling');
-      expect(requests, hasLength(5));
+      expect(repoCurrent.isComplete, isTrue);
+      expect(repoCancelled.status, 'cancelling');
+      expect(requests, hasLength(9));
     },
   );
 
@@ -157,6 +209,25 @@ Map<String, dynamic> _job({String status = 'complete'}) => {
   'error_code': '',
   'created_at': '2026-11-25T10:00:00+08:00',
   'updated_at': '2026-11-25T10:00:01+08:00',
+  'replayed': false,
+};
+
+Map<String, dynamic> _repoJob({String status = 'complete'}) => {
+  'id': 'd' * 32,
+  'request_id': 'c' * 32,
+  'kind': 'repo',
+  'path': 'jobs/repo',
+  'source_host': 'example.invalid',
+  'status': status,
+  'progress': {
+    'phase': status == 'cloning' ? 'receiving' : status,
+    'current': status == 'cloning' ? 1 : null,
+    'total': status == 'cloning' ? 2 : null,
+    'label': status == 'cloning' ? '接收对象' : '已完成',
+  },
+  'error_code': '',
+  'created_at': '2026-11-25T10:01:00+08:00',
+  'updated_at': '2026-11-25T10:01:01+08:00',
   'replayed': false,
 };
 

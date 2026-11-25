@@ -730,6 +730,7 @@ class PanelApiClient {
   bool _isScriptFilePath(String path) =>
       path == '/api/scripts/file' ||
       path.startsWith('/api/scripts/pull') ||
+      path.startsWith('/api/scripts/repo-pull') ||
       path.startsWith('/api/scripts/debug') ||
       path.startsWith('/api/scripts/rename') ||
       path.startsWith('/api/scripts/delete/');

@@ -30,6 +30,9 @@ void main() {
             'items': [_job(status: 'failed', errorCode: 'path_changed')],
           });
         }
+        if (request.url.path == '/api/scripts/repo-pull-history') {
+          return _jsonResponse({'ok': true, 'items': <Object>[]});
+        }
         fail('unexpected request: ${request.method} ${request.url}');
       }),
     );
@@ -77,6 +80,9 @@ void main() {
               'ok': true,
               'items': historyReads == 1 ? [] : [_job(status: 'complete')],
             });
+          }
+          if (request.url.path == '/api/scripts/repo-pull-history') {
+            return _jsonResponse({'ok': true, 'items': <Object>[]});
           }
           if (request.method == 'POST' &&
               request.url.path == '/api/scripts/pull') {
@@ -162,6 +168,9 @@ void main() {
               'items': [_job(status: 'downloading', unknownTotal: true)],
             });
           }
+          if (request.url.path == '/api/scripts/repo-pull-history') {
+            return _jsonResponse({'ok': true, 'items': <Object>[]});
+          }
           if (request.method == 'POST' &&
               request.url.path.endsWith('/cancel')) {
             cancelCount++;
@@ -199,6 +208,77 @@ void main() {
       expect(cancelCount, 1);
     },
   );
+  testWidgets(
+    'submits a Git repository and shows object stage without percent',
+    (tester) async {
+      var submitted = false;
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=pull-session',
+          csrfToken: 'pull-csrf',
+        ),
+        client: panelMockClient((request) async {
+          if (request.url.path == '/api/scripts/pull-options') {
+            return _jsonResponse({'ok': true, 'proxies': []});
+          }
+          if (request.url.path == '/api/scripts/pull-history') {
+            return _jsonResponse({'ok': true, 'items': <Object>[]});
+          }
+          if (request.url.path == '/api/scripts/repo-pull-history') {
+            return _jsonResponse({
+              'ok': true,
+              'items': submitted ? [_repoJob()] : <Object>[],
+            });
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/scripts/repo-pull') {
+            submitted = true;
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            expect(body['url'], 'https://example.invalid/repo.git');
+            expect(body['path'], 'folder/repo');
+            expect(body['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+            return _jsonResponse({'ok': true, 'job': _repoJob()}, 202);
+          }
+          fail('unexpected request: ${request.method} ${request.url}');
+        }),
+      );
+      addTearDown(api.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PanelScriptPullView(
+            manager: PanelScriptPullManager(api),
+            currentPath: 'folder',
+            onUnauthorized: (_) async {},
+          ),
+        ),
+      );
+      await pumpUntilFound(tester, find.text('最近拉取'));
+      await tester.tap(find.text('Git 仓库'));
+      await tester.enterText(
+        find.byKey(const ValueKey('panel-script-pull-url')),
+        'https://example.invalid/repo.git',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('panel-script-pull-name')),
+        'repo',
+      );
+      await tester.tap(find.text('开始拉取'));
+      await pumpUntilFound(tester, find.text('接收对象 · 1/4 个对象'));
+
+      expect(find.text('正在克隆'), findsOneWidget);
+      expect(find.textContaining('%'), findsNothing);
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator).last,
+            )
+            .value,
+        isNull,
+      );
+    },
+  );
 }
 
 Map<String, dynamic> _job({
@@ -229,3 +309,17 @@ http.Response _jsonResponse(Object body, [int status = 200]) => http.Response(
   status,
   headers: {'content-type': 'application/json'},
 );
+
+Map<String, dynamic> _repoJob() => {
+  'id': 'd' * 32,
+  'request_id': 'c' * 32,
+  'kind': 'repo',
+  'path': 'folder/repo',
+  'source_host': 'example.invalid',
+  'status': 'cloning',
+  'progress': {'phase': 'receiving', 'current': 1, 'total': 4, 'label': '接收对象'},
+  'error_code': '',
+  'created_at': '2026-11-25T10:00:00+08:00',
+  'updated_at': '2026-11-25T10:00:01+08:00',
+  'replayed': false,
+};

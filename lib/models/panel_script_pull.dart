@@ -31,16 +31,47 @@ class PanelScriptPullProgress {
     required this.downloadedBytes,
     required this.totalBytes,
     required this.percent,
+    this.current,
+    this.objectTotal,
+    this.label = '',
   });
 
   final String state;
   final int downloadedBytes;
   final int? totalBytes;
   final int? percent;
+  final int? current;
+  final int? objectTotal;
+  final String label;
 
   factory PanelScriptPullProgress.fromJson(Object? value) {
-    if (value is! Map<String, dynamic> ||
-        value['state'] is! String ||
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('脚本拉取进度格式无效');
+    }
+    if (value['phase'] is String) {
+      if ((value['current'] != null && value['current'] is! int) ||
+          (value['total'] != null && value['total'] is! int) ||
+          value['label'] is! String) {
+        throw const FormatException('仓库拉取进度格式无效');
+      }
+      final current = value['current'] as int?;
+      final total = value['total'] as int?;
+      if ((current != null && current < 0) ||
+          (total != null && total < 0) ||
+          (current != null && total != null && current > total)) {
+        throw const FormatException('仓库拉取进度数值无效');
+      }
+      return PanelScriptPullProgress(
+        state: value['phase'] as String,
+        downloadedBytes: 0,
+        totalBytes: null,
+        percent: null,
+        current: current,
+        objectTotal: total,
+        label: value['label'] as String,
+      );
+    }
+    if (value['state'] is! String ||
         value['downloaded_bytes'] is! int ||
         (value['total_bytes'] != null && value['total_bytes'] is! int) ||
         (value['percent'] != null && value['percent'] is! int)) {
@@ -61,6 +92,7 @@ class PanelScriptPullProgress {
       downloadedBytes: downloaded,
       totalBytes: total,
       percent: percent,
+      label: value['state'] as String,
     );
   }
 }
@@ -69,6 +101,7 @@ class PanelScriptPullJob {
   const PanelScriptPullJob({
     required this.id,
     required this.requestId,
+    required this.kind,
     required this.path,
     required this.sourceHost,
     required this.status,
@@ -81,6 +114,7 @@ class PanelScriptPullJob {
 
   final String id;
   final String requestId;
+  final String kind;
   final String path;
   final String sourceHost;
   final String status;
@@ -92,6 +126,7 @@ class PanelScriptPullJob {
 
   bool get isActive => const {
     'pending',
+    'cloning',
     'downloading',
     'publishing',
     'cancelling',
@@ -105,13 +140,14 @@ class PanelScriptPullJob {
         !RegExp(r'^[0-9a-f]{32}$').hasMatch(value['id'] as String) ||
         value['request_id'] is! String ||
         !RegExp(r'^[0-9a-f]{32}$').hasMatch(value['request_id'] as String) ||
-        value['kind'] != 'file' ||
+        !const {'file', 'repo'}.contains(value['kind']) ||
         value['path'] is! String ||
         !_validScriptPath(value['path'] as String) ||
         value['source_host'] is! String ||
         value['status'] is! String ||
         !const {
           'pending',
+          'cloning',
           'downloading',
           'publishing',
           'cancelling',
@@ -129,6 +165,7 @@ class PanelScriptPullJob {
     return PanelScriptPullJob(
       id: value['id'] as String,
       requestId: value['request_id'] as String,
+      kind: value['kind'] as String,
       path: value['path'] as String,
       sourceHost: value['source_host'] as String,
       status: value['status'] as String,

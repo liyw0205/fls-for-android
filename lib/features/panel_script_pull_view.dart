@@ -31,6 +31,8 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
   PanelScriptPullJob? _selected;
   Timer? _pollTimer;
   String _proxyId = '';
+  String _pendingKind = 'file';
+  bool _repositoryMode = false;
   String? _error;
   String? _pendingRequestId;
   bool _loading = true;
@@ -112,23 +114,33 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
     final url = _urlController.text.trim();
     final path = _destinationPath();
     if (url.isEmpty || path == null) {
-      setState(() => _error = '请输入有效 URL 和文件名');
+      setState(() => _error = '请输入有效 URL 和名称');
       return;
     }
     final requestId =
         _pendingRequestId ?? PanelScriptPullManager.newRequestId();
+    if (_pendingRequestId == null) {
+      _pendingKind = _repositoryMode ? 'repo' : 'file';
+    }
     _pendingRequestId = requestId;
     setState(() {
       _submitting = true;
       _error = null;
     });
     try {
-      final job = await widget.manager.submitFile(
-        url: url,
-        path: path,
-        requestId: requestId,
-        proxyId: _proxyId,
-      );
+      final job = _pendingKind == 'repo'
+          ? await widget.manager.submitRepository(
+              url: url,
+              path: path,
+              requestId: requestId,
+              proxyId: _proxyId,
+            )
+          : await widget.manager.submitFile(
+              url: url,
+              path: path,
+              requestId: requestId,
+              proxyId: _proxyId,
+            );
       if (!mounted) return;
       _pendingRequestId = null;
       setState(() {
@@ -148,6 +160,7 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
           error.statusCode != null &&
           error.statusCode! < 500) {
         _pendingRequestId = null;
+        _pendingKind = 'file';
       }
       setState(() {
         _submitting = false;
@@ -159,7 +172,7 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
 
   Future<void> _cancel(PanelScriptPullJob job) async {
     try {
-      final updated = await widget.manager.cancel(job.id);
+      final updated = await widget.manager.cancel(job.id, kind: job.kind);
       if (!mounted) return;
       setState(() {
         _selected = updated;
@@ -232,7 +245,10 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
     final selected = _selected;
     if (selected == null) return;
     try {
-      final job = await widget.manager.fetchJob(selected.id);
+      final job = await widget.manager.fetchJob(
+        selected.id,
+        kind: selected.kind,
+      );
       if (!mounted) return;
       setState(() {
         _selected = job;
@@ -269,8 +285,9 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
   }
 
   String _statusLabel(PanelScriptPullJob job) => switch (job.status) {
-    'pending' => '等待下载',
-    'downloading' => '正在下载',
+    'pending' => job.kind == 'repo' ? '等待克隆' : '等待下载',
+    'cloning' => '正在克隆',
+    'downloading' => job.kind == 'repo' ? '正在克隆' : '正在下载',
     'publishing' => '正在保存',
     'cancelling' => '正在取消',
     'complete' => '已完成',
@@ -278,6 +295,7 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
       'target_exists' => '目标已存在，未覆盖',
       'too_large' => '文件超过 64 MB 限制',
       'path_changed' => '目标目录已变化，未发布',
+      'worker_interrupted' => '服务重启中断，结果需核实',
       _ => '拉取失败',
     },
     'cancelled' => '已取消',
@@ -291,6 +309,23 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
 
   Widget _progress(PanelScriptPullJob job) {
     final progress = job.progress;
+    if (job.kind == 'repo') {
+      final count = progress.current == null
+          ? ''
+          : progress.objectTotal == null
+          ? ' · ${progress.current} 个对象'
+          : ' · ${progress.current}/${progress.objectTotal} 个对象';
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_statusLabel(job)),
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(minHeight: 4),
+          const SizedBox(height: 6),
+          Text('${progress.label}$count'),
+        ],
+      );
+    }
     final percent = progress.percent;
     final total = progress.totalBytes;
     final label = total != null && percent != null
@@ -315,7 +350,9 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
     selected: _selected?.id == job.id,
     contentPadding: EdgeInsets.zero,
     title: Text(job.path, maxLines: 1, overflow: TextOverflow.ellipsis),
-    subtitle: Text('${job.sourceHost} · ${_statusLabel(job)}'),
+    subtitle: Text(
+      '${job.kind == 'repo' ? 'Git 仓库' : job.sourceHost} · ${_statusLabel(job)}',
+    ),
     onTap: () => _select(job),
     trailing: job.isActive
         ? IconButton(
@@ -352,14 +389,27 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 12),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'file', label: Text('单文件')),
+                    ButtonSegment(value: 'repo', label: Text('Git 仓库')),
+                  ],
+                  selected: {_repositoryMode ? 'repo' : 'file'},
+                  onSelectionChanged: _pendingRequestId == null && !_submitting
+                      ? (selection) => setState(
+                          () => _repositoryMode = selection.single == 'repo',
+                        )
+                      : null,
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   key: const ValueKey('panel-script-pull-url'),
                   controller: _urlController,
                   keyboardType: TextInputType.url,
                   textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
-                    labelText: 'HTTP/HTTPS 文件 URL',
-                    hintText: 'https://example.com/script.py',
+                    labelText: 'HTTP/HTTPS URL',
+                    hintText: 'https://example.com/script.py 或仓库地址',
                   ),
                   onChanged: (_) => setState(() {}),
                 ),
@@ -368,7 +418,9 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
                   key: const ValueKey('panel-script-pull-name'),
                   controller: _nameController,
                   textInputAction: TextInputAction.done,
-                  decoration: const InputDecoration(labelText: '文件名'),
+                  decoration: InputDecoration(
+                    labelText: _repositoryMode ? '仓库目录名' : '文件名',
+                  ),
                   onSubmitted: (_) => _submit(),
                   onChanged: (_) => setState(() {}),
                 ),
