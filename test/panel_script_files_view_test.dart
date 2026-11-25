@@ -7,7 +7,8 @@ import 'package:fls_for_android/services/panel_script_files_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
+
+import 'panel_test_http.dart';
 
 void main() {
   testWidgets(
@@ -22,7 +23,7 @@ void main() {
           cookie: 'fls_native_session=file-session',
           csrfToken: 'file-csrf',
         ),
-        client: MockClient((request) async {
+        client: panelMockClient((request) async {
           requests.add('${request.method} ${request.url}');
           if (request.method == 'GET' &&
               request.url.path == '/api/scripts/tree') {
@@ -115,7 +116,7 @@ void main() {
         cookie: 'fls_native_session=file-session',
         csrfToken: 'file-csrf',
       ),
-      client: MockClient((request) async {
+      client: panelMockClient((request) async {
         requests.add('${request.method} ${request.url}');
         if (request.url.path == '/api/scripts/tree') {
           return _jsonResponse(_tree());
@@ -213,6 +214,9 @@ Future<void> _pumpUntil(
 }) async {
   for (var attempt = 0; attempt < 80; attempt++) {
     if (condition()) return;
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
     await tester.pump(const Duration(milliseconds: 50));
   }
   final banners = tester
