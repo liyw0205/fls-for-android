@@ -428,6 +428,51 @@ void main() {
     expect(find.text('暂无运行记录'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('opens the native history and system log section', (
+    tester,
+  ) async {
+    final credentials = _MemoryCredentials()..value = session;
+    final client = MockClient((request) async {
+      final dashboard = _dashboardResponse(request);
+      if (dashboard != null) return dashboard;
+      if (request.url.path == '/api/status') {
+        return utf8Response(jsonEncode(tasks), 200);
+      }
+      final taskPage = _taskPageResponse(request, tasks);
+      if (taskPage != null) return taskPage;
+      if (request.url.path == '/api/history') {
+        return utf8Response(
+          '{"ok":true,"items":[{"id":"h1","task_id":"daily","task_name":"每日签到","command":"python daily.py","status":"success","start_at":"today","duration_seconds":2,"message":"ok"}],"page":1,"pages":1,"total":1}',
+          200,
+        );
+      }
+      if (request.url.path == '/api/logs') {
+        return utf8Response(
+          '{"ok":true,"items":[],"page":1,"pages":1,"total":0}',
+          200,
+        );
+      }
+      return utf8Response('{}', 404);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelTasksView(
+          server: server,
+          credentialStore: credentials,
+          client: client,
+        ),
+      ),
+    );
+    await pumpUntilFound(tester, find.text('2026-11-25 12:00:00'));
+    await tester.tap(find.text('记录'));
+    await pumpUntilFound(tester, find.text('每日签到'));
+
+    expect(find.text('运行历史'), findsOneWidget);
+    expect(find.text('1 条记录'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 http.Response? _taskPageResponse(

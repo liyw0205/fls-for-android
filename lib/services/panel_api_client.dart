@@ -140,6 +140,64 @@ class PanelApiClient {
 
   Future<Object?> getJson(String path) => _sendJson('GET', path);
 
+  Future<List<int>> getBytes(String path, {int? maxBytes}) async {
+    final uri = _apiUri(path);
+    final limit = maxBytes == null || maxBytes > maxResponseBytes
+        ? maxResponseBytes
+        : maxBytes;
+    if (limit < 1) throw ArgumentError.value(maxBytes, 'maxBytes');
+    final request = http.Request('GET', uri)
+      ..headers.addAll({
+        'Accept': 'text/csv, application/octet-stream, application/json',
+        'X-Requested-With': 'FLS-APP',
+      });
+    final cookie = _sessionCookie;
+    if (cookie != null) request.headers['Cookie'] = cookie;
+
+    try {
+      final response = await _client.send(request).timeout(requestTimeout);
+      final newCookie = _sessionCookieFromHeader(
+        response.headers['set-cookie'],
+      );
+      if (newCookie != null) _sessionCookie = newCookie;
+      final bytes = <int>[];
+      await for (final chunk in response.stream.timeout(requestTimeout)) {
+        if (bytes.length + chunk.length > limit) {
+          throw PanelApiException(
+            '面板文件超过 ${limit ~/ (1024 * 1024)} MB 限制',
+            statusCode: response.statusCode,
+            path: uri.path,
+          );
+        }
+        bytes.addAll(chunk);
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final text = utf8.decode(bytes, allowMalformed: true).trim();
+        final decoded = text.isEmpty
+            ? null
+            : _decodeJson(text, response.statusCode, uri.path);
+        final redactValues = [if (cookie != null) cookie.split('=').last];
+        throw PanelApiException(
+          _errorMessage(decoded, response.statusCode, redactValues),
+          statusCode: response.statusCode,
+          path: uri.path,
+          data: _errorMetadata(
+            decoded,
+            redactValues,
+            includeTaskActionDetails: false,
+          ),
+        );
+      }
+      return List<int>.unmodifiable(bytes);
+    } on TimeoutException {
+      throw PanelApiException('连接面板超时', path: uri.path);
+    } on SocketException {
+      throw PanelApiException('无法连接到面板，请检查地址和网络', path: uri.path);
+    } on http.ClientException {
+      throw PanelApiException('面板连接失败，请检查地址和网络', path: uri.path);
+    }
+  }
+
   Future<Object?> postJson(String path, Object? body) =>
       _sendJson('POST', path, body: body);
 

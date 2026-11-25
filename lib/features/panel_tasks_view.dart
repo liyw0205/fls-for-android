@@ -11,8 +11,10 @@ import '../models/panel_task_summary.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_credential_store.dart';
 import '../services/panel_dashboard_manager.dart';
+import '../services/panel_records_manager.dart';
 import '../services/panel_tasks_manager.dart';
 import 'panel_collections_view.dart';
+import 'panel_records_view.dart';
 import 'panel_task_detail_view.dart';
 import 'panel_task_editor_view.dart';
 import 'remote_web_view.dart';
@@ -89,6 +91,7 @@ class PanelTasksView extends StatefulWidget {
 class _PanelTasksViewState extends State<PanelTasksView> {
   final _searchController = TextEditingController();
   final _collectionsKey = GlobalKey<PanelCollectionsViewState>();
+  final _recordsKey = GlobalKey<PanelRecordsViewState>();
   PanelApiClient? _api;
   PanelDashboardManager? _dashboardManager;
   PanelTasksManager? _manager;
@@ -500,8 +503,10 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     } else if (_selectedPanelTab == 1) {
       await _refresh();
       await _loadTaskPage(page: _taskPage?.page ?? 1);
-    } else {
+    } else if (_selectedPanelTab == 2) {
       await _collectionsKey.currentState?.refresh();
+    } else {
+      await _recordsKey.currentState?.refresh();
     }
   }
 
@@ -985,7 +990,12 @@ class _PanelTasksViewState extends State<PanelTasksView> {
         title: Text(widget.server.name),
         actions: [
           IconButton(
-            tooltip: _selectedPanelTab == 0 ? '刷新概览' : '刷新任务',
+            tooltip: switch (_selectedPanelTab) {
+              0 => '刷新概览',
+              1 => '刷新任务',
+              2 => '刷新合集',
+              _ => '刷新记录',
+            },
             onPressed: _manager == null || _loading || _dashboardLoading
                 ? null
                 : _refreshSelectedTab,
@@ -1057,8 +1067,10 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                 } else if (index == 1) {
                   unawaited(_refresh());
                   unawaited(_loadTaskPage());
-                } else {
+                } else if (index == 2) {
                   unawaited(_collectionsKey.currentState?.refresh());
+                } else {
+                  unawaited(_recordsKey.currentState?.refresh());
                 }
               },
               destinations: const [
@@ -1076,6 +1088,11 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   icon: Icon(Icons.folder_outlined),
                   selectedIcon: Icon(Icons.folder),
                   label: '合集',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.receipt_long_outlined),
+                  selectedIcon: Icon(Icons.receipt_long),
+                  label: '记录',
                 ),
               ],
             )
@@ -1098,6 +1115,17 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       return PanelCollectionsView(
         key: _collectionsKey,
         manager: manager,
+        onUnauthorized: (error) async {
+          await _expireSession(error);
+        },
+      );
+    }
+    if (_selectedPanelTab == 3) {
+      final api = _api;
+      if (api == null) return _buildConnectionError(context);
+      return PanelRecordsView(
+        key: _recordsKey,
+        manager: PanelRecordsManager(api),
         onUnauthorized: (error) async {
           await _expireSession(error);
         },

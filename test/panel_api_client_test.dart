@@ -259,4 +259,71 @@ void main() {
       ),
     );
   });
+
+  test(
+    'downloads bounded file bytes through the authenticated panel session',
+    () async {
+      final client = PanelApiClient(
+        baseUrl: 'https://fls.example/panel',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=download-session',
+          csrfToken: 'download-csrf',
+        ),
+        client: MockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/panel/api/history/export');
+          expect(
+            request.headers['cookie'],
+            'fls_native_session=download-session',
+          );
+          expect(request.headers['x-token'], isNull);
+          expect(request.headers['accept'], contains('text/csv'));
+          return http.Response.bytes([0xef, 0xbb, 0xbf, 65, 44, 66], 200);
+        }),
+      );
+      addTearDown(client.close);
+
+      final bytes = await client.getBytes(
+        '/api/history/export',
+        maxBytes: 1024,
+      );
+
+      expect(bytes, [0xef, 0xbb, 0xbf, 65, 44, 66]);
+    },
+  );
+
+  test('rejects oversized downloads and parses JSON download errors', () async {
+    final client = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      maxResponseBytes: 64,
+      client: MockClient((request) async {
+        if (request.url.queryParameters['retry'] == '1') {
+          return utf8Response('{"ok":false,"msg":"文件超过限制"}', 413);
+        }
+        return http.Response.bytes(List<int>.filled(65, 0), 200);
+      }),
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.getBytes('/api/logfile/large.log/download'),
+      throwsA(
+        isA<PanelApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('超过'),
+        ),
+      ),
+    );
+    await expectLater(
+      client.getBytes('/api/logfile/large.log/download?retry=1'),
+      throwsA(
+        isA<PanelApiException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          413,
+        ),
+      ),
+    );
+  });
 }
