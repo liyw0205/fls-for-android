@@ -131,7 +131,7 @@ APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口�
 
 ### 自动化验证
 
-- 每次推送由 GitHub Actions 执行 Dart 格式检查、`flutter analyze`、`flutter test` 和 arm64 Release APK 构建。
+- 每次推送由 GitHub Actions 执行 Dart 格式检查、`flutter analyze`、`flutter test` 和 arm64 Release APK 构建；`develop` push 另上传保留 14 天的测试 APK artifact，不发布 GitHub Release。
 - `test/online_scripts_manager_test.dart` 覆盖下载字节回调、未知总量、取消、暂存清理、覆盖回滚、归档安全和不启动面板。
 - `test/online_scripts_view_test.dart` 与 `test/widget_test.dart` 覆盖目录/详情/环境控件在窄屏、横屏和大字号下的交互与视口边界。
 - CI 只证明 Flutter 测试和构建通过，不替代上面的 Android 真机手动验收。
