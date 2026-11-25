@@ -361,7 +361,10 @@ void main() {
     expect(find.text('Demo task'), findsOneWidget);
     expect(find.text('python demo.py'), findsNothing);
     await tester.tap(find.text('删除文件').last);
-    await _pumpUntil(tester, () => treeReads == 2 && deleteSubmitted);
+    await _pumpUntil(
+      tester,
+      () => treeReads == 2 && find.text('目录为空').evaluate().isNotEmpty,
+    );
 
     expect(deleteSubmitted, isTrue);
     expect(treeReads, 2);
