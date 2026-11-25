@@ -3,7 +3,7 @@
 ## 基线与证据范围
 
 - FLS `develop`：`17c52f6` / `20261125.10`。新增删除影响预览和 revision 确认 API；脚本文件/改名/删除相关定向测试 37 项通过；Module、Windows Desktop、Windows EXE 工作流均通过（run `45597758304`、`45597758044`、`45597758364`）。Termux 全量测试先前有 19 项环境或既有字段断言失败，不记录为全量通过。
-- APP `develop`：`4f07caf` / `0.1.39+50`；目录/编辑/改名和新增删除确认通过 Android CI `45598409303`：格式、分析、126 项 Flutter 测试及 arm64 APK 构建全绿。Termux Flutter tester 不可运行；Dart 静态分析本地通过。真实隔离面板验收仍待用户手动完成。
+- APP `develop`：`8a7abcb` / `0.1.39+50`；目录/编辑/改名和新增删除确认通过 Android CI `45598409303`：格式、分析、126 项 Flutter 测试及 arm64 APK 构建全绿。CI `45600063156` 验证 develop 分支 arm64 APK artifact 上传（10.7 MB，保留 14 天）。Termux Flutter tester 不可运行；Dart 静态分析本地通过。真实隔离面板验收仍待用户手动完成。
 - 两仓均在 `develop`。以下能力和证据按这组提交记录；CI 通过不等于真实面板手动验收。真实隔离面板验收由用户完成，不做 ADB 测试。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。
