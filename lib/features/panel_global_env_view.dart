@@ -508,6 +508,7 @@ class _EnvWriteViewState extends State<_EnvWriteView>
       }
       setState(() {
         _retryAllowed = result.saved == false || result.state == 'missing';
+        _conflict = result.state == 'unknown';
         _error = _retryAllowed ? '尚未确认保存，可核对后重试原提交。' : '结果未知且变量已变化，请核对面板当前内容。';
       });
     } catch (error) {

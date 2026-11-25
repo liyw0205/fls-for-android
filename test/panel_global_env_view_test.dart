@@ -114,6 +114,10 @@ void main() {
       expect(find.text('initial-secret'), findsNothing);
       await tester.tap(find.text('ORIGINAL'));
       await pumpUntil(tester, () => reads == 1);
+      await pumpUntil(
+        tester,
+        () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('显示变量值'));
       await tester.pumpAndSettle();
