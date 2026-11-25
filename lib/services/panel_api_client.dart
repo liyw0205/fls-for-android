@@ -394,7 +394,8 @@ class PanelApiClient {
     for (final key in keys) {
       final value = payload[key];
       if (value is bool || value is String || value is num) {
-        if (value is String &&
+        if (includeOnlineScriptDetails &&
+            value is String &&
             const {'request_id', 'install_id'}.contains(key) &&
             !RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(value)) {
           continue;

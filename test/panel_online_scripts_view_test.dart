@@ -56,7 +56,8 @@ void main() {
     await tester.tap(find.text('演示脚本'));
     await pumpUntilFound(tester, find.text('安装 / 更新'));
     await tester.tap(find.text('安装 / 更新'));
-    await pumpUntilFound(tester, find.text('搜索在线脚本'));
+    await pumpUntil(tester, () => unauthorizedCalls == 1);
+    await tester.pumpAndSettle();
 
     expect(unauthorizedCalls, 1);
     expect(find.text('搜索在线脚本'), findsOneWidget);
