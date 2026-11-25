@@ -205,7 +205,7 @@ void main() {
         isNull,
       );
       await tester.drag(find.byType(ListView), const Offset(0, -600));
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(find.byTooltip('取消拉取'), findsOneWidget);
       await tester.tap(find.byTooltip('取消拉取'));
       await pumpUntilFound(tester, find.text('正在取消'));
