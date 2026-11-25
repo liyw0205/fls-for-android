@@ -276,13 +276,11 @@ void main() {
     expect(find.text('python demo.py'), findsOneWidget);
     expect(find.text('python renamed.py'), findsOneWidget);
     await tester.tap(find.text('确认改名'));
-    await _pumpUntil(
-      tester,
-      () => find.text('renamed.py').evaluate().isNotEmpty,
-    );
+    await _pumpUntil(tester, () => treeReads == 2 && renameSubmitted);
 
     expect(renameSubmitted, isTrue);
     expect(treeReads, 2);
+    expect(find.text('renamed.py'), findsOneWidget);
     expect(find.text('面板文件'), findsOneWidget);
   });
 }
