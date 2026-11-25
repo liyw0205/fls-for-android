@@ -375,6 +375,11 @@ void main() {
   testWidgets('opens the native debugger from a panel file editor', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(360, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final requests = <String>[];
     final api = PanelApiClient(
       baseUrl: 'https://panel.example',

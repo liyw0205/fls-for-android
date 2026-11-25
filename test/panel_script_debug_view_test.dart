@@ -153,8 +153,10 @@ void main() {
       expect(find.byTooltip('停止调试运行'), findsNothing);
       expect(find.text('重新运行'), findsNothing);
       expect(tester.takeException(), isNull);
-      await tester.pageBack();
-      await tester.pumpAndSettle();
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       expect(requests.where((request) => request.contains('/stop')), isEmpty);
     },
   );
