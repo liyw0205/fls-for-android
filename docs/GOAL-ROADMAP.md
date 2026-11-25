@@ -14,7 +14,7 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | pending / `0.1.38+47` | 面板文件原生目录、编辑、新建及基于任务引用预览的改名/恢复 UI；manager/widget 测试补充中，CI `45584568652` 已全绿（121 项测试及 arm64 APK），本次改名纵切待推送验证。真实隔离面板验收待用户反馈 |
+| APP (`fls-for-android`) | `develop` | pending / `0.1.38+48` | 面板文件原生目录、编辑、新建及基于任务引用预览的改名/恢复 UI。CI `45589458107` 的格式/分析及 manager 测试通过，123 项总测试中新增改名 Widget 测试因对话框动画期间过早 dispose 输入控制器失败；控制器现由对话框生命周期管理，修复待再次 CI。真实隔离面板验收待用户反馈 |
 | FLS (`$HOME/fls`) | `develop` | `0eb515c` / `20261125.9` | 新增面板脚本改名预览、revision 确认、幂等提交、状态和继续/回滚恢复 API。脚本文件/改名定向测试 27 项通过；Module、Windows Desktop、Windows EXE 工作流 `45587243874`、`45587243688`、`45587243689` 全部通过 |
 
 2026-11-25 对 `$HOME/fls` 执行 `git pull --ff-only origin develop`，结果为 `Already up to date`；随后 FLS `develop` 推进到 `05220cf`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。

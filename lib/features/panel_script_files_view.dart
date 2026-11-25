@@ -96,29 +96,10 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
   }
 
   Future<void> _rename(PanelScriptFileItem item) async {
-    final nameController = TextEditingController(text: item.name);
     final newName = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('重命名'),
-        content: TextField(
-          controller: nameController,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: '新名称'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, nameController.text.trim()),
-            child: const Text('检查引用'),
-          ),
-        ],
-      ),
+      builder: (_) => _ScriptRenameNameDialog(initialName: item.name),
     );
-    nameController.dispose();
     if (newName == null || newName.isEmpty || !mounted) return;
 
     try {
@@ -539,6 +520,52 @@ String _taskRenameLabel(String state) => switch (state) {
   'conflict' => '与当前任务冲突',
   _ => '未知',
 };
+
+class _ScriptRenameNameDialog extends StatefulWidget {
+  const _ScriptRenameNameDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_ScriptRenameNameDialog> createState() =>
+      _ScriptRenameNameDialogState();
+}
+
+class _ScriptRenameNameDialogState extends State<_ScriptRenameNameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('重命名'),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      decoration: const InputDecoration(labelText: '新名称'),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _controller.text.trim()),
+        child: const Text('检查引用'),
+      ),
+    ],
+  );
+}
 
 class _ScriptRenameReviewDialog extends StatefulWidget {
   const _ScriptRenameReviewDialog({required this.preview});
