@@ -14,7 +14,7 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `0.1.35+40` | 新增任务历史/系统日志原生记录页；静态分析通过，Flutter widget 测试需由 Android CI 验证。真实测试面板仍待用户手动验收 |
+| APP (`fls-for-android`) | `develop` | `0.1.35+40` | 新增任务历史/系统日志原生记录页；Android CI `45518230128` 通过 103 项测试、静态分析和 arm64 Release APK 构建。真实测试面板仍待用户手动验收 |
 | FLS (`$HOME/fls`) | `develop` | 待提交 / `20261125.4` | 历史分页、CSV 导出、系统日志索引/尾部/下载 API 已实现；定向测试通过，完整 unittest 仍未通过 |
 
 FLS 的 `develop` 已包含拉取的最新稳定基线及本次后端 API 改动。后续需要共享/部署开发后端时，只推送/部署 `develop`，并先验证目标面板不是稳定生产会话。合并前分别验证两个仓库，明确合并次序、兼容 API 和回滚版本；只有 APP 与后端能力配套就绪后再由用户决定合并及发布。
@@ -42,7 +42,7 @@ FLS 的 `develop` 已包含拉取的最新稳定基线及本次后端 API 改动
 1. 复核当前列表 API/APP UI 的分页、筛选、跨页选择和任务字段是否与 Web 实际行为一致；将 CI 暴露的问题补成回归测试。真实面板使用仍由用户手动验收，不用 ADB。
 2. 本批 FLS：`/api/history`、`/api/history/export`、`/api/logs`、`/api/logfile/*` 已提供分页、筛选、脱敏和 8 MB/5000 行边界；定向测试通过。
 3. 本批 APP：记录页已接入历史筛选分页、状态详情、CSV 导出、日志检索/尾部读取/内容搜索/下载、空态、错误、401 和响应大小保护。
-4. 自动验证：Termux 无 Flutter tester，已完成 `flutter analyze` 和 FLS 14 项定向测试；widget 测试、Android 构建和发布工作流由 GitHub Actions 验证，不把设备手验当作自动推进阻塞项。
+4. 自动验证：Termux 无 Flutter tester，已完成 `flutter analyze` 和 FLS 14 项定向测试；Android CI `45518230128` 已通过 103 项 Flutter 测试、静态分析和 arm64 Release APK 构建，不把设备手验当作自动推进阻塞项。
 
 5. 下一纵切：盘点 FLS 面板在线脚本的目录、远程安装/更新、任务关联、长任务状态、取消/恢复和日志契约，先在 FLS `develop` 补稳定 API，再由 APP `develop` 做全量原生渲染；本机容器脚本安装继续保持无需启动面板。
 
