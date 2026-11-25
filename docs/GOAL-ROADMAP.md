@@ -14,7 +14,7 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | `a523e0c` / `0.1.37+42` | 方案与测试同步修复已推送；Android CI #45567891012 格式、分析通过，115 项测试通过、源编辑冲突测试仍早于第二次 GET 完成断言，正补请求屏障后复验 |
+| APP (`fls-for-android`) | `develop` | `6afa14c` / `0.1.37+42` | 在线脚本管理与全量原生渲染方案已推送；[Android CI #45568326814](https://github.com/liyw0205/fls-for-android/actions/runs/45568326814) 通过格式、分析、116 项测试及 arm64 APK 构建；隔离面板手动验收待用户反馈 |
 | FLS (`$HOME/fls`) | `develop` | `5d54e68` / `20261125.7` | 409 个在线脚本测试和 305 个子测试通过；[Module](https://github.com/liyw0205/fls/actions/runs/45562804710)、[Windows Desktop](https://github.com/liyw0205/fls/actions/runs/45562804520)、[Windows EXE](https://github.com/liyw0205/fls/actions/runs/45562804501) 打包通过 |
 
 2026-11-25 对 `$HOME/fls` 执行 `git pull --ff-only origin develop`，结果为 `Already up to date`，本地 HEAD 与远端 `develop` 均为 `5d54e68`。每批开始先同步两仓 `develop` 并记录对接的提交；有分叉时先检查差异，不强制重置或从 `main` 混入未验收改动。
@@ -134,7 +134,7 @@ FLS 路由静态初查覆盖以下业务（基于 `$HOME/fls` 的 `develop`，�
 
 | 批次 | FLS `develop` | APP `develop` |
 | --- | --- | --- |
-| 1. 面板在线脚本 | 源 JSON、冲突保护、刷新代理与目录字段已交付，见上方基线 | 完成 CI 复验与隔离面板手动验收，补开发 APK artifact |
+| 1. 面板在线脚本 | 源 JSON、冲突保护、刷新代理与目录字段已交付，见上方基线 | CI 已通过；隔离面板手动验收待完成；CI 暂只构建 APK，开发分支可下载 artifact 后续补充 |
 | 2a. 面板脚本目录与编辑 | 先补目录/UTF-8 文件读写 JSON，复用现有 revision 和原子写入。目录分页、内容上限和无副作用的读取由后端保证 | 脚本分为“面板文件”和“在线脚本”；原生目录、文件编辑、新建和冲突对照。验收步骤见 [实施方案](APP-RENDERING-PLAN.md#下一纵切面板脚本文件) |
 | 2b. 面板脚本操作 | 复用现有路径、改名日志、导入与调试服务，补归档导入/拉取、改名预览和恢复、删除、受限下载及调试启停/历史契约 | 原生操作表单和作业页，覆盖任务引用变化、重命名失败恢复、导入结果与调试日志 |
 | 2c. 运行时与依赖 | 复用安装/取消/重试/日志/历史 API，补已装状态、列表、刷新与卸载契约 | Python/Node 与依赖管理；安装返回页面后可恢复真实作业，保留独立的容器安装流程 |
