@@ -128,13 +128,14 @@ void main() {
     await pumpUntilFound(tester, find.text('worker.log'));
     await tester.tap(find.text('worker.log'));
     await pumpUntilFound(tester, find.textContaining('INFO ready'));
+    await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'warning');
     await tester.pump();
     expect(find.textContaining('WARNING retry'), findsOneWidget);
     expect(find.textContaining('INFO ready'), findsNothing);
 
-    await tester.tap(find.byTooltip('下载日志文件'));
+    await tester.tap(find.text('保存日志文件'));
     await pumpUntilFound(tester, find.text('日志文件已保存'));
     expect(savedBytes, utf8.encode('INFO ready\nWARNING retry'));
     expect(
