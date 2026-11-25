@@ -325,7 +325,7 @@ void main() {
     await tester.tap(find.text('folder/repo'));
     await tester.pump();
 
-    expect(find.text('已完成'), findsOneWidget);
+    expect(find.text('已完成'), findsNWidgets(2));
     expect(find.textContaining('个对象'), findsNothing);
     expect(
       tester
