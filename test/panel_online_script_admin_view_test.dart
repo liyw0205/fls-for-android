@@ -72,6 +72,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('源 JSON'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump();
 
     final editor = tester.widget<TextField>(find.byType(TextField));
     editor.controller!.text = '[{"id":"draft"}]';
@@ -184,8 +186,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('任务记录'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.text('demo'));
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('demo').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
