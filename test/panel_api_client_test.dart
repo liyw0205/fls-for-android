@@ -308,6 +308,7 @@ void main() {
       client.getJson('/api/deps/install-log/${'a' * 32}'),
       throwsA(
         isA<PanelApiException>().having((error) => error.data, 'data', {
+          'ok': false,
           'install_id': 'a' * 32,
           'kind': 'dependency',
           'operation': 'uninstall',

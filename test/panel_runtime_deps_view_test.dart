@@ -81,7 +81,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('requests'));
     expect(find.widgetWithText(ListTile, 'requests'), findsOneWidget);
     expect(find.text('版本 2.0'), findsOneWidget);
 
@@ -89,7 +89,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('卸载依赖？'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, '卸载'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('依赖卸载'));
+    await pumpUntilFound(tester, find.text('Uninstalled requests'));
 
     expect(find.text('依赖卸载'), findsOneWidget);
     expect(find.text('Uninstalled requests'), findsOneWidget);
@@ -99,7 +100,7 @@ void main() {
     );
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('暂无已安装依赖'));
     expect(find.text('暂无已安装依赖'), findsOneWidget);
     expect(packageReads, 2);
   });
