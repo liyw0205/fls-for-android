@@ -8,6 +8,8 @@ import '../services/panel_api_client.dart';
 import '../services/panel_script_files_manager.dart';
 import '../services/panel_script_import_manager.dart';
 import '../services/panel_script_pull_manager.dart';
+import '../services/panel_script_debug_manager.dart';
+import 'panel_script_debug_view.dart';
 import 'panel_script_import_view.dart';
 import 'panel_script_pull_view.dart';
 
@@ -17,12 +19,14 @@ class PanelScriptFilesView extends StatefulWidget {
     required this.manager,
     this.pullManager,
     this.importManager,
+    this.debugManager,
     required this.onUnauthorized,
   });
 
   final PanelScriptFilesManager manager;
   final PanelScriptPullManager? pullManager;
   final PanelScriptImportManager? importManager;
+  final PanelScriptDebugManager? debugManager;
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
@@ -96,6 +100,7 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
         builder: (_) => _PanelScriptFileEditorView(
           path: item.path,
           manager: widget.manager,
+          debugManager: widget.debugManager,
           onUnauthorized: widget.onUnauthorized,
         ),
       ),
@@ -131,6 +136,20 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       ),
     );
     if (imported == true && mounted) await _load(page: _data?.page ?? 1);
+  }
+
+  Future<void> _openDebugHistory() async {
+    final manager = widget.debugManager;
+    if (manager == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelScriptDebugHistoryView(
+          manager: manager,
+          onUnauthorized: widget.onUnauthorized,
+          routesToClose: 2,
+        ),
+      ),
+    );
   }
 
   Future<void> _rename(PanelScriptFileItem item) async {
@@ -504,6 +523,12 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
               tooltip: '从 URL 拉取',
               onPressed: _openPull,
               icon: const Icon(Icons.download_outlined),
+            ),
+          if (widget.debugManager != null)
+            IconButton(
+              tooltip: '调试记录',
+              onPressed: _openDebugHistory,
+              icon: const Icon(Icons.history),
             ),
           IconButton(
             tooltip: '刷新目录',
@@ -944,11 +969,13 @@ class _PanelScriptFileEditorView extends StatefulWidget {
   const _PanelScriptFileEditorView({
     required this.path,
     required this.manager,
+    this.debugManager,
     required this.onUnauthorized,
   });
 
   final String path;
   final PanelScriptFilesManager manager;
+  final PanelScriptDebugManager? debugManager;
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
@@ -965,6 +992,21 @@ class _PanelScriptFileEditorViewState
   bool _loading = true;
   bool _saving = false;
   int _request = 0;
+
+  Future<void> _debug() async {
+    final manager = widget.debugManager;
+    if (manager == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelScriptDebugView(
+          manager: manager,
+          initialPath: widget.path,
+          onUnauthorized: widget.onUnauthorized,
+          routesToClose: 3,
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -1139,6 +1181,12 @@ class _PanelScriptFileEditorViewState
         overflow: TextOverflow.ellipsis,
       ),
       actions: [
+        if (widget.debugManager != null)
+          IconButton(
+            tooltip: '调试运行',
+            onPressed: _loading || _saving || _snapshot == null ? null : _debug,
+            icon: const Icon(Icons.play_arrow),
+          ),
         IconButton(
           tooltip: '重新读取',
           onPressed: _loading || _saving ? null : _load,

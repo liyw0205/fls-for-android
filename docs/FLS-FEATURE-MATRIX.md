@@ -2,15 +2,14 @@
 
 ## 基线与证据范围
 
-- FLS `develop` 当前提交 `160a78a` / `20261126.1`；新增本机文件/归档导入异步作业 API，脚本文件相关定向测试 39 项、4 个 subtests 通过，Module/Windows Desktop/Windows EXE workflows `45654317029`、`45654316801`、`45654316897` 全绿。
-- APP `develop` 当前提交 `3b7b51c` / `0.1.44+57`；Android CI `45671935279` 全绿，格式、分析、137 项 Flutter 测试、arm64 APK 和 develop artifact `15051060616` 均通过。Termux Flutter tester 不支持 Android 宿主；真实隔离面板验收仍待用户手动完成。
-- 两仓均在 `develop`。以下能力和证据按这组提交记录；CI 通过不等于真实面板手动验收。真实隔离面板验收由用户完成，不做 ADB 测试。
+- 本批从 FLS `develop` `160a78a` / `20261126.1`、APP `develop` `c8054ce` / `0.1.44+57` 起步；当前候选版本为 FLS `20261126.2`、APP `0.1.45+58`。候选提交、CI run 和 APP artifact 在推送后回填。
+- 两仓均在 `develop`。以下历史子批证据按各自提交记录；CI 通过不等于真实面板手动验收。真实隔离面板验收由用户完成，不做 ADB 测试。
 - 本表是按 Flask route、内嵌页面实现与 `fls_manager/static/fls.js` 做的第一轮静态盘点。路由存在不等于 API 契约适合 APP；请求字段、错误语义、分页、认证和操作生命周期仍需逐项由实现及测试确认。
 - `main` 仅作稳定基线。APP 与 FLS 的改造在各自 `develop` 上纵向交付；全量原生页面和配套接口完成前不合并到 `main`。
 
 ## 功能矩阵
 
-脚本拉取在首次交付后已继续加固：FLS `160a78a` / `20261126.1` 还新增本地上传/归档导入作业；单文件、Git 仓库与归档上传均由服务端作业状态承接。APP `3b7b51c` / `0.1.44+57` 已新增本地上传/归档导入原生页面，Android CI `45671935279` 全绿。下方脚本域行内较早的提交/workflow 是各子批历史记录；真实面板手动验收仍待用户。
+脚本拉取在首次交付后已继续加固：FLS `160a78a` / `20261126.1` 新增本地上传/归档导入作业；本批再新增面板调试运行 JSON 契约，APP `0.1.45+58` 增加原生运行/日志和历史页。下方较早的提交/workflow 是各子批历史记录；本批 run 和 artifact 推送后补齐，真实面板手动验收仍待用户。
 
 | FLS 业务域/页面 | APP 当前覆盖 | FLS 可复用接口证据 | 原生迁移与后端工作 |
 | --- | --- | --- | --- |
@@ -19,7 +18,7 @@
 | 任务列表、创建/编辑、详情、启停、手动运行 | 远程与本机共用原生服务端分页任务页：搜索、运行/启用/停用筛选、Web 同款排序；单项运行/停止/启停/复制/删除/置顶；跨页选择与批量运行/停止/启停/删除 | 新增 `GET /api/tasks?q=&status=&sort=&order=&page=&limit=`，返回白名单 DTO、运行态、页数且禁用缓存；显式 `POST /api/task/action/pin/<id>` 使用 `pinned: bool` 和 `request_id`，旧 Web form toggle 保持兼容；批量写复用 `/api/task/bulk-action` 逐项恢复。既有 `/api/status` 继续为概览摘要，`GET /api/task/<id>` 提供详情/最近 10 条历史，创建/编辑 API 与之前一致 | FLS `e4a46e6` 任务列表/置顶/合集归属定向测试 42 项通过；APP `0.1.35+40` 已实现任务管理和 manager/widget 契约，Android CI `45519285447` 通过。操作确认、未知结果同 request_id 恢复、逐项结果、调度器重载及服务端刷新已接入；真实测试面板待用户验收 |
 | 任务合集、任务分组、批量任务操作 | APP `develop` 原生合集搜索/分页/创建/编辑/删除、查看成员与候选任务、加入/移出；任务页选择任务后可批量加入指定合集/批量移出 | `GET /api/collections`、`GET /api/collection/<id>?view=members|available`；`/api/collection/save`、`/api/collection/add-task/<id>`、`/api/collection/delete/<id>`；bulk clear 接受 `expected_collections` 避免清掉过期选择，assign/clear 复用 request_id 逐项恢复 | FLS 本批定向测试含批量移出 expected membership 与恢复；APP 集合 manager 加入/移出与原生列表多选动作已接入。此前 FLS 37 项合集/恢复和 APP 88 项 CI 通过；任务管理扩展批次已由 `45509036217` 通过 94 项 CI 测试/分析/构建；真实面板验收待完成 |
 | 任务运行日志、执行历史、历史导出 | APP 原生记录页支持历史筛选/分页、状态详情、CSV 导出；系统日志文件筛选/分页、尾部读取、内容搜索和受限下载；任务详情仍展示最近 10 条历史与任务日志 | `GET /api/history`、`/api/history/export` 提供有界白名单分页/导出；`GET /api/logs`、`/api/logfile/<filename>?format=json`、`/api/logfile/<filename>/download` 提供有界日志摘要/尾部/脱敏下载；所有接口复用 session/权限 | 历史与系统日志首个原生纵切已完成；8 MB 下载上限、5000 行尾部、路径限制和敏感信息脱敏已覆盖；真实面板验收待完成 |
-| FLS 面板脚本文件、拉取、导入、改名、删除、调试 | APP `develop` 原生面板文件目录、搜索/分页、UTF-8 读取、编辑、新建；冲突可对照服务器版本并保留草稿；改名确认/恢复和普通文件删除确认已接入。单文件和 Git 仓库远程拉取、代理选择、可信字节/对象阶段进度、取消和作业恢复已接入；`0.1.44+57` 新增文件上传/归档导入原生页，提供 ACTION_OPEN_DOCUMENT、multipart 上传进度、作业恢复/取消。Android CI `45671935279` 全绿，137 项测试及 arm64 APK artifact `15051060616` 通过。调试未迁移。APP 本机容器脚本安装不是远程面板脚本管理 | `/api/scripts/tree`、`/api/scripts/file` 提供有界目录、UTF-8 snapshot、revision 保存和新建；`/api/scripts/rename/*` 提供任务引用 revision 确认、幂等提交和恢复；`GET /api/scripts/delete/preview` 返回不含命令/配置内容的引用摘要，`DELETE /api/scripts/file` 使用 revision 和引用确认删除普通文件。FLS `/api/scripts/pull*` 提供单文件作业，仓库使用 `/api/scripts/repo-pull`、`/repo-pull-history`、`/repo-pull-options`、状态和取消接口；两种作业都使用 request_id 幂等和不覆盖发布，不记录完整 URL/代理凭据。Git 只报告阶段/对象计数，不假造文件字节百分比。FLS `160a78a` 新增 `/api/scripts/import` multipart 上传、作业状态/历史/取消，支持普通文件及 ZIP/TAR/TGZ；限制上传 64 MiB、展开 256 MiB、10,000 条目，拒绝路径穿越/重复/链接/特殊文件及 Windows 不安全名称，不覆盖文件且归档发布到新目录。`GET /api/scripts/debug-log/<id>` 仅为既有只读接口，Web 的 GET `/scripts/debug/<path>` 会启动进程，不可由 APP 直接调用 | FLS `160a78a` / `20261126.1` 导入 API 相关测试 39 项及 4 个 subtests 通过，Module `45654317029`、Windows Desktop `45654316801`、Windows EXE `45654316897` 全绿。APP `develop` `3b7b51c` / `0.1.44+57` Android CI `45671935279` 全绿，137 项 Flutter 测试、arm64 APK 构建和 artifact `15051060616` 均通过。Termux Flutter tester 不支持 Android；真实隔离面板手动验收仍待用户，本子批不构成脚本域或全量原生迁移完成 |
+| FLS 面板脚本文件、拉取、导入、改名、删除、调试 | APP `develop` 原生面板文件目录、搜索/分页、UTF-8 读取、编辑/新建与冲突草稿；改名确认/恢复、普通文件删除确认、单文件/Git 拉取、代理选择、作业进度/取消/恢复、文件及归档上传已接入。`0.1.45+58` 再新增文件编辑页调试启动、运行/日志页和历史恢复；停止需用户确认，离开页面不会停止脚本。APP 本机容器脚本安装不是远程面板脚本管理 | `/api/scripts/tree`、`/file`、`/rename/*`、`/delete/preview`、`/pull*`、`/repo-pull*`、`/import*` 提供相应文件/作业契约。调试使用 `GET/POST /api/scripts/debug-runs`、`GET /api/scripts/debug-runs/<id>`、`POST /api/scripts/debug-runs/<id>/stop`；写入依赖原生 session/CSRF，启动以 `request_id` 幂等且先持久化，有限历史和状态/日志仅返回白名单字段。日志有行数/字节上限并清理服务器路径和敏感文本；面板重启后无法确认的作业标为 `unknown`，APP 不调用有副作用 Web GET `/scripts/debug/<path>` | FLS 调试 API 本地定向及相关脚本恢复/改名回归共 34 项通过；新增上传 API 的历史 CI `45654317029`、`45654316801`、`45654316897` 对应旧提交，不作为本批证据。APP manager/widget 与文件入口新增调试测试；Termux `flutter analyze` 通过，Dart format 检查通过，Flutter tester 不支持 Android 宿主，本批 Android CI 待跑。真实隔离面板验收仍待用户；脚本域和全量原生迁移均未验收完成 |
 | FLS 面板在线脚本市场与安装/更新 | APP `develop` 已有目录/详情/文档/安装进度/历史、源同步及历史、源 JSON 编辑、独立任务导入、外部任务源同步与失败项恢复、任务操作历史/确认/调度器恢复/归档；区别于不启动面板的本机容器脚本市场 | `/catalog`、`/detail/<id>`、`/install-options/<id>`、`/doc/<id>`、安装日志/历史、`/refresh*`、`/import-tasks*`、`/task-link*`、`/source`、`/refresh-options` | FLS `5d54e68` 加入源缓存大小限制、`cache_revision` 冲突保护、代理白名单及 `has_task_source` DTO；409 项用例/305 个 subtests及三项打包 workflow 通过。APP `6afa14c` 的 Android CI #45568326814 已通过 116 项测试、静态分析和 arm64 APK 构建；真实隔离面板验收待用户完成。它不是全量原生迁移完成证明 |
 | 依赖管理、Python/Node 运行时 | WebView；本机 Python/Full 容器镜像管理已原生 | `deps.py` 有安装、取消、重试、确认、日志、历史 API；`runtime.py` 有 `/api/install/runtime/<runtime>` 和安装页面 | 迁移依赖清单/状态/卸载及运行时管理；确认环境与架构、下载/执行权限、流式进度、恢复 Token、取消和不完整安装回滚 |
 | 系统日志、日志文件与清理 | APP 原生日志列表/详情/搜索/下载；分组删除仍由 WebView | `/api/logs`、`/api/logfile/<filename>`、`/api/logfile/<filename>/download`；`/api/logs/groups/delete` 仍为 Web 操作 | 原生读取与下载已完成；分组清理需单独补结构化确认/写入契约 |
@@ -29,6 +28,8 @@
 | 通知渠道、测试发送、投递历史 | WebView | `/api/notify/action`、`/api/notify/test/<id>`、`/api/notify/history`、`/api/notify/retry/<delivery_id>`；渠道编辑页为 HTML 表单 | 补渠道列表/编辑 schema，密钥采用只写或遮蔽语义；明确默认渠道、删除、测试副作用和投递历史分页 |
 | 备份、导入、恢复、删除 | WebView | `routes/backup/api.py` 有备份 list/create/job/cancel/delete；`restore.py` 有 restore history/status、import、reload、maintenance ack API | 逐项确认上传/下载、覆盖范围、备份格式/尺寸限制、恢复预检查、可中断阶段与恢复操作状态；所有覆盖操作需明确确认 |
 | FLS 版本信息、更新、面板控制、时间同步、后台操作日志 | WebView；本机容器镜像和 FLS Release 更新管理已有原生页面 | `/api/about/update-info`、`/api/about/job-log/<id>`；更新执行、重启/停止、时间同步主要由 `/about/*` 表单/页面路由驱动 | 统一 Release/更新作业状态 API，确认进度、取消、重启后的恢复；区别更新 FLS 源代码、运行时镜像和 APP APK |
+
+面板脚本调试纵切已实现上述 FLS JSON API 与 APP 原生运行/历史页。FLS 有副作用的 Web GET 启动路由仍仅为 Web 兼容保留，APP 不调用；长任务结果未知时必须显示未知并允许查日志，不得自动重放或停止。下一步按本矩阵推进依赖/运行时、配置、代理/通知、备份维护等所有适用 Web 页面。脚本域或单个页面完成都不代表全量原生渲染完成。
 
 ## 原生 API 基础契约
 

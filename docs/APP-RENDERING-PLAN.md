@@ -46,7 +46,7 @@
 - 长命令输出进入可展开的终端日志区；最近日志自动滚动，用户可暂停滚动和复制日志。
 - 安装不启动 FLS 面板。需要容器运行环境；容器不存在或损坏时，操作入口转到“环境”页。
 
-### FLS 面板在线脚本（当前纵切）
+### FLS 面板在线脚本（已交付纵切）
 
 这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。两仓 `develop` 的版本、提交和工作流结果统一见 [路线图基线](GOAL-ROADMAP.md#分支与合并策略)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 及相应测试为准。
 
@@ -80,13 +80,17 @@ APP 在“脚本”入口的在线脚本页提供“面板文件”原生入口�
 
 1. **目录与编辑。** 已在当前 `develop` 纵切实现上述 API 与 APP 原生页面。继续验证已写入但回复失败时先重读核实，不盲目重提；若增加文件操作也必须沿用相同路径、安全大小与 revision 边界。
 2. **文件操作。** FLS `develop` 提供改名预览/确认/恢复 JSON API：`GET /api/scripts/rename/preview`、`POST /api/scripts/rename`、`GET /api/scripts/rename/<operation_id>`、`POST /api/scripts/rename/<operation_id>/recovery`。预览 revision 覆盖文件身份及关联任务引用；确认使用客户端 operation_id 幂等提交，异常后可读状态并继续或回滚。APP `157d43c` 已加入原生改名确认和恢复 UI。当前批次在其上补齐删除影响预览和 revision 确认：FLS `GET /api/scripts/delete/preview?path=...` 只返回任务 ID/名称/引用字段，不暴露命令或配置值；`DELETE /api/scripts/file` 传入路径、预览 revision 和显式 `confirm_references`，过期预览、未确认引用、任务运行或调试运行均拒绝删除。APP 删除前显示任务影响；写入结果不确定时重新检查文件存在状态，不盲目重放。删除仅针对普通文件，目录递归删除仍留在 Web。此批测试/CI 结果记录在路线图基线；隔离面板手动验证待用户完成。不要在 APP 重新实现路径解析或任务引用识别。
-3. **调试。** FLS 补显式 POST 启停、状态、历史与受限脱敏日志契约，复用已有调试服务。APP 离开或重开页面后按原作业 ID 恢复，不以断网或轮询停止当作调试结束。
+3. **调试。** 已交付显式 POST 启动/停止、状态、历史与有界脱敏日志；APP 离开页面仅停止轮询，重开后按作业 ID 恢复，不把断网或轮询停止当作调试结束。
 
 首个子批的验收：隔离面板上同一个文件可由 APP 与 Web 轮流读取和编辑；过期 revision 不覆盖远端，非法路径与非 UTF-8/超限文件不会进入编辑器；两仓有契约/回归测试和 CI，手动验收记录精确 APP/FLS SHA。缺功能时仅降级对应入口，不把权限错误或普通 404 当作旧面板。
 
-### 当前纵切：面板脚本拉取/导入与调试
+### 当前纵切：其余面板业务的全量原生迁移
 
-FLS `develop` 基线 `17c52f6` 后已推送 `4dd1b2e` (`20261125.11`) 和 `c21c1f5` (`20261125.12`)；当前脚本 Web 行为位于 `routes/scripts/pull.py` 和 `routes/scripts/debug.py`。远程文件/仓库拉取 `/pull/fetch`、本地文件/ZIP/TAR 导入 `/pull/import` 原本是同步 Web 表单；本批为远程单文件补了可恢复作业契约。已有 `GET /api/scripts/debug-log/<id>` 读取调试状态和日志，但响应包含绝对路径/原始错误，且不能据此覆盖启动、停止和历史管理。特别禁止 APP 调用 GET `/scripts/debug/<path>`，它会启动进程。
+本批从已同步的 FLS `develop` 基线 `160a78a` / `20261126.1` 开始；脚本文件/归档导入、面板调试与 APP 原生页面现已分别递增开发版本，候选提交和工作流结果回填到路线图。两仓仍只在各自 `develop`；全量适用业务覆盖和用户手动验收前不合并 `main`。本机容器的镜像/脚本安装和 APP 更新仍是独立业务，不替代面板业务。
+
+FLS `fls_manager/routes/scripts/native_debug.py` 新增 `GET/POST /api/scripts/debug-runs`、`GET /api/scripts/debug-runs/<id>` 和 `POST /api/scripts/debug-runs/<id>/stop`。JSON 写入经原生 session/CSRF 保护，启动以 `request_id` 幂等、绑定脚本相对路径，并先持久化记录再启动进程；返回白名单字段和有界脱敏日志。Web GET `/scripts/debug/<path>` 的既有启动行为保持兼容，APP 不调用该路由；面板重启后无法确认的作业为 `unknown`，不允许强制停止。
+
+APP 新增独立调试 DTO/manager、运行日志页及历史页，并从面板脚本文件编辑页提供显式启动入口。运行状态每 2 秒轮询，日志可选自动跟随、选择和复制；离开页面不停止服务端进程，历史恢复读取原作业，停止前二次确认。接口错误时启动复用原 `request_id`，避免网络结果未知后重复运行。后续按 [FLS 功能矩阵](FLS-FEATURE-MATRIX.md) 推进依赖/运行时、配置、代理/通知、备份维护和剩余任务/日志操作；任何单域或版本管理完成都不代表全量原生化完成。
 
 **已交付单文件拉取子批：** FLS `4dd1b2e` / `20261125.11` 新增异步拉取/状态/历史/代理选项/取消接口。`c21c1f5` / `20261125.12` 加固目录 FD 发布和父目录身份检查；发布恢复需同时匹配 inode 与 SHA-256，取消只有在状态落盘后才设置取消事件。作业以 `request_id` 幂等，限制 64 MiB，流式报告下载字节和可信 Content-Length，使用同目录暂存及不覆盖发布；历史不保存原始 URL 或代理凭据，重启后中断状态为 `unknown`。相关定向测试 59 项、46 个 subtests 已通过；Module/Windows Desktop/Windows EXE workflows `45626660446`、`45626660450`、`45626660376` 全绿。Termux 本机全量 pytest 被已有备份测试对 `os.link` 的平台假设阻断，不将其记为全量通过。
 
@@ -94,14 +98,14 @@ APP `ca841b5` / `0.1.40+51` 新增独立 DTO/manager/页面，在面板文件页
 
 Git 仓库拉取现已补齐 FLS JSON 作业 API，APP 原生复用拉取页并以模式切换区分单文件和 Git 仓库。已 fetch 核对 FLS `develop` 为 `1bce91e` / `20261125.13`，其 26 项相关测试、2 个 subtests 和三项打包 workflow 均通过；APP `3b5b3e0` / `0.1.42+55` 含对象阶段/不定进度与完成态满格显示。Android CI `45646405352` 已全绿：格式、静态分析、133 项 Flutter 测试、arm64 构建和 develop artifact `15039340837` 均通过。Termux Flutter tester 不支持 Android 宿主。两仓均只在各自 `develop` 推进；脚本域剩余功能、全 APP 矩阵/CI 和用户验收完成前不合并 `main`：
 
-**归档导入后端子批：** FLS `develop` `160a78a` / `20261126.1` 新增 `POST /api/scripts/import` multipart 上传，以及 `GET /api/scripts/import/<job_id>`、`GET /api/scripts/import-history`、`POST /api/scripts/import/<job_id>/cancel`。支持普通文件、ZIP、TAR、TGZ；单文件上限 64 MiB、展开总量 256 MiB、最多 10,000 个条目；拒绝路径穿越、重复路径、链接/特殊文件及 Windows 不安全名称。作业以 `request_id` 幂等，限制并发、不覆盖既有目标，归档只发布到新目录，重启中断标记 `unknown`。脚本导入相关 API/文件操作定向测试 39 项及 4 个 subtests 通过；Module `45654317029`、Windows Desktop `45654316801`、Windows EXE `45654316897` workflow 全绿。APP `develop` `3b7b51c` / `0.1.44+57` 已新增原生文件选择、64 MiB 本地复制边界、multipart 上传字节进度、作业恢复/取消和成功后目录刷新；Android CI `45671935279` 全绿，137 项 Flutter 测试、arm64 APK 构建与 develop artifact `15051060616` 均通过。Termux 本机 Flutter tester 不可用；隔离面板手动验收仍待用户完成。
+**归档导入后端子批：** FLS `develop` `160a78a` / `20261126.1` 新增 `POST /api/scripts/import` multipart 上传，以及 `GET /api/scripts/import/<job_id>`、`GET /api/scripts/import-history`、`POST /api/scripts/import/<job_id>/cancel`。支持普通文件、ZIP、TAR、TGZ；单文件上限 64 MiB、展开总量 256 MiB、最多 10,000 个条目；拒绝路径穿越、重复路径、链接/特殊文件及 Windows 不安全名称。作业以 `request_id` 幂等，限制并发、不覆盖既有目标，归档只发布到新目录，重启中断标记 `unknown`。脚本导入相关 API/文件操作定向测试 39 项及 4 个 subtests 通过；Module `45654317029`、Windows Desktop `45654316801`、Windows EXE `45654316897` workflow 全绿。APP `develop` 代码提交 `3b7b51c` / `0.1.44+57` 已新增原生文件选择、64 MiB 本地复制边界、multipart 上传字节进度、作业恢复/取消和成功后目录刷新；Android CI `45671935279` 全绿，137 项 Flutter 测试、arm64 APK 构建与 develop artifact `15051060616` 均通过。Termux 本机 Flutter tester 不可用；隔离面板手动验收仍待用户完成。
 
 1. **本地上传/归档导入。** FLS API 和 APP 原生纵切已实现：APP 用 `ACTION_OPEN_DOCUMENT` 选择文件，并在受限临时目录副本后显示 multipart 实时字节进度；FLS 状态作业负责安全提取/写入、取消、历史和重启恢复。单文件上限 64 MiB、展开 256 MiB、最多 10,000 条目；拒绝链接、特殊文件、穿越、重复路径和 Windows 不安全名称。普通文件不能覆盖目标，归档必须发布到新目录，失败清理 staging。APP Android CI `45671935279` 已验证格式、分析、137 项 Flutter 测试、arm64 APK 和 artifact `15051060616`；真实面板手动验收待用户完成。
-2. **调试运行。** 新增明确的 POST 启动、状态/历史、停止和有界日志 API；启动使用 request ID 幂等，记录只能包含相对脚本路径、状态/退出码和脱敏错误，日志限制行数/字节且不得向 APP 返回服务器绝对路径。服务重启导致进程结果无法确认时表达 `unknown`，不能谎报停止或成功。
-3. **APP 原生呈现与完整性。** 单文件与 Git 仓库拉取共用独立作业页；Git 只呈现传输阶段/对象计数和不定进度，不伪造字节百分比。返回目录只在后端确认发布后刷新。每个入口有 manager/widget/API 契约测试，路径和冲突提示使用相对路径，不在 UI/日志记录凭据。
-4. **全量面板覆盖。** 脚本域完成后继续按 [FLS 功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移所有适用 Web 页面、表单、状态与操作；不能把脚本/版本单域交付视为 APP 全量原生化完成。
+2. **FLS 调试作业 API。** 已新增显式 `POST` 启动/停止、有限历史列表、单作业状态/日志接口；写请求复用原生 session/CSRF。启动以 `request_id` 幂等且绑定脚本相对路径；路径校验、改名恢复检查和命令构造复用现有服务。响应只返回白名单字段，不返回服务器绝对路径或完整命令；日志有行数/字节上限并脱敏。面板重启后无法确认的作业为 `unknown`，APP 不可强制停止。
+3. **APP 原生调试页。** 已在文件编辑页接入“调试运行”入口、最近调试记录、状态/日志页与明确停止确认。页面退出只停止轮询；重进按 `debug_id` 恢复状态和日志。日志有界、自动滚动可暂停并可复制；失败/未知/退出码清晰呈现。FLS API 和 APP 不持久化面板绝对路径或命令到 APP 本地。
+4. **测试及全量面板覆盖。** FLS 定向测试覆盖 session/CSRF、路径越界/缺失、请求幂等与冲突、持久化失败、启动失败、停止与重启后未知状态、日志/错误脱敏和请求边界；APP manager/widget 测试覆盖请求契约、启动/恢复/显式停止、历史和窄屏。Termux Flutter tester 不支持 Android 宿主，APP 测试以推送后的 Android CI 为准。调试完成后继续按 [FLS 功能矩阵](FLS-FEATURE-MATRIX.md) 逐域迁移所有适用 Web 页面、表单、状态与操作；不能把脚本/版本单域交付视为 APP 全量原生化完成。
 
-先完成一个类型的后端 API 与测试，再接对应 APP manager/widget 测试并推送两仓 `develop`；APP 代码批次版本号递增。FLS 定向/相关回归测试和打包工作流、APP 格式/分析/Flutter 测试/arm64 CI 全通过后，再继续脚本域未迁移操作及功能矩阵其他面板域。真实隔离面板由用户手动验收，不做 ADB；任何单个纵切完成都不改变两仓 `main`。
+本批两仓已递增版本号；推送后运行 FLS 定向/相关回归测试与开发分支打包工作流、APP 格式/分析/Flutter 测试/arm64 CI。真实隔离面板由用户手动验收，不做 ADB；只有全量原生渲染和用户验收完成后才讨论将两个 `develop` 合并到 `main`。
 
 ### APP 更新
 
@@ -136,7 +140,7 @@ Git 仓库拉取现已补齐 FLS JSON 作业 API，APP 原生复用拉取页并�
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
 
 6. **已交付纵切：FLS 面板在线脚本**。源管理、独立任务操作、恢复管理与后端 API 已推送两仓 `develop`，仍待隔离面板手动验收。
-7. **当前纵切：FLS 面板脚本文件与其余面板业务**。目录/编辑/改名/普通文件删除原生流程及所需后端 API 已进入两仓 `develop`；接下来按路线图推进拉取/归档导入/调试，再逐域迁移功能矩阵中的其他 Web 页面。任何单域完成都不等于全 APP 原生化；全量验收前两仓保持 `main` 不动。
+7. **当前纵切：全量面板业务迁移**。目录/编辑/改名/删除/拉取/归档导入/调试均已进入两仓 `develop`；下一步按功能矩阵迁移运行时/依赖管理，再推进配置、日志、备份和维护页面。任何单域完成都不等于全 APP 原生化；全量验收前两仓保持 `main` 不动。
 
 ### 手动验收清单
 

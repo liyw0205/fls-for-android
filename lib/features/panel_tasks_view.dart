@@ -16,6 +16,7 @@ import '../services/panel_records_manager.dart';
 import '../services/panel_script_files_manager.dart';
 import '../services/panel_script_import_manager.dart';
 import '../services/panel_script_pull_manager.dart';
+import '../services/panel_script_debug_manager.dart';
 import '../services/panel_tasks_manager.dart';
 import 'panel_collections_view.dart';
 import 'panel_online_scripts_view.dart';
@@ -980,6 +981,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
           manager: PanelScriptFilesManager(api),
           importManager: PanelScriptImportManager(api),
           pullManager: PanelScriptPullManager(api),
+          debugManager: PanelScriptDebugManager(api),
           onUnauthorized: (error) async {
             await _expireSession(error);
           },

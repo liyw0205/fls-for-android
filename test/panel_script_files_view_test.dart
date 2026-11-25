@@ -4,6 +4,7 @@ import 'package:fls_for_android/features/panel_script_files_view.dart';
 import 'package:fls_for_android/services/panel_api_client.dart';
 import 'package:fls_for_android/services/panel_credential_store.dart';
 import 'package:fls_for_android/services/panel_script_files_manager.dart';
+import 'package:fls_for_android/services/panel_script_debug_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -369,6 +370,95 @@ void main() {
     expect(deleteSubmitted, isTrue);
     expect(treeReads, 2);
     expect(find.text('目录为空'), findsOneWidget);
+  });
+
+  testWidgets('opens the native debugger from a panel file editor', (
+    tester,
+  ) async {
+    final requests = <String>[];
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=file-session',
+        csrfToken: 'file-csrf',
+      ),
+      client: panelMockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        if (request.url.path == '/api/scripts/tree') {
+          return _jsonResponse(_tree());
+        }
+        if (request.url.path == '/api/scripts/file') {
+          return _jsonResponse({
+            'ok': true,
+            'file': _file('print("debug")\n', 'a' * 64),
+          });
+        }
+        if (request.method == 'POST' &&
+            request.url.path == '/api/scripts/debug-runs') {
+          expect(request.headers['x-csrf-token'], 'file-csrf');
+          expect(jsonDecode(request.body)['path'], 'demo.py');
+          return _jsonResponse({
+            'ok': true,
+            'replayed': false,
+            'run': {
+              'id': 'b' * 32,
+              'path': 'demo.py',
+              'status': 'succeeded',
+              'running': false,
+              'returncode': 0,
+              'error': '',
+              'created_at': 'now',
+              'updated_at': 'now',
+            },
+          }, 202);
+        }
+        if (request.method == 'GET' &&
+            request.url.path == '/api/scripts/debug-runs/${'b' * 32}') {
+          return _jsonResponse({
+            'ok': true,
+            'run': {
+              'id': 'b' * 32,
+              'path': 'demo.py',
+              'status': 'succeeded',
+              'running': false,
+              'returncode': 0,
+              'error': '',
+              'created_at': 'now',
+              'updated_at': 'now',
+            },
+            'log': 'debug output',
+          });
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      }),
+    );
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelScriptFilesView(
+          manager: PanelScriptFilesManager(api),
+          debugManager: PanelScriptDebugManager(api),
+          onUnauthorized: (_) async {},
+        ),
+      ),
+    );
+    await _pumpUntil(tester, () => find.text('demo.py').evaluate().isNotEmpty);
+    await tester.tap(find.text('demo.py'));
+    await _pumpUntil(
+      tester,
+      () => find.byTooltip('调试运行').evaluate().isNotEmpty,
+    );
+    await tester.tap(find.byTooltip('调试运行'));
+    await _pumpUntil(
+      tester,
+      () => find.text('debug output').evaluate().isNotEmpty,
+    );
+
+    expect(find.text('脚本调试'), findsOneWidget);
+    expect(requests, contains('POST /api/scripts/debug-runs'));
+    expect(requests, contains('GET /api/scripts/debug-runs/${'b' * 32}'));
+    expect(tester.takeException(), isNull);
   });
 }
 
