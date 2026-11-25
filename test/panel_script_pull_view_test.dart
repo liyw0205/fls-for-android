@@ -11,6 +11,44 @@ import 'package:http/http.dart' as http;
 import 'panel_test_http.dart';
 
 void main() {
+  testWidgets('explains when the destination directory changed', (
+    tester,
+  ) async {
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=pull-session',
+        csrfToken: 'pull-csrf',
+      ),
+      client: panelMockClient((request) async {
+        if (request.url.path == '/api/scripts/pull-options') {
+          return _jsonResponse({'ok': true, 'proxies': []});
+        }
+        if (request.url.path == '/api/scripts/pull-history') {
+          return _jsonResponse({
+            'ok': true,
+            'items': [_job(status: 'failed', errorCode: 'path_changed')],
+          });
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      }),
+    );
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelScriptPullView(
+          manager: PanelScriptPullManager(api),
+          currentPath: '',
+          onUnauthorized: (_) async {},
+        ),
+      ),
+    );
+
+    await pumpUntilFound(tester, find.textContaining('目标目录已变化，未发布'));
+    expect(find.textContaining('目标目录已变化，未发布'), findsOneWidget);
+  });
+
   testWidgets(
     'submits a pull and renders byte progress before refreshing the directory',
     (tester) async {
@@ -166,6 +204,7 @@ void main() {
 Map<String, dynamic> _job({
   required String status,
   bool unknownTotal = false,
+  String errorCode = '',
 }) => {
   'id': 'b' * 32,
   'request_id': 'a' * 32,
@@ -179,7 +218,7 @@ Map<String, dynamic> _job({
     'total_bytes': unknownTotal ? null : 1024 * 1024,
     'percent': unknownTotal ? null : 100,
   },
-  'error_code': '',
+  'error_code': errorCode,
   'created_at': '2026-11-25T10:00:00+08:00',
   'updated_at': '2026-11-25T10:00:01+08:00',
   'replayed': false,

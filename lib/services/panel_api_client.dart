@@ -468,6 +468,7 @@ class PanelApiClient {
               'not_found',
               'invalid_limit',
               'too_large',
+              'path_changed',
               'download_failed',
               'worker_interrupted',
               'state_unknown',

@@ -277,6 +277,7 @@ class _PanelScriptPullViewState extends State<PanelScriptPullView> {
     'failed' => switch (job.errorCode) {
       'target_exists' => '目标已存在，未覆盖',
       'too_large' => '文件超过 64 MB 限制',
+      'path_changed' => '目标目录已变化，未发布',
       _ => '拉取失败',
     },
     'cancelled' => '已取消',
