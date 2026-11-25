@@ -34,7 +34,7 @@
 
 ### FLS 面板在线脚本（下一纵切）
 
-这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。FLS `origin/develop` 已拉到 `bdbbbe9`（`20261125.5`）；本地待提交候选为 `20261125.6`。APP `develop` 已有未提交原生首批实现，候选版本为 `0.1.36+41`。本批不是全量迁移；剩余范围见第 5 项及 [全量路线图](GOAL-ROADMAP.md)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 和 `tests/test_online_native_api.py` 为准。
+这是远程/本机 FLS 面板上的市场功能，与无需启动 FLS 的 APP 本机容器脚本安装分开，不复用 `OnlineScriptsView` 或 `OnlineScriptsManager`。FLS `develop` 已从 `bdbbbe9` 更新并推送至 `094c7c3`（`20261125.6`）；APP `develop` 已推送原生首批实现 `216c386`（`0.1.36+41`），Android CI `45549664068` 通过。本批不是全量迁移；剩余范围见第 5 项及 [全量路线图](GOAL-ROADMAP.md)。下表路径均相对于 `/api/online-scripts`，字段与边界以 FLS `fls_manager/routes/online_scripts/` 和 `tests/test_online_native_api.py` 为准。
 
 | 接入顺序 | 现有接口 | APP 行为与验收 |
 | --- | --- | --- |
@@ -46,7 +46,7 @@
 
 APP 当前在 `PanelTasksView` 接入独立 DTO、`PanelOnlineScriptsManager` 和原生页面，复用 `PanelApiClient` 与现有 `_expireSession`。已覆盖目录/搜索/分页、详情/文档、安装选项、任务选择、覆盖确认、安装状态/日志/停止/恢复和历史；源刷新、源编辑、单独导入/任务关联仍未完成。提交前生成请求 ID，结果未知或返回 `accepted` 时先按原 ID 查状态；仅在服务端明确允许时重试。按面板隔离恢复标识，重进页面或重启后也能从历史找回作业。401 必须退出全部在线脚本嵌套页面并回到重新连接状态，不能停留在旧会话页面。
 
-写操作接入前的两项 FLS `develop` 契约修整已在本地候选中完成：`install-options` 搜索不再匹配任务环境变量值；覆盖冲突只返回 `target_exists` 和 `confirm_required`，不返回服务器目标路径。对应 Python 回归测试已补充。继续检查安装拒绝/重试、日志和历史序列化的敏感字段白名单。APP 的错误元数据扩展按在线脚本路由和字段类型白名单处理 `confirm_required`、`target_exists`、`request_id`、`install_id`、`running`、`accepted`、`retry_allowed` 等，不保留目标路径、任意返回 URL、代理凭据或变量值；原始错误不直接展示。
+写操作接入前的两项 FLS `develop` 契约修整已在 `094c7c3` 完成并通过 61 项定向测试：`install-options` 搜索不再匹配任务环境变量值；覆盖冲突只返回 `target_exists` 和 `confirm_required`，不返回服务器目标路径。继续检查安装拒绝/重试、日志和历史序列化的敏感字段白名单。APP 的错误元数据扩展按在线脚本路由和字段类型白名单处理 `confirm_required`、`target_exists`、`request_id`、`install_id`、`running`、`accepted`、`retry_allowed` 等，不保留目标路径、任意返回 URL、代理凭据或变量值；原始错误不直接展示。
 
 APP 具体落地次序：
 
@@ -88,7 +88,7 @@ APP 具体落地次序：
 4. **已完成：可重复的网络边界测试**。CI 已通过无 `Content-Length` 时只显示已接收字节和不定进度，以及分块慢速传输时进度随接收字节前进的 manager/UI 测试。
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
 
-6. **当前纵切：FLS 面板在线脚本（部分实现，未提交）**。FLS `origin/develop` 已拉至 `bdbbbe9`（`20261125.5`），本地后端安全契约候选版本 `20261125.6`；APP 原生页面候选版本 `0.1.36+41`。本地已完成目录/详情/文档/安装与恢复的首批代码和测试，尚待检查 401 嵌套路由、跑验证、提交/推送并由 Android CI 验证。随后补齐该域剩余操作，再按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 迁移其余所有适用 Web 页面。任何单域完成都不等于全 APP 原生化，两个 `main` 在全量验收前保持不动。
+6. **当前纵切：FLS 面板在线脚本（首批已推送，域内未完成）**。FLS `094c7c3`（`20261125.6`）的 61 项定向测试与 Module/Windows Desktop/Windows EXE 工作流 `45548937139`、`45548937276`、`45548937300` 均通过；APP `216c386`（`0.1.36+41`）Android CI `45549664068` 的格式、分析、全部测试及 arm64 构建通过。已补 401 嵌套页面退出。随后补齐在线脚本域剩余操作，再按 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md) 迁移其余所有适用 Web 页面。任何单域完成都不等于全 APP 原生化，两个 `main` 在全量验收前保持不动。
 
 ### 手动验收清单
 
