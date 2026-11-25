@@ -169,6 +169,154 @@ void main() {
     },
   );
 
+  test(
+    'previews and submits a revision-checked task-reference rename',
+    () async {
+      final requests = <http.Request>[];
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: session,
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'GET') {
+            expect(request.url.path, '/api/scripts/rename/preview');
+            expect(request.url.queryParameters, {
+              'path': 'demo.py',
+              'new_name': 'renamed.py',
+            });
+            return _jsonResponse({
+              'ok': true,
+              'preview': {
+                'source': 'demo.py',
+                'destination': 'renamed.py',
+                'revision': revision,
+                'references': [
+                  {
+                    'id': 'task-1',
+                    'name': 'Demo task',
+                    'manual': false,
+                    'before': {'command': 'python demo.py', 'config_path': ''},
+                    'after': {
+                      'command': 'python renamed.py',
+                      'config_path': '',
+                    },
+                  },
+                ],
+              },
+            });
+          }
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/scripts/rename');
+          expect(request.headers['x-csrf-token'], session.csrfToken);
+          expect(jsonDecode(request.body), {
+            'path': 'demo.py',
+            'new_name': 'renamed.py',
+            'revision': revision,
+            'operation_id': 'b' * 32,
+            'references': [
+              {
+                'task_id': 'task-1',
+                'command': 'python renamed.py',
+                'config_path': '',
+              },
+            ],
+          });
+          return _jsonResponse({
+            'ok': true,
+            'operation': {
+              'id': 'b' * 32,
+              'source': 'demo.py',
+              'destination': 'renamed.py',
+              'status': 'succeeded',
+              'finished': true,
+              'actual': {
+                'source_exists': false,
+                'destination_exists': true,
+                'tasks': [
+                  {'task_id': 'task-1', 'state': 'updated'},
+                ],
+              },
+            },
+          });
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelScriptFilesManager(api);
+
+      final preview = await manager.previewRename(
+        path: 'demo.py',
+        newName: 'renamed.py',
+      );
+      final operation = await manager.renameFile(
+        path: 'demo.py',
+        newName: 'renamed.py',
+        revision: preview.revision,
+        operationId: 'b' * 32,
+        references: const [
+          PanelScriptRenameReferenceUpdate(
+            taskId: 'task-1',
+            command: 'python renamed.py',
+            configPath: '',
+          ),
+        ],
+      );
+
+      expect(preview.references.single.afterCommand, 'python renamed.py');
+      expect(operation.finished, isTrue);
+      expect(operation.taskStates.single['state'], 'updated');
+      expect(requests, hasLength(2));
+    },
+  );
+
+  test(
+    'rename errors expose only validated preview and operation fields',
+    () async {
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: session,
+        client: MockClient(
+          (request) async => _jsonResponse({
+            'ok': false,
+            'code': 'rename_revision_conflict',
+            'msg': '文件或任务引用已变更',
+            'preview': {
+              'source': 'demo.py',
+              'destination': 'renamed.py',
+              'revision': 'c' * 64,
+              'references': [],
+              'absolute_path': '/private/root',
+            },
+            'operation': {'id': 'invalid'},
+            'untrusted': 'drop-me',
+          }, 409),
+        ),
+      );
+      addTearDown(api.close);
+
+      try {
+        await PanelScriptFilesManager(api).renameFile(
+          path: 'demo.py',
+          newName: 'renamed.py',
+          revision: revision,
+          operationId: 'b' * 32,
+          references: const [],
+        );
+        fail('expected a stale rename conflict');
+      } on PanelApiException catch (error) {
+        expect(error.statusCode, 409);
+        expect(error.data?['code'], 'rename_revision_conflict');
+        expect(error.data?['preview'], {
+          'source': 'demo.py',
+          'destination': 'renamed.py',
+          'revision': 'c' * 64,
+          'references': <Object>[],
+        });
+        expect(error.data!.containsKey('operation'), isFalse);
+        expect(error.data!.containsKey('untrusted'), isFalse);
+      }
+    },
+  );
+
   test('rejects absolute, traversal, and malformed server paths', () async {
     final api = PanelApiClient(
       baseUrl: 'https://panel.example',

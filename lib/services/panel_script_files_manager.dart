@@ -89,6 +89,108 @@ class PanelScriptFilesManager {
     }
   }
 
+  Future<PanelScriptRenamePreview> previewRename({
+    required String path,
+    required String newName,
+  }) async {
+    _requireRelativePath(path);
+    _requireName(newName);
+    final uri = Uri(
+      path: '/api/scripts/rename/preview',
+      queryParameters: {'path': path, 'new_name': newName},
+    );
+    final payload = await _api.getJson(uri.toString());
+    try {
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('脚本改名预览响应格式无效');
+      }
+      return PanelScriptRenamePreview.fromJson(payload['preview']);
+    } on FormatException catch (error) {
+      throw PanelApiException(
+        error.message,
+        path: '/api/scripts/rename/preview',
+      );
+    }
+  }
+
+  Future<PanelScriptRenameOperation> renameFile({
+    required String path,
+    required String newName,
+    required String revision,
+    required String operationId,
+    required List<PanelScriptRenameReferenceUpdate> references,
+  }) async {
+    _requireRelativePath(path);
+    _requireName(newName);
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(revision) ||
+        !RegExp(r'^[0-9a-f]{32}$').hasMatch(operationId) ||
+        references.length > 200) {
+      throw ArgumentError('脚本改名确认信息无效');
+    }
+    final payload = await _api.postJson('/api/scripts/rename', {
+      'path': path,
+      'new_name': newName,
+      'revision': revision,
+      'operation_id': operationId,
+      'references': references
+          .map(
+            (reference) => {
+              'task_id': reference.taskId,
+              'command': reference.command,
+              'config_path': reference.configPath,
+            },
+          )
+          .toList(growable: false),
+    });
+    try {
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('脚本改名响应格式无效');
+      }
+      return PanelScriptRenameOperation.fromJson(payload['operation']);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: '/api/scripts/rename');
+    }
+  }
+
+  Future<PanelScriptRenameOperation> fetchRenameOperation(
+    String operationId,
+  ) async {
+    if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(operationId)) {
+      throw ArgumentError.value(operationId, 'operationId');
+    }
+    final payload = await _api.getJson('/api/scripts/rename/$operationId');
+    try {
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('脚本改名状态响应格式无效');
+      }
+      return PanelScriptRenameOperation.fromJson(payload['operation']);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: '/api/scripts/rename');
+    }
+  }
+
+  Future<PanelScriptRenameOperation> recoverRename({
+    required String operationId,
+    required String action,
+  }) async {
+    if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(operationId) ||
+        !const {'resume', 'rollback'}.contains(action)) {
+      throw ArgumentError('脚本改名恢复参数无效');
+    }
+    final payload = await _api.postJson(
+      '/api/scripts/rename/$operationId/recovery',
+      {'action': action},
+    );
+    try {
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('脚本改名恢复响应格式无效');
+      }
+      return PanelScriptRenameOperation.fromJson(payload['operation']);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: '/api/scripts/rename');
+    }
+  }
+
   static void _requireRelativePath(String path) {
     if (path.isEmpty ||
         path.startsWith('/') ||
@@ -100,4 +202,31 @@ class PanelScriptFilesManager {
       throw ArgumentError.value(path, 'path', '脚本路径无效');
     }
   }
+
+  static void _requireName(String name) {
+    if (name.trim().isEmpty ||
+        name != name.trim() ||
+        name == '.' ||
+        name == '..' ||
+        name.contains('/') ||
+        name.contains('\\') ||
+        name.contains('\u0000') ||
+        name.endsWith('.') ||
+        name.endsWith(' ') ||
+        name.contains(':')) {
+      throw ArgumentError.value(name, 'name', '脚本名称无效');
+    }
+  }
+}
+
+class PanelScriptRenameReferenceUpdate {
+  const PanelScriptRenameReferenceUpdate({
+    required this.taskId,
+    required this.command,
+    required this.configPath,
+  });
+
+  final String taskId;
+  final String command;
+  final String configPath;
 }

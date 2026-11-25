@@ -173,6 +173,118 @@ void main() {
     expect(fileReads, 2);
     expect(find.text('面板文件'), findsOneWidget);
   });
+
+  testWidgets('reviews task references before renaming a panel script', (
+    tester,
+  ) async {
+    var treeReads = 0;
+    var renameSubmitted = false;
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=file-session',
+        csrfToken: 'file-csrf',
+      ),
+      client: panelMockClient((request) async {
+        if (request.url.path == '/api/scripts/tree') {
+          treeReads++;
+          return _jsonResponse({
+            ..._tree(),
+            'items': [
+              {
+                'name': renameSubmitted ? 'renamed.py' : 'demo.py',
+                'path': renameSubmitted ? 'renamed.py' : 'demo.py',
+                'kind': 'file',
+                'size_bytes': 10,
+                'modified_at': 'now',
+              },
+            ],
+          });
+        }
+        if (request.url.path == '/api/scripts/rename/preview') {
+          expect(request.url.queryParameters, {
+            'path': 'demo.py',
+            'new_name': 'renamed.py',
+          });
+          return _jsonResponse({
+            'ok': true,
+            'preview': {
+              'source': 'demo.py',
+              'destination': 'renamed.py',
+              'revision': 'd' * 64,
+              'references': [
+                {
+                  'id': 'task-1',
+                  'name': 'Demo task',
+                  'manual': false,
+                  'before': {'command': 'python demo.py', 'config_path': ''},
+                  'after': {'command': 'python renamed.py', 'config_path': ''},
+                },
+              ],
+            },
+          });
+        }
+        expect(request.url.path, '/api/scripts/rename');
+        expect(request.headers['x-csrf-token'], 'file-csrf');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['revision'], 'd' * 64);
+        expect(body['references'], [
+          {
+            'task_id': 'task-1',
+            'command': 'python renamed.py',
+            'config_path': '',
+          },
+        ]);
+        renameSubmitted = true;
+        return _jsonResponse({
+          'ok': true,
+          'operation': {
+            'id': body['operation_id'],
+            'source': 'demo.py',
+            'destination': 'renamed.py',
+            'status': 'succeeded',
+            'finished': true,
+            'actual': {
+              'source_exists': false,
+              'destination_exists': true,
+              'tasks': [
+                {'task_id': 'task-1', 'state': 'updated'},
+              ],
+            },
+          },
+        });
+      }),
+    );
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelScriptFilesView(
+          manager: PanelScriptFilesManager(api),
+          onUnauthorized: (_) async {},
+        ),
+      ),
+    );
+    await _pumpUntil(tester, () => find.text('demo.py').evaluate().isNotEmpty);
+    await tester.tap(find.byTooltip('文件操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'renamed.py');
+    await tester.tap(find.text('检查引用'));
+    await _pumpUntil(tester, () => find.text('检查任务引用').evaluate().isNotEmpty);
+    expect(find.text('python demo.py'), findsOneWidget);
+    expect(find.text('python renamed.py'), findsOneWidget);
+    await tester.tap(find.text('确认改名'));
+    await _pumpUntil(
+      tester,
+      () => find.text('renamed.py').evaluate().isNotEmpty,
+    );
+
+    expect(renameSubmitted, isTrue);
+    expect(treeReads, 2);
+    expect(find.text('面板文件'), findsOneWidget);
+  });
 }
 
 Map<String, dynamic> _tree() => {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -92,6 +93,190 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       ),
     );
     if (saved == true && mounted) await _load(page: _data?.page ?? 1);
+  }
+
+  Future<void> _rename(PanelScriptFileItem item) async {
+    final nameController = TextEditingController(text: item.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('重命名'),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '新名称'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, nameController.text.trim()),
+            child: const Text('检查引用'),
+          ),
+        ],
+      ),
+    );
+    nameController.dispose();
+    if (newName == null || newName.isEmpty || !mounted) return;
+
+    try {
+      final preview = await widget.manager.previewRename(
+        path: item.path,
+        newName: newName,
+      );
+      if (!mounted) return;
+      final updates = await showDialog<List<PanelScriptRenameReferenceUpdate>>(
+        context: context,
+        builder: (_) => _ScriptRenameReviewDialog(preview: preview),
+      );
+      if (updates == null || !mounted) return;
+      final operationId = _newOperationId();
+      PanelScriptRenameOperation operation;
+      try {
+        operation = await widget.manager.renameFile(
+          path: item.path,
+          newName: newName,
+          revision: preview.revision,
+          operationId: operationId,
+          references: updates,
+        );
+      } catch (error) {
+        if (error is PanelApiException && error.statusCode == 401) {
+          await _handleUnauthorized(error, routesToClose: 1);
+          return;
+        }
+        if (error is PanelApiException &&
+            error.data?['operation'] is Map<String, dynamic>) {
+          operation = PanelScriptRenameOperation.fromJson(
+            error.data!['operation'],
+          );
+        } else if (error is PanelApiException &&
+            (error.statusCode == null || error.statusCode! >= 500)) {
+          try {
+            operation = await widget.manager.fetchRenameOperation(operationId);
+          } on PanelApiException catch (statusError) {
+            if (statusError.statusCode == 401) {
+              await _handleUnauthorized(statusError, routesToClose: 1);
+              return;
+            }
+            if (statusError.statusCode == 404) {
+              operation = await widget.manager.renameFile(
+                path: item.path,
+                newName: newName,
+                revision: preview.revision,
+                operationId: operationId,
+                references: updates,
+              );
+            } else {
+              rethrow;
+            }
+          }
+        } else {
+          rethrow;
+        }
+      }
+      if (!mounted) return;
+      if (!operation.finished) {
+        await _showRenameOperation(operation);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('已重命名为 ${operation.destination.split('/').last}'),
+          ),
+        );
+      }
+      if (mounted) await _load(page: 1);
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PanelApiException && error.statusCode == 401) {
+        await _handleUnauthorized(error, routesToClose: 1);
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _showRenameOperation(PanelScriptRenameOperation initial) async {
+    var operation = initial;
+    while (mounted) {
+      if (!mounted) return;
+      final action = await showDialog<String>(
+        context: context,
+        barrierDismissible: operation.finished,
+        builder: (context) => AlertDialog(
+          title: const Text('改名状态'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('${operation.source}  →  ${operation.destination}'),
+                  const SizedBox(height: 8),
+                  Text('状态：${_renameStatusLabel(operation.status)}'),
+                  Text('原路径：${operation.sourceExists ? "存在" : "不存在"}'),
+                  Text('目标路径：${operation.destinationExists ? "存在" : "不存在"}'),
+                  for (final task in operation.taskStates)
+                    Text(
+                      '任务 ${task['task_id']}：${_taskRenameLabel(task['state']!)}',
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'refresh'),
+              child: const Text('刷新状态'),
+            ),
+            if (!operation.finished) ...[
+              TextButton(
+                onPressed: () => Navigator.pop(context, 'rollback'),
+                child: const Text('回滚'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'resume'),
+                child: const Text('继续完成'),
+              ),
+            ] else
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭'),
+              ),
+          ],
+        ),
+      );
+      if (action == null || !mounted) return;
+      try {
+        if (action == 'refresh') {
+          operation = await widget.manager.fetchRenameOperation(operation.id);
+        } else {
+          operation = await widget.manager.recoverRename(
+            operationId: operation.id,
+            action: action,
+          );
+        }
+      } catch (error) {
+        if (error is PanelApiException && error.statusCode == 401) {
+          await _handleUnauthorized(error, routesToClose: 1);
+          return;
+        }
+        try {
+          operation = await widget.manager.fetchRenameOperation(operation.id);
+        } catch (_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(error.toString())));
+          return;
+        }
+      }
+    }
   }
 
   Future<void> _create() async {
@@ -256,8 +441,20 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
                                 ? '文件夹'
                                 : '${_formatBytes(item.sizeBytes ?? 0)} · ${item.modifiedAt}',
                           ),
-                          trailing: const Icon(Icons.chevron_right),
                           onTap: () => _openFile(item),
+                          trailing: PopupMenuButton<String>(
+                            tooltip: '文件操作',
+                            onSelected: (action) {
+                              if (action == 'rename') _rename(item);
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'rename',
+                                child: Text('重命名'),
+                              ),
+                            ],
+                            icon: const Icon(Icons.more_vert),
+                          ),
                         );
                       },
                     ),
@@ -316,6 +513,145 @@ class _PanelScriptFilesViewState extends State<PanelScriptFilesView> {
       ),
     );
   }
+}
+
+String _newOperationId() {
+  final random = math.Random.secure();
+  return List<int>.generate(
+    16,
+    (_) => random.nextInt(256),
+  ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+}
+
+String _renameStatusLabel(String status) => switch (status) {
+  'prepared' => '准备中',
+  'moved' => '文件已移动',
+  'tasks_saved' => '任务引用已更新，等待调度器恢复',
+  'succeeded' => '完成',
+  'rolled_back' => '已回滚',
+  _ => '状态待确认',
+};
+
+String _taskRenameLabel(String state) => switch (state) {
+  'updated' => '已更新',
+  'unchanged' => '尚未更新',
+  'missing' => '任务已不存在',
+  'conflict' => '与当前任务冲突',
+  _ => '未知',
+};
+
+class _ScriptRenameReviewDialog extends StatefulWidget {
+  const _ScriptRenameReviewDialog({required this.preview});
+
+  final PanelScriptRenamePreview preview;
+
+  @override
+  State<_ScriptRenameReviewDialog> createState() =>
+      _ScriptRenameReviewDialogState();
+}
+
+class _ScriptRenameReviewDialogState extends State<_ScriptRenameReviewDialog> {
+  late final List<TextEditingController> _commands;
+  late final List<TextEditingController> _configs;
+
+  @override
+  void initState() {
+    super.initState();
+    _commands = widget.preview.references
+        .map((reference) => TextEditingController(text: reference.afterCommand))
+        .toList(growable: false);
+    _configs = widget.preview.references
+        .map(
+          (reference) => TextEditingController(text: reference.afterConfigPath),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  void dispose() {
+    for (final controller in [..._commands, ..._configs]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('检查任务引用'),
+    content: SizedBox(
+      width: 560,
+      height: 440,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${widget.preview.source}  →  ${widget.preview.destination}'),
+          const SizedBox(height: 8),
+          Expanded(
+            child: widget.preview.references.isEmpty
+                ? const Center(child: Text('没有检测到关联任务'))
+                : ListView.builder(
+                    itemCount: widget.preview.references.length,
+                    itemBuilder: (context, index) {
+                      final reference = widget.preview.references[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(reference.name),
+                            if (reference.manual)
+                              const Text('命令包含手动路径，请确认并修改为新路径。'),
+                            const SizedBox(height: 4),
+                            const Text('当前命令'),
+                            SelectableText(
+                              reference.beforeCommand,
+                              maxLines: 3,
+                            ),
+                            TextField(
+                              controller: _commands[index],
+                              minLines: 1,
+                              maxLines: 4,
+                              decoration: const InputDecoration(
+                                labelText: '改名后的命令',
+                              ),
+                            ),
+                            TextField(
+                              controller: _configs[index],
+                              decoration: const InputDecoration(
+                                labelText: '改名后的配置路径',
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(
+          context,
+          List<PanelScriptRenameReferenceUpdate>.generate(
+            widget.preview.references.length,
+            (index) => PanelScriptRenameReferenceUpdate(
+              taskId: widget.preview.references[index].id,
+              command: _commands[index].text,
+              configPath: _configs[index].text,
+            ),
+            growable: false,
+          ),
+        ),
+        child: const Text('确认改名'),
+      ),
+    ],
+  );
 }
 
 class _CreateScriptEntry {

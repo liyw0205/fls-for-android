@@ -401,7 +401,7 @@ class PanelApiClient {
       ]);
     }
     if (includeScriptFileDetails) {
-      keys.addAll(const ['code', 'msg']);
+      keys.addAll(const ['code', 'msg', 'replayed']);
     }
     for (final key in keys) {
       final value = payload[key];
@@ -438,7 +438,15 @@ class PanelApiClient {
         if (includeScriptFileDetails &&
             value is String &&
             key == 'code' &&
-            value != 'revision_conflict') {
+            !const {
+              'revision_conflict',
+              'rename_revision_conflict',
+              'rename_recovery_required',
+              'rename_conflict',
+              'rename_result_unknown',
+              'operation_conflict',
+              'rename_failed',
+            }.contains(value)) {
           continue;
         }
         var safeValue = value;
@@ -489,6 +497,102 @@ class PanelApiClient {
           if (currentFile['modified_at'] is String)
             'modified_at': currentFile['modified_at'],
         });
+      }
+    }
+    if (includeScriptFileDetails) {
+      final preview = payload['preview'];
+      if (preview is Map<String, dynamic> &&
+          _safeRenamePath(preview['source']) &&
+          _safeRenamePath(preview['destination']) &&
+          preview['revision'] is String &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(preview['revision'] as String)) {
+        final references = preview['references'];
+        if (references is List && references.length <= 200) {
+          final safeReferences = <Map<String, dynamic>>[];
+          var valid = true;
+          for (final reference in references) {
+            if (reference is! Map<String, dynamic> ||
+                reference['id'] is! String ||
+                reference['name'] is! String ||
+                reference['manual'] is! bool ||
+                !_safeRenameValues(reference['before']) ||
+                !_safeRenameValues(reference['after'])) {
+              valid = false;
+              break;
+            }
+            safeReferences.add({
+              'id': reference['id'],
+              'name': _redactText(reference['name'] as String, redactValues),
+              'manual': reference['manual'],
+              'before': _safeRenameValueMap(
+                reference['before'] as Map<String, dynamic>,
+                redactValues,
+              ),
+              'after': _safeRenameValueMap(
+                reference['after'] as Map<String, dynamic>,
+                redactValues,
+              ),
+            });
+          }
+          if (valid) {
+            metadata['preview'] = {
+              'source': preview['source'],
+              'destination': preview['destination'],
+              'revision': preview['revision'],
+              'references': List.unmodifiable(safeReferences),
+            };
+          }
+        }
+      }
+      final operation = payload['operation'];
+      if (operation is Map<String, dynamic> &&
+          operation['id'] is String &&
+          RegExp(r'^[0-9a-f]{32}$').hasMatch(operation['id'] as String) &&
+          _safeRenamePath(operation['source']) &&
+          _safeRenamePath(operation['destination']) &&
+          operation['status'] is String &&
+          operation['finished'] is bool) {
+        final actual = operation['actual'];
+        if (actual is Map<String, dynamic> &&
+            actual['source_exists'] is bool &&
+            actual['destination_exists'] is bool &&
+            actual['tasks'] is List &&
+            (actual['tasks'] as List).length <= 200) {
+          final safeTasks = <Map<String, String>>[];
+          var valid = true;
+          for (final task in actual['tasks'] as List) {
+            if (task is! Map<String, dynamic> ||
+                task['task_id'] is! String ||
+                task['state'] is! String ||
+                !const {
+                  'missing',
+                  'updated',
+                  'unchanged',
+                  'conflict',
+                }.contains(task['state'])) {
+              valid = false;
+              break;
+            }
+            safeTasks.add({
+              'task_id': task['task_id'] as String,
+              'state': task['state'] as String,
+            });
+          }
+          if (valid) {
+            metadata['operation'] = {
+              'id': operation['id'],
+              'source': operation['source'],
+              'destination': operation['destination'],
+              'status': operation['status'],
+              'finished': operation['finished'],
+              'actual': {
+                'source_exists': actual['source_exists'],
+                'destination_exists': actual['destination_exists'],
+                'tasks': List.unmodifiable(safeTasks),
+              },
+            };
+          }
+        }
       }
     }
     for (final key
@@ -544,7 +648,38 @@ class PanelApiClient {
   bool _isOnlineScriptPath(String path) =>
       path.startsWith('/api/online-scripts/');
 
-  bool _isScriptFilePath(String path) => path == '/api/scripts/file';
+  bool _isScriptFilePath(String path) =>
+      path == '/api/scripts/file' || path.startsWith('/api/scripts/rename');
+
+  bool _safeRenamePath(Object? value) =>
+      value is String &&
+      value.isNotEmpty &&
+      !value.startsWith('/') &&
+      !value.contains('\\') &&
+      !value.contains('\u0000') &&
+      value
+          .split('/')
+          .every((part) => part.isNotEmpty && part != '.' && part != '..');
+
+  bool _safeRenameValues(Object? value) =>
+      value is Map<String, dynamic> &&
+      value.length == 2 &&
+      value['command'] is String &&
+      value['config_path'] is String &&
+      (value['command'] as String).length <= 64 * 1024 &&
+      (value['config_path'] as String).length <= 4096;
+
+  Map<String, String> _safeRenameValueMap(
+    Map<String, dynamic> value,
+    List<String> redactValues,
+  ) => {
+    'command': _redactPanelPaths(
+      _redactText(value['command'] as String, redactValues),
+    ),
+    'config_path': _redactPanelPaths(
+      _redactText(value['config_path'] as String, redactValues),
+    ),
+  };
 
   String _redactText(String text, List<String> values) {
     var result = text;
