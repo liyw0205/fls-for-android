@@ -39,6 +39,7 @@ flutter build apk --release --target-platform android-arm64
 
 - [Architecture and local storage](docs/ARCHITECTURE.md)
 - [Development and device validation](docs/DEVELOPMENT.md)
+- [Full native frontend development plan](docs/DEVELOPMENT-GOALS.md)
 - [Reference UI and behavior](docs/REFERENCE.md)
 
 ## License

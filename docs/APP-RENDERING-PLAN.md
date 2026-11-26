@@ -2,6 +2,8 @@
 
 > 最终目标是 Flutter 原生覆盖 FLS Web 中所有适用页面、表单、状态和操作；本文件记录原生信息架构、本机保留能力和当前/下一批对接。业务域全量清单、推进顺序与双仓合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md) 和 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md)。WebView 只作显式兼容入口，不计入原生覆盖。
 
+已先同步最新 FLS `develop`；后续可执行批次统一从 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进，包括代理诊断、通知、备份恢复、首次设置/维护、既有域补缺/统一恢复，以及全量导航与主题验收。以下历史子批描述按当时状态阅读，不替代该计划和最新功能矩阵。
+
 ## 目标
 
 远程与本机 FLS 面板共用原生导航、页面和业务逻辑，同一页面使用当前面板的服务端数据。APP 单独设计交互，不拉取 Web HTML 重新排版。本机容器的镜像安装、APP 更新和不启动面板的脚本安装依然独立于面板业务。
@@ -72,7 +74,7 @@ APP 具体落地次序：
 
 ### 已交付子批：面板脚本文件目录、编辑与文件操作
 
-FLS `routes/scripts/files.py` 的 Web 编辑已使用 `script_file_snapshot`、`publish_script_file` 和文件 revision；改名已有任务引用预览与可继续/回滚的操作记录。`routes/scripts/pull.py` 有文件拉取与归档导入；调试仅已有 `/api/scripts/debug-log/<id>` 读接口，启动/停止仍由 Web 路由承载。APP 不抓取这些路由的 HTML，也不直接用调试页面的 GET 请求启动进程。
+本子批开始时，FLS `routes/scripts/files.py` 的 Web 编辑已使用 `script_file_snapshot`、`publish_script_file` 和文件 revision；改名已有任务引用预览与可继续/回滚的操作记录。`routes/scripts/pull.py` 有文件拉取与归档导入；当时调试仅已有 `/api/scripts/debug-log/<id>` 读接口，启动/停止仍由 Web 路由承载。后续已补 `native_debug.py` 原生作业契约，见下节。APP 不抓取这些路由的 HTML，也不直接用调试页面的 GET 请求启动进程。
 
 当前 `develop` 纵切新增 `GET /api/scripts/tree`、`GET /api/scripts/file`、`PUT /api/scripts/file`、`POST /api/scripts/file`。目录分页上限 100，不跟随 symlink、不创建缺失目录、不回传绝对路径；文件仅接受 UTF-8 普通文件并限制 2 MiB。保存沿用 revision 并发保护与原子发布。Termux Python 缺少 `os.link` 时，新建走独占目标保留；改名在 hard-link 不可用的文件系统尝试 `renameat2(RENAME_NOREPLACE)`，避免拒绝支持该文件系统。
 

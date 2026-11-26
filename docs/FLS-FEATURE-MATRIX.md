@@ -2,6 +2,8 @@
 
 ## 基线与证据范围
 
+- 2026-11-26 更新方案前已先 fetch 并 pull FLS develop，最新仍为 `1dc0bf0`；APP develop 同步基线为文档 `10a1de0`、代码 `a69cd67`。剩余工作按 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 的 M1-M7 推进；本次方案整理不新增功能覆盖或测试通过项。
+
 - 最新代理配置子批：FLS `1dc0bf0` / `20261126.7` 已通过 99 项相关回归和三个打包工作流；APP `a69cd67` / `0.1.49+62` 已接原生配置/恢复入口，Android CI `45734792478` 通过格式、分析、177 项测试、arm64 APK 及 [artifact 15078642790](https://github.com/liyw0205/fls-for-android/actions/runs/45734792478/artifacts/15078642790)。代理异步检测、草稿/批量检测与历史仍待实施，不标全域完成；真实面板待用户手动验收。
 - 前批应用配置候选：FLS `418640f` / `20261126.6`、APP `1af4357` / `0.1.48+61`；新增配置 JSON API、原生分组表单、认证变更和保存/应用恢复。FLS 定向及相关回归 81 项通过，Module/Desktop/EXE 工作流 `45730070050`、`45730070074`、`45730070116` 成功。APP Android CI `45730187486` 通过格式、静态分析、166 项测试和 arm64 构建，[artifact 15075239851](https://github.com/liyw0205/fls-for-android/actions/runs/45730187486/artifacts/15075239851) 对应 APP 代码 SHA。此候选仍待用户手动验收。
 
