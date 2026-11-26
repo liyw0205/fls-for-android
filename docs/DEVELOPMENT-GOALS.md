@@ -8,10 +8,10 @@
 
 | 仓库 | 同步结果 | 当前开发基线 |
 | --- | --- | --- |
-| `$HOME/fls` | `git fetch --prune origin`、`git pull --ff-only origin develop` 成功，远端无更新，工作区干净 | `develop` / `1dc0bf06cb96bd91f494e4785bf5fbb6ab4316f0` / `20261126.7`；包含 `origin/main` 全部提交并领先 20 个提交 |
-| `$HOME/fls-for-android` | fetch 后本地与 `origin/develop` 一致，工作区干净 | `develop` / 文档 HEAD `10a1de0`；最近代码及 APK 为 `a69cd6774dfd15ee93ae588df5980ad4a2a278b0` / `0.1.49+62` |
+| `$HOME/fls` | `git fetch --prune origin`、`git pull --ff-only origin develop` 成功，远端无更新，工作区干净 | `develop` / `1344fa535801a19c8b540678ea38437afeacb218` / `20261126.8`；包含 `origin/main` 全部提交并领先 21 个提交 |
+| `$HOME/fls-for-android` | fetch 后代码 HEAD 与 `origin/develop` 一致；本次仅更新方案文档 | `develop` / 最近代码及 APK 为 `6ad827992cff5aa33edd0d80acd6976d03fac400` / `0.1.50+63` |
 
-这些是本次方案更新前的基线，后续文档提交不替代 APK 构建 SHA。最近配对候选的自动化与产物见 [路线图](GOAL-ROADMAP.md#分支与合并策略)；用户手动验收仍待执行，不把已有 CI 当作全量完成证明。
+这些是本次代理诊断候选的代码基线，后续文档提交不替代 APK 构建 SHA。最近配对候选的自动化与产物见 [路线图](GOAL-ROADMAP.md#分支与合并策略)；用户手动验收仍待执行，不把已有 CI 当作全量完成证明。
 
 每批开始重新 fetch、核对工作区及两仓分支，再 fast-forward 同步 `develop`。有本地改动或分叉时先核对差异，保留现有工作；不强制重置。以下尚未实施的接口均为开发任务，不能据本计划假定服务端已经支持。
 
@@ -31,15 +31,17 @@
 
 这些批次是实现顺序，不是新的自动 Goal 实例。当前总 Goal 持续推进到全量完成；任何单批完成都只更新该批状态。每批原生页随功能一起完善，M6 再核对全局一致性，避免把全部交互问题留到最后。
 
-## M1：下一批从代理异步诊断开始
+## M1：代理异步诊断候选已实现
 
-配置子批已经交付，不重做 CRUD。按 [代理规格](PANEL-PROXY-PLAN.md) 完成剩余诊断，首先固定 `POST /api/proxy/checks`、`GET /api/proxy/checks[/<id>]` 与显式 retry 的 DTO；这些 checks 接口目前尚未实现。批量可先由 APP 有界调度单项请求，逐项持有 request/check ID；若新增后端批量接口，也必须限制队列并保留逐项结果。
+FLS `1344fa5` / `20261126.8` 已实现 `POST /api/proxy/checks`、`GET /api/proxy/checks[/<id>]` 与显式 retry；17 项新增测试及相关回归共 116 项通过，三个打包工作流成功。APP `6ad8279` / `0.1.50+63` 已接单项/草稿/批量检测、结果/历史及重试；Android CI [45741020922](https://github.com/liyw0205/fls-for-android/actions/runs/45741020922) 已通过格式、分析、187 项测试和 arm64 APK 构建，[artifact 15081412300](https://github.com/liyw0205/fls-for-android/actions/runs/45741020922/artifacts/15081412300) 到期于 2026-12-10 02:19 UTC。实际契约和证据见 [代理规格](PANEL-PROXY-PLAN.md)。批量由 APP 按序提交、逐项持有 request/check ID，服务端最多同时执行 3 个作业并限制 12 个活动/等待项。M1 自动化候选验证已完成，真实面板手动验收待用户；M2-M7 仍待推进。
 
 后端重点是先持久化再启动、相同 request ID 不重复探测、代理版本快照、草稿凭据仅留内存、重启后无法确认则 unknown。检查 requests 响应读取量及 Git 子进程输出上限，不直接持久化原始异常。历史白名单兼容旧记录；GET 不触发探测、重试或配置写入。线程启动失败、持久化失败、并发上限与响应丢失均需验证。
 
 APP 在现有代理列表/表单加入连接与质量检测、草稿检测、多选结果、历史与单作业详情。普通 HTTP 显示状态码并区分可达与响应成功；GitHub 固定 raw/Git 目标按实际结果呈现。离开页面只停轮询，不显示没有后端支持的取消成功。手机测镜像源与远程 FLS 测代理分别展示，不能互相充当测试结果。
 
 ## M2：通知渠道与发送历史
+
+下一批按 [通知迁移规格](PANEL-NOTIFY-PLAN.md) 开发；已静态核对全部 13 类渠道、保存/默认选择、测试/重试回执和历史语义，尚未实现原生通知 API/页面。代理真实面板手动验收仍可独立反馈，不阻塞此批开发。
 
 从 FLS `routes/notify/`、`routes/api.py` 及 `test_notify_*_recovery.py` 核对渠道类型、字段规则、默认渠道和现有恢复语义。已有 `/api/notify/action`、`/test/<id>`、`/history`、`/retry/<id>` 不等于完整原生契约；逐项确认输入、错误白名单、状态查询与真实发送副作用后再复用。
 
@@ -96,4 +98,4 @@ M1-M6 全部实现并不自动满足发布条件。M7 必须以同一对 APP/FLS
 
 后续继续开发可直接使用：
 
-> 依据 docs/DEVELOPMENT-GOALS.md 和全量功能矩阵，从首个未完成批次推进 FLS 后端与 Flutter APP 的完整原生流程。先同步两个 develop，再实现、测试、递增版本、提交推送并验证工作流，回填精确证据。当前下一批是 M1 代理异步诊断。不要将单域完成当成全量 Goal 完成；不做 ADB，用户手动验收；全量验收前不合并 main、不正式发布。
+> 依据 docs/DEVELOPMENT-GOALS.md 和全量功能矩阵，从首个未完成批次推进 FLS 后端与 Flutter APP 的完整原生流程。先同步两个 develop，再实现、测试、递增版本、提交推送并验证工作流，回填精确证据。M1 配对候选自动化已通过，接续 M2 通知域，详见 docs/PANEL-NOTIFY-PLAN.md；代理手动验收待用户。不要将单域完成当成全量 Goal 完成；不做 ADB，用户手动验收；全量验收前不合并 main、不正式发布。

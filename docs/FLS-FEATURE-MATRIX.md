@@ -2,9 +2,9 @@
 
 ## 基线与证据范围
 
-- 2026-11-26 更新方案前已先 fetch 并 pull FLS develop，最新仍为 `1dc0bf0`；APP develop 同步基线为文档 `10a1de0`、代码 `a69cd67`。剩余工作按 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 的 M1-M7 推进；本次方案整理不新增功能覆盖或测试通过项。
+- 2026-11-26 回填方案前已先 fetch 并 pull FLS develop，最新为 `1344fa5`；APP develop 代码与 APK 基线为 `6ad8279`。两仓均与各自远端 develop 一致。剩余工作按 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进；本次文档提交记录已验证的 M1 候选，M2-M7 尚待推进。
 
-- 最新代理配置子批：FLS `1dc0bf0` / `20261126.7` 已通过 99 项相关回归和三个打包工作流；APP `a69cd67` / `0.1.49+62` 已接原生配置/恢复入口，Android CI `45734792478` 通过格式、分析、177 项测试、arm64 APK 及 [artifact 15078642790](https://github.com/liyw0205/fls-for-android/actions/runs/45734792478/artifacts/15078642790)。代理异步检测、草稿/批量检测与历史仍待实施，不标全域完成；真实面板待用户手动验收。
+- 最新代理诊断候选：FLS `1344fa5` / `20261126.8` 已通过 116 项相关回归和三个打包工作流；APP `6ad8279` / `0.1.50+63` 在原生配置基础上接入草稿/单项/批量检测、历史/重试。Android CI [45741020922](https://github.com/liyw0205/fls-for-android/actions/runs/45741020922) 通过格式、分析、187 项测试、arm64 APK 及 [artifact 15081412300](https://github.com/liyw0205/fls-for-android/actions/runs/45741020922/artifacts/15081412300)，到期时间 2026-12-10 02:19 UTC。跨 APP 进程恢复仍待补齐；真实面板待用户手动验收。
 - 前批应用配置候选：FLS `418640f` / `20261126.6`、APP `1af4357` / `0.1.48+61`；新增配置 JSON API、原生分组表单、认证变更和保存/应用恢复。FLS 定向及相关回归 81 项通过，Module/Desktop/EXE 工作流 `45730070050`、`45730070074`、`45730070116` 成功。APP Android CI `45730187486` 通过格式、静态分析、166 项测试和 arm64 构建，[artifact 15075239851](https://github.com/liyw0205/fls-for-android/actions/runs/45730187486/artifacts/15075239851) 对应 APP 代码 SHA。此候选仍待用户手动验收。
 
 - 前批全局变量候选：FLS `fa5361c` / `20261126.5`，APP `37862c6` / `0.1.47+60`。FLS 环境 API/恢复及依赖/运行时回归 42 项通过，Module/Desktop/EXE 工作流 `45710477900`、`45710477624`、`45710477863` 成功。APP Android CI `45709589161` 通过格式、分析、157 项测试和 arm64 构建，artifact `15067671072`。
@@ -30,12 +30,12 @@
 | 系统日志、日志文件与清理 | APP 原生日志列表/详情/搜索/下载；分组删除仍由 WebView | `/api/logs`、`/api/logfile/<filename>`、`/api/logfile/<filename>/download`；`/api/logs/groups/delete` 仍为 Web 操作 | 原生读取与下载已完成；分组清理需单独补结构化确认/写入契约 |
 | 全局环境变量 | 原生搜索/分页、新建、编辑/改名、删除、查看/替换全文、从任务导入及覆盖开关；冲突保留草稿并核对当前值，未知结果先查询原提交 | `/api/env/variables`、`/variable/<key>?reveal=1`、`/snapshot?reveal=1`、`/task-sources`、`/requests/<request_id>`、`POST /api/env/mutate`；复用全局变量幂等/回执服务，单值/全文/来源版本保护，损坏回执拒绝确认成功 | FLS `fa5361c` / `20261126.5` 相关回归 42 项及三个打包 workflow 通过；APP `37862c6` / `0.1.47+60` Android CI `45709589161` 通过 157 项测试、分析和 arm64 构建，artifact `15067671072`。列表/来源不返回值，内容显式读取、no-store，草稿不落盘。单值 64 KiB、全文 1 MiB、导入最多 200 项；离开页面后无原生提交查询入口，恢复记录/敏感草稿不持久化，跨页面恢复仍需补齐。真实面板手动验收待用户 |
 | 应用配置 | 原生分组设置页：主题/端口/脚本源、日志/任务类型、Token 与安全验证；冲突核对/合并、原提交查询和独立应用恢复 | `GET/POST /api/config/settings`、`POST /api/config/totp/enrollment`、`GET /api/config/requests/<request_id>`、JSON `POST /api/config/apply`；旧 Web 表单兼容 | FLS `418640f` / `20261126.6`、APP `1af4357` / `0.1.48+61`，81 项后端回归、三个打包工作流和 APP CI `45730187486` 全绿，166 项 Flutter 测试及 arm64 artifact `15075239851`。原生 session/CSRF、revision、独立 request ID、凭据只写、TOTP 确认和回执恢复已接入。配置请求 ID 在当前面板上下文内存保留，可在重新登录后查询；APP 进程退出后的统一恢复入口仍待补齐。手动验收待用户；详见 [PANEL-CONFIG-PLAN.md](PANEL-CONFIG-PLAN.md) |
-| 代理配置、测速/质量、诊断 | APP `a69cd67` / `0.1.49+62` 配置候选：搜索/筛选/分页、新增/局部编辑/明确启停/删除、冲突核对与合并、原提交恢复；检测和诊断仍为 WebView | FLS `1dc0bf0` 新增 `GET/POST /api/proxy/settings`、`GET /api/proxy/settings/<id>`、`GET /api/proxy/requests/<request_id>`，复用 mutation/版本/任务引用保护，凭据只写、HMAC 回执和只读查询。旧同步检测 API 不能用作原生轮询 | 后端 99 项回归与 Module/Desktop/EXE `45733413675`、`45733413678`、`45733413620` 全绿；APP CI `45734792478` 177 项测试、分析和 arm64 artifact `15078642790` 全绿。按 [PANEL-PROXY-PLAN.md](PANEL-PROXY-PLAN.md) 继续异步检测、草稿/批量检测、历史/重试及原生诊断；APP 进程退出后的统一恢复入口仍缺。手动验收待用户，代理域未全量完成 |
-| 通知渠道、测试发送、投递历史 | WebView | `/api/notify/action`、`/api/notify/test/<id>`、`/api/notify/history`、`/api/notify/retry/<delivery_id>`；渠道编辑页为 HTML 表单 | 补渠道列表/编辑 schema，密钥采用只写或遮蔽语义；明确默认渠道、删除、测试副作用和投递历史分页 |
+| 代理配置、测速/质量、诊断 | APP `6ad8279` / `0.1.50+63`：搜索/筛选/分页、新增/局部编辑/明确启停/删除、冲突合并及原提交恢复；已保存/草稿检测、最多 12 项批量检测、分项进度、历史/详情/重试均有原生入口 | FLS `1344fa5`：`GET/POST /api/proxy/settings`、详情与原配置请求查询；`POST /api/proxy/checks`、`GET /api/proxy/checks[/<id>]`、`POST /api/proxy/checks/<id>/retry`。先持久化再启动、最多 3 并发/12 活动或等待，草稿凭据只留内存；GET 不探测、不重试、不写回 | 后端 116 项回归与 Module/Desktop/EXE `45739901517`、`45739901385`、`45739901439` 全绿；APP CI `45741020922` 187 项测试、分析和 arm64 artifact `15081412300` 全绿。详见 [PANEL-PROXY-PLAN.md](PANEL-PROXY-PLAN.md)。原请求 ID 仅在当前面板内存保留，跨进程恢复仍缺；真实面板手动验收待用户 |
+| 通知渠道、测试发送、投递历史 | WebView；下一批 M2，原生 API/页面尚未实现 | `/api/notify/action`、`/api/notify/test/<id>`、`/api/notify/history`、`/api/notify/retry/<delivery_id>`；渠道编辑页为 HTML 表单 | [通知规格](PANEL-NOTIFY-PLAN.md) 已核对 13 类渠道；补 schema、只写凭据、默认选择与配置回执、异步发送/只读结果查询、安全分页历史及显式重试。重试递增同一投递 attempt；丢响应不得自动重发 |
 | 备份、导入、恢复、删除 | WebView | `routes/backup/api.py` 有备份 list/create/job/cancel/delete；`restore.py` 有 restore history/status、import、reload、maintenance ack API | 逐项确认上传/下载、覆盖范围、备份格式/尺寸限制、恢复预检查、可中断阶段与恢复操作状态；所有覆盖操作需明确确认 |
 | FLS 版本信息、更新、面板控制、时间同步、后台操作日志 | WebView；本机容器镜像和 FLS Release 更新管理已有原生页面 | `/api/about/update-info`、`/api/about/job-log/<id>`；更新执行、重启/停止、时间同步主要由 `/about/*` 表单/页面路由驱动 | 统一 Release/更新作业状态 API，确认进度、取消、重启后的恢复；区别更新 FLS 源代码、运行时镜像和 APP APK |
 
-面板脚本调试、依赖/运行时、全局变量和应用配置已有上述 JSON API、APP 原生入口及 CI 证据。FLS 有副作用的 Web GET 启动路由仅为 Web 兼容保留，APP 不调用；长任务结果未知时显示未知，不自动重放或停止。接下来迁移代理与通知、备份和维护，同时补齐任务/集合/日志及跨域恢复缺口。任何单域交付都不代表全量原生渲染完成。
+面板脚本调试、依赖/运行时、全局变量、应用配置及代理已有上述 JSON API、APP 原生入口及 CI 证据。FLS 有副作用的 Web GET 启动路由仅为 Web 兼容保留，APP 不调用；长任务结果未知时显示未知，不自动重放或停止。接下来迁移通知、备份和维护，同时补齐任务/集合/日志及跨域恢复缺口。任何单域交付都不代表全量原生渲染完成。
 
 ## 原生 API 基础契约
 
