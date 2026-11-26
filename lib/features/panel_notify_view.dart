@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/panel_notify.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_notify_manager.dart';
+import 'panel_notify_deliveries_view.dart';
 
 class PanelNotifyView extends StatefulWidget {
   const PanelNotifyView({
@@ -193,6 +194,10 @@ class _PanelNotifyViewState extends State<PanelNotifyView> {
   }
 
   Future<void> _action(PanelNotifyItem item, String action) async {
+    if (action == 'test') {
+      await _test(item);
+      return;
+    }
     if (action == 'edit') {
       await _open(item);
       return;
@@ -218,6 +223,60 @@ class _PanelNotifyViewState extends State<PanelNotifyView> {
       'version': item.version,
       if (action == 'toggle') 'enabled': !item.enabled,
     });
+  }
+
+  Future<void> _deliveries({String? requestId}) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => requestId == null
+            ? PanelNotifyDeliveriesView(
+                manager: widget.manager,
+                recovery: _recovery,
+                onUnauthorized: _unauthorized,
+              )
+            : PanelNotifyDeliveryView(
+                manager: widget.manager,
+                recovery: _recovery,
+                onUnauthorized: _unauthorized,
+                requestId: requestId,
+              ),
+      ),
+    );
+    if (mounted && !_expired) setState(() {});
+  }
+
+  Future<void> _test(PanelNotifyItem item) async {
+    if (_locked || !item.enabled) return;
+    if (!await _confirm(
+      context,
+      '发送测试通知？',
+      '渠道：${item.name}\n将发送一条固定测试通知。保存配置本身不会发送通知。',
+      '确认发送',
+    )) {
+      return;
+    }
+    if (!mounted) return;
+    final id = PanelNotifyManager.newRequestId();
+    _recovery.deliveryRequests.add(id);
+    var rejected = false;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.manager.sendTest(item, id);
+    } catch (error) {
+      if (error is PanelApiException &&
+          error.statusCode != 401 &&
+          error.data?['accepted'] == false) {
+        rejected = true;
+        _recovery.deliveryRequests.remove(id);
+      }
+      await _failure(error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (mounted && !_expired && !rejected) await _deliveries(requestId: id);
   }
 
   Future<void> _editDefaults() async {
@@ -296,6 +355,11 @@ class _PanelNotifyViewState extends State<PanelNotifyView> {
       appBar: AppBar(
         title: Text(selecting ? '默认通知 (${_selected.length})' : '通知渠道'),
         actions: [
+          IconButton(
+            tooltip: '通知投递历史',
+            onPressed: _busy ? null : () => _deliveries(),
+            icon: const Icon(Icons.history),
+          ),
           IconButton(
             tooltip: '刷新通知',
             onPressed: _busy || _loading ? null : () => _load(_page?.page ?? 1),
@@ -405,6 +469,12 @@ class _PanelNotifyViewState extends State<PanelNotifyView> {
                 icon: const Icon(Icons.sync),
                 label: const Text('查询原通知提交'),
               ),
+            if (_recovery.deliveryRequests.isNotEmpty)
+              TextButton.icon(
+                onPressed: _busy ? null : () => _deliveries(),
+                icon: const Icon(Icons.sync),
+                label: Text('待核对投递 (${_recovery.deliveryRequests.length})'),
+              ),
             Expanded(
               child: _page == null
                   ? const SizedBox()
@@ -454,6 +524,11 @@ class _PanelNotifyViewState extends State<PanelNotifyView> {
                               const PopupMenuItem(
                                 value: 'edit',
                                 child: Text('编辑'),
+                              ),
+                              PopupMenuItem(
+                                value: 'test',
+                                enabled: item.enabled,
+                                child: const Text('发送测试通知'),
                               ),
                               PopupMenuItem(
                                 value: 'toggle',

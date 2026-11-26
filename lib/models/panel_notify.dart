@@ -12,6 +12,7 @@ const notifyPublicFields = {
 
 class PanelNotifyRecovery {
   String? requestId;
+  final Set<String> deliveryRequests = {};
 }
 
 class NotifyField {
