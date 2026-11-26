@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:fls_for_android/models/panel_backup.dart';
 import 'package:fls_for_android/services/panel_api_client.dart';
@@ -32,6 +33,22 @@ void main() {
       () => PanelBackupFile.fromJson({
         'name': '../outside.tar.gz',
         'version': 'a' * 64,
+      }),
+      throwsFormatException,
+    );
+    final preflight = PanelBackupPreflight.fromJson({
+      'ok': true,
+      'preflight': _preflight(),
+    });
+    expect(preflight.status, 'ready');
+    expect(preflight.warnings, ['data_restore_may_change_panel_access']);
+    expect(
+      () => PanelBackupPreflight.fromJson({
+        'ok': true,
+        'preflight': {
+          ..._preflight(),
+          'items': ['data', 'data'],
+        },
       }),
       throwsFormatException,
     );
@@ -79,4 +96,114 @@ void main() {
       'items': ['scripts'],
     });
   });
+
+  test(
+    'uploads a bounded preflight and queries the original request read-only',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'fls-backup-preflight-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final source = File('${temp.path}/full.zip');
+      await source.writeAsBytes(utf8.encode('archive bytes'));
+      final calls = <String>[];
+      final progress = <(int, int)>[];
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example/prefix',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=backup-session',
+          csrfToken: 'backup-csrf',
+        ),
+        client: panelMockClient((request) async {
+          calls.add('${request.method} ${request.url.path}');
+          expect(
+            request.headers['cookie'],
+            'fls_native_session=backup-session',
+          );
+          if (request.method == 'POST' &&
+              request.url.path.endsWith('/cancel')) {
+            return utf8Response(
+              jsonEncode({
+                'ok': true,
+                'accepted': true,
+                'preflight': {
+                  ..._preflight(),
+                  'status': 'checking',
+                  'active': true,
+                  'cancel_allowed': true,
+                  'archive_sha256': '',
+                },
+              }),
+              202,
+            );
+          }
+          if (request.method == 'POST') {
+            expect(request.url.path, '/prefix/api/backup/native/preflights');
+            expect(request.headers['x-csrf-token'], 'backup-csrf');
+            final body = utf8.decode(request.bodyBytes);
+            expect(body, contains('name="preflight_id"'));
+            expect(body, contains('a' * 32));
+            expect(body, contains('filename="full.zip"'));
+            expect(body, contains('archive bytes'));
+            return utf8Response(
+              jsonEncode({'ok': true, 'preflight': _preflight()}),
+              200,
+            );
+          }
+          expect(
+            request.url.path,
+            '/prefix/api/backup/native/preflights/${'a' * 32}',
+          );
+          return utf8Response(
+            jsonEncode({'ok': true, 'preflight': _preflight()}),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+
+      final manager = PanelBackupManager(api);
+      final uploaded = await manager.createPreflight(
+        filePath: source.path,
+        filename: 'full.zip',
+        requestId: 'a' * 32,
+        maxBytes: 100,
+        onProgress: (sent, total) => progress.add((sent, total)),
+      );
+      final recovered = await manager.fetchPreflight('a' * 32);
+      final cancellation = await manager.cancelPreflight('a' * 32);
+
+      expect(uploaded.items, ['data', 'scripts']);
+      expect(uploaded.archiveSha256, 'b' * 64);
+      expect(recovered.status, 'ready');
+      expect(cancellation.cancelAllowed, isTrue);
+      expect(progress, isNotEmpty);
+      expect(progress.last.$1, progress.last.$2);
+      expect(calls, [
+        'POST /prefix/api/backup/native/preflights',
+        'GET /prefix/api/backup/native/preflights/${'a' * 32}',
+        'POST /prefix/api/backup/native/preflights/${'a' * 32}/cancel',
+      ]);
+    },
+  );
 }
+
+Map<String, dynamic> _preflight() => {
+  'preflight_id': 'a' * 32,
+  'request_id': 'a' * 32,
+  'status': 'ready',
+  'active': false,
+  'cancel_allowed': false,
+  'filename': 'full.zip',
+  'format': 'zip',
+  'archive_size_bytes': 13,
+  'archive_sha256': 'b' * 64,
+  'items': ['data', 'scripts'],
+  'entry_count': 3,
+  'expanded_bytes': 30,
+  'dependency_files': ['requirements.txt'],
+  'warnings': ['data_restore_may_change_panel_access'],
+  'error_code': '',
+  'created_at': 1795695731,
+  'expires_at': 1795699331,
+};

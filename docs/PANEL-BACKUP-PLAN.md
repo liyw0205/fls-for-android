@@ -2,7 +2,7 @@
 
 ## 范围与基线
 
-M3 接续通知域 M2a/M2b，以 FLS develop `1350cdf71752decaf28ffc0a204ee891354f209c` / `20261126.10` 和 APP `137e81398655726fdd24a2d1485a5e09eac046fe` / `0.1.53+66` 为调研基线。2026-11-26 已核对 `fls_manager/routes/backup/api.py`、`actions.py`、`_common.py`、`restore.py` 及 APP 的上传/下载和 Android 文档选择边界。此文是下一批开发规格，尚无 M3 原生 API/页面或配对验收；拟定路由须随实现固定，不能当作现有接口。
+M3 接续通知域 M2a/M2b。调研时以 FLS develop `1350cdf71752decaf28ffc0a204ee891354f209c` / `20261126.10` 和 APP `137e81398655726fdd24a2d1485a5e09eac046fe` / `0.1.53+66` 为基线；当前实际候选及验证以本节为准。已核对 `fls_manager/routes/backup/api.py`、`actions.py`、`_common.py`、`restore.py` 及 APP 的上传/下载和 Android 文档选择边界。
 
 覆盖备份列表、创建/取消、原作业与历史、下载/导出、按版本删除，以及手机文件上传、归档预检查、范围/依赖确认、恢复提交、原请求查询、恢复历史、调度器重载与维护提示。远程和本机面板共用 Flutter 页面，数据操作由当前连接的 FLS 执行。APP 不读取远端文件系统，不在手机解压归档后猜测服务端恢复范围。
 
@@ -10,7 +10,11 @@ M3 接续通知域 M2a/M2b，以 FLS develop `1350cdf71752decaf28ffc0a204ee89135
 
 2026-11-26 已拉取并核对 FLS `develop` 基线 `1350cdf`。B1 后端已提交并推送 FLS `develop` 为 `f72624b` / `20261126.11`；Module `45810989064`、Windows Desktop `45810988940`、Windows EXE installer `45810989001` 均通过，未发布正式 Release。FLS 契约包括能力、分页文件/作业、作业详情、只读原请求查询、创建/取消、按文件版本流式下载和按版本删除。原生 GET 返回 `no-store` 摘要，不复用会归一化/清理状态的旧查询 helper；未知删除回执不会删除同名替换文件。删除回执写在面板根目录 `.backup_native_delete_requests`，不随可恢复的 `data/` 目录回滚。APP `0.1.54+67` 已提交推送为 `e3b528d`；Actions `45811406407` 暴露紧凑屏幕测试的异步等待超时。修复测试并递增至 `0.1.55+68` 后，提交 `ddac555` 的 Android CI `45813098368` 格式、analyze、Flutter tests、arm64 APK 构建及 develop APK 上传均通过，artifact `15113503595`。
 
-当前验证：`tests.test_native_backup_api`、`tests.test_backup_file_recovery`、`tests.test_backup_orphan_staging`、`tests.test_backup_restore_idempotency`、`tests.test_backup_restore_recovery` 及两项认证/CSRF 回归通过。备份创建真实归档的旧回归在本机 Termux Python 上受 `os.link` 缺失影响而失败，不能据此宣称已通过。APP `flutter analyze --no-pub` 通过；Termux 上 Flutter tester 不支持 Android。修复后的 APP CI `45813098368` 已通过 format、analyze、Flutter tests 与 arm64 构建，并上传 artifact `15113503595`。本机 APK 构建仍受 Gradle wrapper 缓存 ZIP 损坏阻断。FLS `f72624b` 的 Module/Desktop/EXE 三个 workflow 均通过。两个开发分支不合并 `main`。
+当前候选：两仓本轮重新 fetch，FLS `develop` 与 `origin/develop` 同步在 `f72624b`；APP 远端 `develop` 为 `ddac555`，本地保留方案提交 `2376e92`。B2 后端/API、APP 恢复页及测试目前在两个 `develop` 工作树，版本候选分别为 FLS `20261126.12`、APP `0.1.56+69`，尚未提交或推送。
+
+B2 后端已改为上传完成后启动单个后台检查作业，支持只读查询、协作取消和 1 小时暂存 TTL；TAR/ZIP 通过逐块解包到私有临时目录，验证路径/类型/声明展开量、范围、依赖文件和运行态警告。运行中的重复 request ID 校验归档 SHA-256，不同内容冲突；进程重启后未终结作业只读返回 `unknown`。取消逐块检查期间响应，临时展开目录和失败归档清理；成功快照留存到期。恢复提交能力仍显式关闭。
+
+当前本机验证：`python -m unittest tests.test_native_backup_api` 19 项通过；相关备份文件/恢复/认证回归有一轮 100 项通过，但需在当前改动最终版再完整重跑。APP `dart format` 和 `flutter analyze --no-pub` 通过；Flutter tester 在 Termux Android 宿主不支持运行，新增 manager/widget 测试待 GitHub Actions。FLS/APP B2 工作流、APK 与 artifact 尚未运行；不做 ADB/模拟器测试。此前 B1 的三个 FLS workflow 和 APP CI `45813098368` 仍是 B1 证据，不表示 B2 已验证。两开发分支不合并 `main`。
 
 ## 现有实现与缺口
 
@@ -74,7 +78,7 @@ GET 全部 `no-store`，不写回归一化状态、重建归档、清理 staging
 | 子批 | 后端与 APP 工作 | 退出条件 |
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 后端 API 已推 `develop`，三个 workflow 运行中；APP 文件/作业页和临时文件流式导出已在 `develop` 工作树实现，待推送 CI | 创建失联仅查询，GET 零写/清理，下载不占归档大小内存，取消与终态分开；配对测试与双方 CI 完成 |
-| B2 预检查 | 安全流式暂存、资源/过期规则、归档校验与只读状态；APP 上传进度/范围与影响预览 | 预检查绝不替换目录/安装依赖；坏包、超限、路径异常、取消、重启和重复 ID 均有结果 |
+| B2 预检查 | 已在 FLS `develop` 工作树实现安全流式暂存、后台检查、可取消状态、资源/过期规则及只读回执；等待最终回归与 CI | APP `0.1.56+69` 工作树实现本机暂存、上传字节进度、状态轮询、原 ID 查询、取消及范围/依赖/警告预览；测试待 Actions | 预检查绝不替换目录/安装依赖；坏包、超限、路径异常、取消、重启和重复 ID 均有配对证据 |
 | B3 恢复及后续处理 | 确认提交、单作业互斥、保留回执及回滚、只读恢复历史、重载/维护；APP 完整确认/恢复界面 | 目录/依赖/调度器/维护结果独立，提交失联不重复恢复，跨 data 恢复不丢原生运行态 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 

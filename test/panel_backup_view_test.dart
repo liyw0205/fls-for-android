@@ -27,7 +27,7 @@ void main() {
         final path = request.url.path;
         if (path.endsWith('/capabilities')) {
           return utf8Response(
-            '{"ok":true,"items":["data","scripts"],"formats":["tar.gz"],"upload_limit_bytes":10,"extracted_limit_bytes":20,"entry_limit":30}',
+            '{"ok":true,"items":["data","scripts"],"formats":["tar.gz"],"upload_limit_bytes":10,"extracted_limit_bytes":20,"entry_limit":30,"preflight_enabled":true,"preflight_limit":2,"preflight_ttl_seconds":3600,"restore_enabled":false}',
             200,
           );
         }
@@ -64,6 +64,9 @@ void main() {
     await tester.tap(find.textContaining('作业 · 1'));
     await tester.pumpAndSettle();
     expect(find.text('备份中'), findsOneWidget);
+    await tester.tap(find.text('恢复'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择备份文件'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 
 import '../models/panel_backup.dart';
@@ -70,6 +71,58 @@ class PanelBackupManager {
     final path = '/api/backup/native/requests/$requestId';
     try {
       return PanelBackupRequest.fromJson(await _api.getJson(path));
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupPreflight> createPreflight({
+    required String filePath,
+    required String filename,
+    required String requestId,
+    required int maxBytes,
+    required void Function(int sentBytes, int totalBytes) onProgress,
+  }) async {
+    _validateRequestId(requestId);
+    _validateArchiveFilename(filename);
+    if (maxBytes < 1) throw ArgumentError.value(maxBytes, 'maxBytes');
+    final file = File(filePath);
+    final size = await file.length();
+    if (size < 1 || size > maxBytes) {
+      throw PanelApiException('备份文件超过面板有效上传上限', statusCode: 413);
+    }
+    const path = '/api/backup/native/preflights';
+    try {
+      return PanelBackupPreflight.fromJson(
+        await _api.postMultipartFile(
+          path,
+          filePath: filePath,
+          filename: filename,
+          fields: {'preflight_id': requestId},
+          onProgress: onProgress,
+          timeout: const Duration(minutes: 30),
+        ),
+      );
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupPreflight> fetchPreflight(String requestId) async {
+    _validateRequestId(requestId);
+    final path = '/api/backup/native/preflights/$requestId';
+    try {
+      return PanelBackupPreflight.fromJson(await _api.getJson(path));
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupPreflight> cancelPreflight(String requestId) async {
+    _validateRequestId(requestId);
+    final path = '/api/backup/native/preflights/$requestId/cancel';
+    try {
+      return PanelBackupPreflight.fromJson(await _api.postJson(path, const {}));
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -153,6 +206,20 @@ class PanelBackupManager {
   static void _validateRequestId(String requestId) {
     if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(requestId)) {
       throw ArgumentError('备份请求标识无效');
+    }
+  }
+
+  static void _validateArchiveFilename(String filename) {
+    final lower = filename.toLowerCase();
+    if (filename.isEmpty ||
+        filename.length > 255 ||
+        filename != filename.trim() ||
+        filename.contains('/') ||
+        filename.contains('\\') ||
+        filename.contains(':') ||
+        filename.codeUnits.any((unit) => unit < 32 || unit == 127) ||
+        !const ['.tar.gz', '.tgz', '.tar', '.zip'].any(lower.endsWith)) {
+      throw ArgumentError('备份文件名或格式无效');
     }
   }
 }

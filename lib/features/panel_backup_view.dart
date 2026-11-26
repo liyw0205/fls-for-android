@@ -30,6 +30,15 @@ class _PanelBackupViewState extends State<PanelBackupView>
   PanelBackupCapabilities? _capabilities;
   PanelBackupFilesPage? _files;
   PanelBackupJobsPage? _jobs;
+  PanelBackupPreflight? _preflight;
+  String? _preflightRequestId;
+  String? _preflightError;
+  bool _preflightQueryAvailable = false;
+  final Set<String> _restoreItems = {};
+  bool _restoreDependencies = false;
+  bool _stagingArchive = false;
+  int _uploadSentBytes = 0;
+  int _uploadTotalBytes = 0;
   String? _error;
   String? _busy;
   String? _downloadName;
@@ -43,7 +52,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _tabs = TabController(length: 3, vsync: this);
     unawaited(_load());
   }
 
@@ -271,6 +280,212 @@ class _PanelBackupViewState extends State<PanelBackupView>
     await _load(refresh: true);
   }
 
+  Future<void> _selectRestoreArchive() async {
+    final capabilities = _capabilities;
+    if (capabilities == null ||
+        !capabilities.preflightEnabled ||
+        _busy != null) {
+      return;
+    }
+    final picked = await LocalFileBridge.pickScriptImport();
+    if (!mounted || picked == null) return;
+    final lower = picked.name.toLowerCase();
+    if (!const ['.tar.gz', '.tgz', '.tar', '.zip'].any(lower.endsWith)) {
+      _notice('仅支持 TAR.GZ、TGZ、TAR 或 ZIP 备份');
+      return;
+    }
+
+    final requestId = PanelBackupManager.newRequestId();
+    String? temporaryPath;
+    setState(() {
+      _busy = 'preflight';
+      _preflight = null;
+      _restoreItems.clear();
+      _restoreDependencies = false;
+      _preflightRequestId = requestId;
+      _preflightError = null;
+      _preflightQueryAvailable = false;
+      _stagingArchive = true;
+      _uploadSentBytes = 0;
+      _uploadTotalBytes = 0;
+    });
+    try {
+      final directory = await getTemporaryDirectory();
+      temporaryPath = p.join(directory.path, 'fls-preflight-$requestId.upload');
+      final copied = await LocalFileBridge.copyUriToPath(
+        uri: picked.uri,
+        path: temporaryPath,
+        maxBytes: capabilities.uploadLimitBytes,
+      );
+      if (!copied) throw const PanelApiException('无法读取所选备份文件');
+      final size = await File(temporaryPath).length();
+      if (!mounted) return;
+      setState(() {
+        _stagingArchive = false;
+        _uploadTotalBytes = size;
+      });
+      _preflightQueryAvailable = true;
+      final result = await widget.manager.createPreflight(
+        filePath: temporaryPath,
+        filename: picked.name,
+        requestId: requestId,
+        maxBytes: capabilities.uploadLimitBytes,
+        onProgress: (sent, total) {
+          if (!mounted) return;
+          setState(() {
+            _uploadSentBytes = sent;
+            _uploadTotalBytes = total;
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _preflight = result;
+      });
+      final finalResult = result.active
+          ? await _waitForPreflight(result)
+          : result;
+      if (!mounted) return;
+      setState(() {
+        _preflight = finalResult;
+        _restoreItems
+          ..clear()
+          ..addAll(finalResult.items);
+        _restoreDependencies = false;
+        if (finalResult.status == 'failed' ||
+            finalResult.status == 'cancelled') {
+          _preflightError = _preflightErrorLabel(finalResult.errorCode);
+        }
+      });
+    } catch (error) {
+      if (await _handleUnauthorized(error)) return;
+      if (!mounted) return;
+      if (!_preflightQueryAvailable ||
+          (error is PanelApiException &&
+              error.statusCode != null &&
+              error.statusCode! >= 400 &&
+              error.statusCode! < 500 &&
+              error.statusCode != 422)) {
+        setState(() => _preflightError = _messageFor(error));
+        return;
+      }
+      try {
+        var result = await widget.manager.fetchPreflight(requestId);
+        if (result.active) result = await _waitForPreflight(result);
+        setState(() {
+          _preflight = result;
+          _restoreItems
+            ..clear()
+            ..addAll(result.items);
+          _restoreDependencies = false;
+          _preflightError =
+              result.status == 'failed' || result.status == 'cancelled'
+              ? _preflightErrorLabel(result.errorCode)
+              : null;
+        });
+      } catch (queryError) {
+        if (await _handleUnauthorized(queryError)) return;
+        if (!mounted) return;
+        setState(() => _preflightError = '无法确认原预检查结果；未重复上传。可查询原请求或重新选择文件。');
+      }
+    } finally {
+      if (temporaryPath != null) {
+        try {
+          await File(temporaryPath).delete();
+        } on FileSystemException {
+          // Temporary archive content is not retained in operation history.
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _busy = null;
+          _stagingArchive = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _queryPreflight() async {
+    final requestId = _preflightRequestId;
+    if (requestId == null || _busy != null) return;
+    setState(() {
+      _busy = 'preflight-query';
+      _preflightError = null;
+    });
+    try {
+      var result = await widget.manager.fetchPreflight(requestId);
+      if (result.active) result = await _waitForPreflight(result);
+      if (!mounted) return;
+      setState(() {
+        _preflight = result;
+        _restoreItems
+          ..clear()
+          ..addAll(result.items);
+        _restoreDependencies = false;
+        if (result.status == 'failed' || result.status == 'cancelled') {
+          _preflightError = _preflightErrorLabel(result.errorCode);
+        }
+      });
+    } catch (error) {
+      if (await _handleUnauthorized(error)) return;
+      if (!mounted) return;
+      setState(() => _preflightError = '原预检查暂不可查询；没有重新上传。');
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  Future<PanelBackupPreflight> _waitForPreflight(
+    PanelBackupPreflight initial,
+  ) async {
+    var result = initial;
+    while (result.active && mounted) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!mounted) break;
+      result = await widget.manager.fetchPreflight(result.requestId);
+      if (!mounted) break;
+      setState(() {
+        _preflight = result;
+        if (result.status == 'ready') {
+          _restoreItems
+            ..clear()
+            ..addAll(result.items);
+          _restoreDependencies = false;
+        }
+      });
+    }
+    return result;
+  }
+
+  Future<void> _cancelPreflight() async {
+    final requestId = _preflightRequestId;
+    if (requestId == null) return;
+    try {
+      final result = await widget.manager.cancelPreflight(requestId);
+      if (!mounted) return;
+      setState(() {
+        _preflight = result;
+        _preflightError = '已请求取消，等待面板确认结果。';
+      });
+    } catch (error) {
+      if (await _handleUnauthorized(error)) return;
+      if (!mounted) return;
+      setState(() => _preflightError = '无法确认取消请求；请查询原预检查状态。');
+    }
+  }
+
+  String _preflightErrorLabel(String code) => switch (code) {
+    'preflight_checking' => '面板正在校验归档…',
+    'preflight_cancelled' => '预检查已取消，暂存归档已清理',
+    'archive_limit_exceeded' => '备份超过面板的上传、展开或条目限制',
+    'insufficient_storage' => '面板剩余空间不足，未展开或写入备份数据',
+    'unsafe_archive_entry' => '备份包含不安全的路径、链接或文件类型',
+    'missing_backup_scope' => '归档中未找到 data 或 scripts 备份目录',
+    'unsupported_format' => '备份格式不受支持',
+    'preflight_expired' => '预检查已过期，请重新选择备份文件',
+    _ => '备份校验失败，请检查归档后重试',
+  };
+
   String _formatBytes(int bytes) {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -282,6 +497,12 @@ class _PanelBackupViewState extends State<PanelBackupView>
       appBar: AppBar(
         title: const Text('备份恢复'),
         actions: [
+          if (_capabilities?.preflightEnabled == true)
+            IconButton(
+              tooltip: '预检查备份',
+              onPressed: _busy == null ? _selectRestoreArchive : null,
+              icon: const Icon(Icons.upload_file_outlined),
+            ),
           IconButton(
             tooltip: '创建备份',
             onPressed: _busy == null ? _createBackup : null,
@@ -295,9 +516,11 @@ class _PanelBackupViewState extends State<PanelBackupView>
         ],
         bottom: TabBar(
           controller: _tabs,
+          isScrollable: true,
           tabs: [
             Tab(text: '文件${_files == null ? '' : ' · ${_files!.total}'}'),
             Tab(text: '作业${_jobs == null ? '' : ' · ${_jobs!.total}'}'),
+            const Tab(text: '恢复'),
           ],
         ),
       ),
@@ -319,7 +542,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
                 ? const Center(child: CircularProgressIndicator())
                 : TabBarView(
                     controller: _tabs,
-                    children: [_filesTab(), _jobsTab()],
+                    children: [_filesTab(), _jobsTab(), _restoreTab()],
                   ),
           ),
         ],
@@ -478,6 +701,184 @@ class _PanelBackupViewState extends State<PanelBackupView>
       ],
     );
   }
+
+  Widget _restoreTab() {
+    if (_capabilities?.preflightEnabled != true) {
+      return const Center(child: Text('此面板尚不支持原生归档预检查'));
+    }
+    final preflight = _preflight;
+    final busy = _busy == 'preflight' || _busy == 'preflight-query';
+    if (preflight == null) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (busy) _preflightProgress(),
+          if (_preflightError != null) ...[
+            Text(_preflightError!),
+            const SizedBox(height: 8),
+            if (_preflightQueryAvailable)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _busy == null ? _queryPreflight : null,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('查询原预检查'),
+                ),
+              ),
+          ],
+          if (!busy)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: _busy == null ? _selectRestoreArchive : null,
+                icon: const Icon(Icons.upload_file_outlined),
+                label: const Text('选择备份文件'),
+              ),
+            ),
+        ],
+      );
+    }
+    if (preflight.status != 'ready') {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            preflight.filename,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _preflightError ??
+                switch (preflight.status) {
+                  'uploading' => '面板正在接收归档…',
+                  'checking' => '面板正在校验归档…',
+                  'unknown' => '无法确认面板是否完成预检查；查询原请求不会重复上传。',
+                  _ => _preflightErrorLabel(preflight.errorCode),
+                },
+          ),
+          const SizedBox(height: 8),
+          if (busy) _preflightProgress(),
+          if (preflight.cancelAllowed)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _cancelPreflight,
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('取消预检查'),
+              ),
+            ),
+          if (preflight.status == 'unknown' ||
+              (preflight.status == 'checking' && !preflight.active))
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _busy == null ? _queryPreflight : null,
+                icon: const Icon(Icons.sync),
+                label: const Text('查询原预检查'),
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy == null ? _selectRestoreArchive : null,
+              icon: const Icon(Icons.upload_file_outlined),
+              label: const Text('选择其他备份'),
+            ),
+          ),
+        ],
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          preflight.filename,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${_formatBytes(preflight.archiveSizeBytes)} · ${preflight.format.toUpperCase()} · ${preflight.entryCount} 项 · 展开 ${_formatBytes(preflight.expandedBytes)}',
+        ),
+        const SizedBox(height: 8),
+        SelectableText('SHA-256  ${preflight.archiveSha256}'),
+        const SizedBox(height: 16),
+        Text('恢复范围', style: Theme.of(context).textTheme.titleSmall),
+        for (final item in preflight.items)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _restoreItems.contains(item),
+            title: Text(item == 'data' ? '配置数据' : '脚本'),
+            onChanged: busy
+                ? null
+                : (checked) => setState(() {
+                    if (checked == true) {
+                      _restoreItems.add(item);
+                    } else {
+                      _restoreItems.remove(item);
+                    }
+                  }),
+          ),
+        if (preflight.dependencyFiles.isNotEmpty)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _restoreDependencies,
+            title: const Text('恢复依赖'),
+            subtitle: Text(preflight.dependencyFiles.join(' · ')),
+            onChanged: busy
+                ? null
+                : (checked) =>
+                      setState(() => _restoreDependencies = checked == true),
+          ),
+        for (final warning in preflight.warnings)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(_preflightWarningLabel(warning)),
+          ),
+        const SizedBox(height: 8),
+        const Text('预检查完成。恢复提交接口尚未开放，当前不会写入面板数据。'),
+        if (busy) ...[const SizedBox(height: 16), _preflightProgress()],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _busy == null ? _selectRestoreArchive : null,
+            icon: const Icon(Icons.upload_file_outlined),
+            label: const Text('选择其他备份'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _preflightProgress() {
+    final fraction = _uploadTotalBytes > 0
+        ? (_uploadSentBytes / _uploadTotalBytes).clamp(0.0, 1.0)
+        : null;
+    final uploaded = fraction != null && fraction >= 1;
+    final amount = _stagingArchive
+        ? '读取本机文件'
+        : uploaded
+        ? '上传完成，面板正在校验归档'
+        : _uploadTotalBytes > 0
+        ? '${_formatBytes(_uploadSentBytes)} / ${_formatBytes(_uploadTotalBytes)} · ${(fraction! * 100).round()}%'
+        : '等待面板接收';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        LinearProgressIndicator(
+          value: _stagingArchive || uploaded ? null : fraction,
+        ),
+        const SizedBox(height: 6),
+        Text(amount, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+
+  String _preflightWarningLabel(String warning) => switch (warning) {
+    'data_restore_may_change_panel_access' => '恢复配置数据可能改变面板登录、安全验证或服务配置。',
+    'contains_native_session_store' => '归档包含原生会话数据库；本次预检查不会修改当前会话。',
+    _ => '备份包含需要注意的内容。',
+  };
 
   String _scopeLabel(String item) => switch (item) {
     'data' => '配置数据',
