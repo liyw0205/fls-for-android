@@ -372,7 +372,7 @@ class PanelApiClient {
             ..._configRedactValues(body),
           if (Uri.parse(path).path.startsWith('/api/proxy/') && body is Map)
             ..._proxyRedactValues(body),
-          if (uri.path.startsWith('/api/notify/') &&
+          if (Uri.parse(path).path.startsWith('/api/notify/') &&
               body is Map &&
               body['credentials'] is Map)
             for (final intent in (body['credentials'] as Map).values)
@@ -406,7 +406,9 @@ class PanelApiClient {
               path,
             ).path.startsWith('/api/config/'),
             includeProxyDetails: Uri.parse(path).path.startsWith('/api/proxy/'),
-            includeNotifyDetails: uri.path.startsWith('/api/notify/'),
+            includeNotifyDetails: Uri.parse(
+              path,
+            ).path.startsWith('/api/notify/'),
           ),
         );
       }
@@ -1044,7 +1046,8 @@ class PanelApiClient {
   bool _isSensitivePanelPath(String path) =>
       _isOnlineScriptPath(path) ||
       _isScriptFilePath(path) ||
-      _isDependencyPath(path);
+      _isDependencyPath(path) ||
+      path.startsWith('/api/notify/');
 
   bool _isScriptFilePath(String path) =>
       path == '/api/scripts/file' ||

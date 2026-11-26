@@ -151,6 +151,16 @@ Future<void> _save(WidgetTester tester) async {
   await tester.tap(find.text('确认保存'));
 }
 
+Future<void> _listIdle(WidgetTester tester) async {
+  await pumpUntil(
+    tester,
+    () =>
+        find.text('编辑通知').evaluate().isEmpty &&
+        find.byType(LinearProgressIndicator).evaluate().isEmpty,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   test(
     'notification DTOs reject readable secrets and inconsistent receipts',
@@ -325,7 +335,7 @@ void main() {
       await tester.enterText(_field('通知名称'), 'Local name');
       await _save(tester);
       await pumpUntilFound(tester, find.text('Alpha'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       expect(saves, 1);
       expect(tester.takeException(), isNull);
     },
@@ -373,7 +383,7 @@ void main() {
       expect(find.text('保存通知'), findsNothing);
       await tester.tap(find.text('查询原通知提交'));
       await pumpUntilFound(tester, find.text('Alpha'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       expect(posts, 1);
       expect(queries, 1);
       expect(recovery.requestId, isNull);
@@ -412,7 +422,7 @@ void main() {
       await tester.pumpAndSettle();
       await _save(tester);
       await pumpUntilFound(tester, find.text('Alpha'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       expect(submitted!['credentials'], {
         'WEBHOOK_URL': {'action': 'clear'},
       });
@@ -533,7 +543,7 @@ void main() {
       expect(find.text('Local'), findsOneWidget);
       await _save(tester);
       await pumpUntilFound(tester, find.text('Alpha'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       expect(posts, 2);
       expect(tester.takeException(), isNull);
     },
@@ -585,7 +595,7 @@ void main() {
       await tester.pumpAndSettle();
       await _save(tester);
       await pumpUntilFound(tester, find.text('Alpha'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       expect(submitted!['reset_channel'], true);
       expect(submitted!['settings'], {'channel': 'telegram'});
       expect(submitted!['values'], isEmpty);
@@ -653,10 +663,10 @@ void main() {
       await pumpUntilFound(tester, find.text('保留本地选择'));
       await tester.tap(find.text('保留本地选择'));
       await pumpUntilFound(tester, find.text('保存默认渠道'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       await save();
       await pumpUntilFound(tester, find.byTooltip('选择默认通知'));
-      await tester.pumpAndSettle();
+      await _listIdle(tester);
       expect(posts, 2);
       expect(tester.takeException(), isNull);
     },
@@ -703,9 +713,10 @@ void main() {
       await tester.tap(find.byTooltip('显示输入'));
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(_field('请求 URL')).obscureText, false);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       await tester.pumpAndSettle();
       expect(find.text('https://private.example/token'), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
