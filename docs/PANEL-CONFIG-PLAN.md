@@ -2,9 +2,19 @@
 
 ## 基线与范围
 
-从全局变量批次后继续：FLS `fa5361c` / `20261126.5`，APP `37862c6` / `0.1.47+60`，仅使用各自 `develop`。本规格是下一批实施输入，以下新增接口均为拟议契约，不能当作已经实现。全量原生目标、手动验收和 main 合并门槛继续以 GOAL-ROADMAP 与功能矩阵为准。
+从全局变量批次后继续：FLS `fa5361c` / `20261126.5`，APP `7d3fb75` / `0.1.47+60`。当前配置候选为 FLS `20261126.6`、APP `0.1.48+61`，仅使用各自 `develop`；下列 JSON 接口及 APP 原生入口已实现，CI 结果与提交在功能矩阵记录。真实面板及设备手动验收仍待用户，全量原生目标与 main 合并门槛不变。
 
-已核对 FLS `routes/config/page.py` 的 `_config_snapshot`、`_apply_revision`、`_apply_saved_config` 和 `config_page`，以及 `config.py` 的 `DEFAULT_CONFIG`、`normalize_config_data`。现有 `/api/config/apply` 只有重新应用保存配置的动作；配置读取和保存仍由 HTML 表单承担。
+实现位于 FLS `routes/config/native.py`，复用 Web 的 `_config_snapshot`、`_apply_revision` 和 `_apply_saved_config`；JSON 字段严格校验，旧 Web 表单及非 JSON `/api/config/apply` 保持兼容。APP 使用独立 DTO/manager/原生页面，不请求 `/config` HTML。
+
+## 当前实现与恢复边界
+
+- `GET/POST /api/config/settings`、`POST /api/config/totp/enrollment`、`GET /api/config/requests/<request_id>` 和 JSON `POST /api/config/apply` 已实现。所有新增响应 no-store；含查询串、片段或用户信息的脚本源默认隐藏，只有显式读取才返回原文。
+- 保存/重新应用使用独立请求 ID 和期望 revision；回执只存状态、revision 和 HMAC 请求指纹。保存后回执写入失败时从目标 revision 核对是否保存，无法证明应用完成时保持 unknown，查询不触发保存或应用。
+- 原生会话指纹绑定 Token 与安全验证配置，包含从 Web 修改及保存后记录失败的场景。认证变更后使用新登录查询原请求，不回退旧 Token。
+- APP 保存前显示日志清理及调度器重载副作用；保存成功后应用失败仅开放单独重新应用。响应未知期间禁用新保存和应用，提供原提交查询。
+- 冲突先读取最新配置，保留草稿；用户可继续保留、丢弃或明确合并。合并只覆盖本地改过的字段，其余采用服务端值；脚本类型按项比较。
+- 未确认请求 ID 只在当前面板上下文内存保留，支持退出配置页及重新登录后再打开查询；敏感草稿不持久化。APP 进程退出后的统一恢复入口属于后续跨域恢复工作，尚未完成。
+- TOTP 使用本地手动录入密钥并验证当前验证码，不调用远端二维码服务；当前候选未加入二维码组件。端口变更不自动修改当前连接，需重启后在面板连接管理中调整地址。
 
 ## 必须覆盖的行为
 
@@ -23,10 +33,10 @@
 ## 后端实施
 
 1. 先为现有保存逻辑增加回归用例，再把表单校验、版本检查、保存及应用状态拆到可复用服务。Web 与新 JSON 接口调用同一服务；保留已有字段默认值、认证失效及应用恢复语义。
-2. 拟新增 `GET /api/config/settings`：返回白名单 settings、字段类型/范围/枚举、revision 和脱敏应用状态；密钥仅返回是否已配置。敏感 URL 不直接显示明文，不因遮蔽而在保存时覆盖真实值。全响应 no-store。
-3. 拟新增 `POST /api/config/settings`：要求 request_id、expected_revision 和字段修改集合。严格类型校验，不把无效字符串静默转为默认整数；未提交密钥保持原值，清空/替换必须显式。提交体和字段长度有上限，未知字段拒绝或明确只读。
+2. `GET /api/config/settings`：返回白名单 settings、字段类型/范围/枚举、revision 和脱敏应用状态；密钥仅返回是否已配置。敏感 URL 不直接显示明文，不因遮蔽而在保存时覆盖真实值。全响应 no-store。
+3. `POST /api/config/settings`：要求 request_id、expected_revision 和字段修改集合。严格类型校验，不把无效字符串静默转为默认整数；未提交密钥保持原值，清空/替换必须显式。提交体和字段长度有上限，未知字段拒绝或明确只读。
 4. 保存前持久化幂等回执，写配置后记录实际保存 revision；回执仅含白名单状态和指纹，不存 Token、TOTP 密钥或完整配置。保存冲突不得回传完整配置，APP 经显式读取后保留草稿并合并。
-5. 拟新增 `GET /api/config/requests/<request_id>`：只查询原保存结果，不触发保存/应用。断网、磁盘异常及重启中断无法确认时显示 unknown，不自动重新应用；应用重试带独立 request_id 与期望 revision，防止把旧页面操作应用到新配置。
+5. `GET /api/config/requests/<request_id>`：只查询原保存结果，不触发保存/应用。断网、磁盘异常及重启中断无法确认时显示 unknown，不自动重新应用；应用重试带独立 request_id 与期望 revision，防止把旧页面操作应用到新配置。
 6. 复用并补强 `/api/config/apply` 的状态契约：saved 与 apply_status 分离，错误只返回稳定脱敏原因。日志清理或调度器重载失败时保存状态仍可为 true；用户显式恢复应用，不再次提交配置。
 7. 认证变更后旧 cookie 失效，原提交必须能在使用新凭据重新登录后查询。响应丢失时禁止回退尝试旧 Token，也不得把 Token 放入 URL、日志或恢复记录。
 8. TOTP enrollment 使用受限临时会话或明确的服务端预检查；生成/确认流程和密钥状态必须测试。APP 如需二维码，用成熟本地组件渲染，不把密钥送给远端图片服务。未完成安全配置全流程前，不把应用配置域标为原生覆盖完成。

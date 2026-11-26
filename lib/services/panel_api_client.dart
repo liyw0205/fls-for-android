@@ -368,6 +368,8 @@ class PanelApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final errorRedactValues = [
           ...redactValues,
+          if (Uri.parse(path).path.startsWith('/api/config/') && body is Map)
+            ..._configRedactValues(body),
           if (uri.path.startsWith('/api/env/') && body is Map)
             for (final key in ['value', 'env_text'])
               if (body[key] is String) body[key] as String,
@@ -392,6 +394,9 @@ class PanelApiClient {
             includeScriptFileDetails: _isScriptFilePath(Uri.parse(path).path),
             includeDependencyDetails: _isDependencyPath(Uri.parse(path).path),
             includeEnvironmentDetails: uri.path.startsWith('/api/env/'),
+            includeConfigDetails: Uri.parse(
+              path,
+            ).path.startsWith('/api/config/'),
           ),
         );
       }
@@ -422,6 +427,23 @@ class PanelApiClient {
     final pair = header.split(';').first.trim();
     if (!RegExp(r'^[A-Za-z0-9_-]+=[^;\r\n]+$').hasMatch(pair)) return null;
     return pair;
+  }
+
+  List<String> _configRedactValues(Map body) {
+    final values = <String>[];
+    final credentials = body['credentials'];
+    if (credentials is Map) {
+      for (final key in const ['admin_token', 'totp_secret', 'totp_code']) {
+        final value = credentials[key];
+        if (value is String && value.isNotEmpty) values.add(value);
+      }
+    }
+    final settings = body['settings'];
+    if (settings is Map) {
+      final source = settings['online_script_source'];
+      if (source is String && source.isNotEmpty) values.add(source);
+    }
+    return values;
   }
 
   Object? _decodeJson(String text, int statusCode, String path) {
@@ -469,10 +491,21 @@ class PanelApiClient {
     required bool includeScriptFileDetails,
     required bool includeDependencyDetails,
     bool includeEnvironmentDetails = false,
+    bool includeConfigDetails = false,
   }) {
     if (payload is! Map<String, dynamic>) return null;
     final metadata = <String, dynamic>{};
     final keys = <String>['saved', 'reload_required'];
+    if (includeConfigDetails) {
+      keys.addAll(const [
+        'request_id',
+        'conflict',
+        'reauth_required',
+        'apply_status',
+        'state',
+        'revision',
+      ]);
+    }
     if (includeEnvironmentDetails) {
       keys.addAll(const [
         'resolved',
