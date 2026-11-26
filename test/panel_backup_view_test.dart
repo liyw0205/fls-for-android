@@ -122,6 +122,12 @@ void main() {
         expect(posts, isEmpty);
         await tester.tap(find.text('确认恢复现场'));
         await pumpUntilFound(tester, find.text('现场恢复结果已通过原请求查询'));
+        await pumpUntil(
+          tester,
+          () =>
+              tester.widget<IconButton>(find.byTooltip('刷新恢复历史')).onPressed !=
+              null,
+        );
         await tester.pumpAndSettle();
         expect(posts, [
           '/api/backup/native/restores/${'c' * 32}/recover-directories',
