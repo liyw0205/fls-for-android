@@ -64,7 +64,9 @@ void main() {
     await tester.tap(find.textContaining('作业 · 1'));
     await tester.pumpAndSettle();
     expect(find.text('备份中'), findsOneWidget);
-    await tester.tap(find.text('恢复'));
+    final restoreTab = find.text('恢复');
+    await tester.ensureVisible(restoreTab);
+    await tester.tap(restoreTab);
     await tester.pumpAndSettle();
     expect(find.text('选择备份文件'), findsOneWidget);
     expect(tester.takeException(), isNull);

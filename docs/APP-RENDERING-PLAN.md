@@ -2,7 +2,7 @@
 
 > 最终目标是 Flutter 原生覆盖 FLS Web 中所有适用页面、表单、状态和操作；本文件记录原生信息架构、本机保留能力和当前/下一批对接。业务域全量清单、推进顺序与双仓合并门槛见 [GOAL-ROADMAP.md](GOAL-ROADMAP.md) 和 [FLS-FEATURE-MATRIX.md](FLS-FEATURE-MATRIX.md)。WebView 只作显式兼容入口，不计入原生覆盖。
 
-两仓在本轮重新 fetch 核对后继续使用各自 `develop`：FLS B1 基线 `f72624b` / `20261126.11`，APP 远端 B1 候选 `ddac555` / `0.1.55+68`，本地保留方案提交 `2376e92`。当前 M3 B2 在两仓工作树推进，候选版本为 FLS `20261126.12`、APP `0.1.56+69`，尚待推送 CI；状态见 [备份规格](PANEL-BACKUP-PLAN.md#当前推进状态)。后续批次从 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进。全量目标仍是所有适用 FLS Web 业务原生渲染，不限版本或在线脚本；DeepSeek chat-demo 的主题方向也须统一覆盖所有已有和新迁移页面。
+两仓在本轮重新 fetch 核对后继续使用各自 `develop`：FLS B2 `ec318d8` / `20261126.12` 已推送且三个打包 workflow 通过；APP `d6c9e4c` / `0.1.56+69` 首轮 CI 有一项窄屏 tab 测试失败，已修复并升至 `0.1.56+70` 待重推/验证。状态见 [备份规格](PANEL-BACKUP-PLAN.md#当前推进状态)。后续批次从 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进。全量目标仍是所有适用 FLS Web 业务原生渲染，不限版本或在线脚本；DeepSeek chat-demo 的主题方向也须统一覆盖所有已有和新迁移页面。
 
 ## 目标
 
