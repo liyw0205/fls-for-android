@@ -18,7 +18,31 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-2026-11-27 最新脚本作业检查点：FLS `bf8cb70fee621ea36fe5764108556d47ce4f5c06` / `20261127.16`（136）。本批先 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`。APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+2026-11-27 最新脚本文件检查点：FLS `70ad27fcfb307bbc225f3a435d307822f4b9f69a` / `20261127.19`（139），在实现提交 `5626ac9` 及换行修正 `da8a4b4` 上追加跨 worker 身份退役互斥。本批先 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`。APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+
+原生 `native_files.py` 的目录/文件读写、新建、删除、预览、重命名与恢复查询，以及 Web 脚本页、新建/编辑/删除/重命名/恢复、远程拉取和上传导入，均从进入路由到返回/异常清理持有 `directory_job()` 的共享恢复锁。恢复占用、待处理目录现场和短 I/O 冲突在读写前返回 `503 / panel_storage_busy`；沿用 I/O 在模型锁之前的受理顺序，网络/复制等待不持配置事务锁。补齐 Web 和原生重命名中被宽泛 except 吞掉的 busy；重载遇忙时保留 `tasks_saved` 原操作，可按同一 ID 查询和继续恢复。
+
+Web 下载在受理时打开原文件，文件句柄与共享锁交给流式响应，读取结束/失败、提前关闭及尚未启动 generator 就关闭均释放，重复关闭无害。Web Git 从 `subprocess.check_call` 改用既有 `DirectoryProcess`；命令通过启动门后运行，面板 owner 强制退出时清理进程树，监管保留恢复锁至整树退出。正常/非零退出、启动失败继续旧 Web 页面语义；本批不新增 DTO 或改变原生 APP 请求。
+
+新增 `test_script_directory_access.py` 6 项，覆盖 29 种请求在两种真实跨进程恢复、损坏 journal 和短 I/O 竞争下先拒绝后零业务文件变化，执行中的读/编辑/Web 拉取/导入阻止恢复但允许配置保存，busy 映射、重命名原 ID 恢复，以及下载完成/未开始/断连/开读异常。另增真实 Web owner 崩溃监管 1 项、本地 Git 克隆与非零退出 2 项，并更新旧克隆测试使其真实执行监管。
+
+本机先执行五文件：57 项、173 个子用例通过；随后扩展八文件：167 项通过、272 个子用例通过，1 项旧在线日志断言遗漏基线已有 `download_progress` 字段而失败。补齐该字段精确期望后单项通过，最终三文件（新门禁、文件恢复、Web 组件）117 项、236 个子用例通过，线程异常按错误。发布说明 2 项及 `git diff --check` 通过。Linux 工作流加入完整文件恢复和 Web 组件回归，Windows 加入新门禁与旧导入回归。
+
+第一轮 `5626ac9` 的 Native `45909324800` 失败：Linux 509 项/512 子用例通过；Windows 脚本 step 为 60 项通过、1 项跳过、176 子用例通过，仅真实 Git 克隆 README 的 `read_bytes()` 因 CRLF 失败，目录恢复 step 随之跳过。Module `45909324871`、Desktop `45909324856`、EXE `45909324816` 成功，正式 Release 跳过。`da8a4b4` / `20261127.18`（138）改用 UTF-8 文本断言，本机导入与发布说明 12 项/2 子用例通过。
+
+第二轮 `da8a4b4` 的 Native `45910246493` 仍失败：Linux 509 项/512 子用例通过；Windows 脚本 step 为 60 项通过、1 项跳过、176 子用例通过。真实克隆已通过，新失败为上传接收交接后另一 worker 查询时 `backup_lease.py:os.open` 打开身份锁返回 PermissionError，接口 500；目录恢复 step 因此前失败跳过。Module `45910246551`、Desktop `45910246593`、EXE `45910246547` 成功且正式 Release 跳过，不能据打包成功将 Native 记为通过。
+
+`70ad27f` / `20261127.19`（139）修正 owner 退役在本进程 mutex 下删除身份锁、未与其他 worker 的历史/探测事务互斥的问题：退役取得同一历史锁，完成失效标记、释放及探测删除；不读取回执，坏历史不阻止释放。门禁暂不可用时仅失效标记并释放 owner，不竞争删除，留待后续互斥探测清理。已有监管继续持身份锁至整树退出，迟到监管因失效标记不能启动命令。新增真实双进程阻塞/释放、损坏历史及 busy 退役 3 项；busy 后仅有孤立身份文件且无回执/暂存的维护回收仍属后续整理边界。
+
+本机修复过程五文件 49 项/172 子用例通过（加入最终 busy 退役前）；最终三文件（跨 worker、进程监管、作业门禁）34 项/34 子用例及发布说明 2 项通过，线程异常按错误，`git diff --check` 通过。
+
+最终平台终态：FLS `70ad27fcfb307bbc225f3a435d307822f4b9f69a` 的 [Native backup regression 45912573032](https://github.com/liyw0205/fls/actions/runs/45912573032) 成功。Linux 512 项、512 个子用例通过；Windows 脚本/监管 step 64 项通过、1 项 POSIX FD 用例跳过、176 个子用例通过。Windows 其余 step 分别为 Job Object 3 项通过/1 项 POSIX 用例跳过、独立 lease 5 项/7 子用例、共享备份/恢复 9 项/7 子用例、SQLite/认证 16 项/3 子用例、目录恢复 11 项/10 子用例；均成功。两平台原有 tar 解包弃用警告保留，跳过项不计作通过。
+
+[Module 45912573010](https://github.com/liyw0205/fls/actions/runs/45912573010)、[Desktop 45912572949](https://github.com/liyw0205/fls/actions/runs/45912572949)、[EXE 45912573077](https://github.com/liyw0205/fls/actions/runs/45912573077) 全部成功，四个 workflow 均已核对上述 SHA，三个正式 Release job 均 skipped。本轮未生成 APP APK；此证据关闭本批文件/Web 传输和身份退役的自动化验证，B3/B4 仍按下列剩余范围推进。
+
+本批完成同步文件入口和 Web 传输的恢复互斥；在线安装/调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程仍未完成。Web owner 崩溃可能留下不再被子进程写入的 staging，本批不证明已有跨 worker 回收或维护入口；目录恢复要求显式无活跃子进程后才取得独占权限。保留现有 Web 目录页/历史整理副作用，不作为全域 GET 只读证据。
+
+上一 HEAD 监管检查点：FLS `bf8cb70fee621ea36fe5764108556d47ce4f5c06` / `20261127.16`（136），以下保留其实现及平台证据。
 
 短 `_repo_head` 也改由 `DirectoryProcess` 独立监管，保留固定目录 FD 和共享恢复锁；监管和命令隔离面板 stdin，stdout 写入临时文件，命令整树退出后最多读取 256 字节并校验 HEAD。监管自身的工作目录及状态/输出文件位于系统临时目录，HEAD 命令仍在固定仓库目录执行，不改仓库或作业 DTO。启动/查询失败或超时返回无法确认；监管清理进程组/Windows Job Object 后才释放恢复锁。克隆的进度 stderr 仍走原有 reader，输出重定向的新参数沿用既有默认行为。
 
@@ -143,14 +167,14 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 
 | 收尾项 | 完成条件与证据 |
 | --- | --- |
-| 运行态身份与回滚 | 已剥离归档身份、持久保存搬运清单，启动先恢复目录；`7524b05` 延后 Python 入口写入至原请求确认。硬退出及恢复再次中断已测试；仍需脚本/日志文件作业、shell/PowerShell 启动器、Windows 实例锁句柄/断电与多 worker 启动边界 |
+| 运行态身份与回滚 | 已剥离归档身份、持久保存搬运清单，启动先恢复目录；`7524b05` 延后 Python 入口写入至原请求确认，`5626ac9` 接入同步脚本文件与 Web 传输保护。硬退出及恢复再次中断已测试；仍需在线安装/调试、任务/日志作业、shell/PowerShell 启动器、Windows 实例锁句柄/断电与多 worker 启动边界 |
 | 锁顺序与跨进程互斥 | `5f49679` 统一备份/恢复长作业锁；`7524b05` 接入 JSON、会话/历史 SQLite、验证码和实例锁初始化的短 I/O 门禁，验证连接关闭、线程隔离及真实提交中认证 503。继续其他文件作业、逐域 busy 映射与外部 WAL 状态；本批平台 CI 见上方 |
 | 证据与原请求保留 | 已从持久恢复回执重建 TTL 保护，unknown/待处理依赖不被清理且计入双暂存容量；读取回执字节和历史扫描有上限。每次后续 operation ID 独立保留（最多 16 次），旧 ID 重放不重新执行；到期/内存引用丢失及旧操作重放测试通过，仍需完整容量/损坏/断电故障覆盖 |
 | 依赖资源清理 | 已加带启动门的监管进程：持久保存执行/工作目录身份后才执行 pip；POSIX 不提前回收会话首进程、确认组内非僵尸进程退出后释放，面板进程死亡通过控制管道触发回收；Windows 使用带 KILL_ON_JOB_CLOSE 的命名 Job Object，真实 Actions 已验证启动门、命令父进程先退出和所有者崩溃回收。显式 cleanup 按原操作清理且 GET 零副作用；失败、写盘失败、重启恢复、目录替换、输出读取失败均有回归。仍需多 worker 中持有内存清理句柄的进程协调、全部回执损坏时的维护恢复 |
 | APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
-下一轮继续其余文件作业：原生三域的受理/清理 lease、Git 克隆和短 HEAD 的独立监管、跨 worker 活跃作业身份及回执协调已补；以实际平台 CI 为准。继续 `online_scripts/install.py`、其他脚本读写、Web 拉取/导入、任务配置和日志/调试句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID 写入、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部为 storage → session，I/O 冲突不反向等待。逐域检查 except 是否吞 busy，不把未验证路径计作已接入。
+下一轮优先在线安装：原生三域受理/清理 lease、Git 克隆/短 HEAD 监管、跨 worker 身份/回执及同步文件/Web 传输已补，以实际平台 CI 为准。`routes/online_scripts/install.py` 在首次回执前受理，`online_scripts/install.py:start_install_thread` 在线程构造/start 前保留独立 lease，并覆盖失败/排队交接、HTTP response.close、产物发布、导入任务、日志终写和 finally 清理。`run_logged_command` 当前仍直接 Popen，需为 Git 和安装命令补 owner 崩溃整树监管，不能只给线程加锁后声称崩溃安全；同时保留停止/超时、原请求、重试和跨 worker 活跃回执语义。随后继续调试、任务配置和日志句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部 storage → session，I/O 冲突不反向等待。逐域检查 except 吞 busy，未验证路径不计已接入。
 
 随后处理 `RESTORE_DEPENDENCY_CLEANUP` 仅在所属 worker 内存中的句柄：其他 worker 不能因只看到持久身份就提前释放原 owner 的 lease，也不能跳过仍在读输出的线程。全部恢复回执损坏时须保留可核验维护入口，查询不执行修复。APP 再覆盖原生备份页嵌套 401/重登、切换面板、旧回包及任务/概览刷新；这些是后续实现任务，当前检查点不证明已支持。
 
@@ -234,7 +258,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 最新 FLS `bf8cb70` / `20261127.16` 追加短 Git HEAD 监管和临时文件输出，沿用三域跨 worker 身份/历史事务/取消、Git 克隆监管、短 I/O 门禁、持久目录现场及 APP `79bbfab` 原请求确认。实际 CI/APK 见上方。继续其他文件长作业、启动器、逐域 busy 映射、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 最新 FLS `70ad27f` / `20261127.19` 追加同步文件/Web 拉取导入及流式下载保护、Web Git 监管、busy 透传及跨 worker 身份退役互斥；沿用三域回执、克隆/HEAD 监管、I/O 门禁、持久目录现场及 APP `79bbfab` 原请求确认。实际 CI/APK 见上方。继续在线安装/调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
