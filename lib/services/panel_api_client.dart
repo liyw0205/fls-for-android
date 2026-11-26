@@ -370,6 +370,8 @@ class PanelApiClient {
           ...redactValues,
           if (Uri.parse(path).path.startsWith('/api/config/') && body is Map)
             ..._configRedactValues(body),
+          if (Uri.parse(path).path.startsWith('/api/proxy/') && body is Map)
+            ..._proxyRedactValues(body),
           if (uri.path.startsWith('/api/env/') && body is Map)
             for (final key in ['value', 'env_text'])
               if (body[key] is String) body[key] as String,
@@ -397,6 +399,7 @@ class PanelApiClient {
             includeConfigDetails: Uri.parse(
               path,
             ).path.startsWith('/api/config/'),
+            includeProxyDetails: Uri.parse(path).path.startsWith('/api/proxy/'),
           ),
         );
       }
@@ -427,6 +430,18 @@ class PanelApiClient {
     final pair = header.split(';').first.trim();
     if (!RegExp(r'^[A-Za-z0-9_-]+=[^;\r\n]+$').hasMatch(pair)) return null;
     return pair;
+  }
+
+  List<String> _proxyRedactValues(Map body) {
+    final credentials = body['credentials'];
+    final settings = body['settings'];
+    return [
+      if (credentials is Map)
+        for (final key in const ['username', 'password'])
+          if (credentials[key] is String) credentials[key] as String,
+      if (settings is Map && settings['url'] is String)
+        settings['url'] as String,
+    ];
   }
 
   List<String> _configRedactValues(Map body) {
@@ -492,8 +507,40 @@ class PanelApiClient {
     required bool includeDependencyDetails,
     bool includeEnvironmentDetails = false,
     bool includeConfigDetails = false,
+    bool includeProxyDetails = false,
   }) {
     if (payload is! Map<String, dynamic>) return null;
+    if (includeProxyDetails) {
+      final result = <String, dynamic>{
+        for (final key in const ['resolved', 'conflict', 'confirm_required'])
+          if (payload[key] is bool) key: payload[key],
+        if (payload.containsKey('saved') &&
+            (payload['saved'] == null || payload['saved'] is bool))
+          'saved': payload['saved'],
+        if (payload['request_id'] is String &&
+            RegExp(r'^[a-f0-9]{32}$').hasMatch(payload['request_id'] as String))
+          'request_id': payload['request_id'],
+        if (payload['reference_count'] is int &&
+            (payload['reference_count'] as int) >= 0)
+          'reference_count': payload['reference_count'],
+      };
+      final references = payload['references'];
+      if (references is List) {
+        result['references'] = [
+          for (final item in references.take(50))
+            if (item is Map &&
+                item['id'] is String &&
+                (item['id'] as String).length <= 200 &&
+                item['name'] is String &&
+                (item['name'] as String).length <= 200)
+              {
+                'id': item['id'],
+                'name': _redactText(item['name'] as String, redactValues),
+              },
+        ];
+      }
+      return result;
+    }
     final metadata = <String, dynamic>{};
     final keys = <String>['saved', 'reload_required'];
     if (includeConfigDetails) {

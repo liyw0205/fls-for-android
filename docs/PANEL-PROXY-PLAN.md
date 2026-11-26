@@ -4,7 +4,15 @@
 
 2026-11-26 已在 `$HOME/fls` 执行 fetch 和 `git pull --ff-only origin develop`：最新为 `418640f96d3239ac6d9fa9b8af945aab9f73ef91` / `20261126.6`，`origin/main` 无未包含提交。APP 对接基线为 `1af43571a8a5765a30695afa134a26d51cb31987` / `0.1.48+61`。两仓工作区干净；后续文档提交与实际 APK 构建 SHA 分别记录。
 
-本文件是下一批实施规格，新增接口和 APP 页面均未实现。继续只使用双方 `develop`；保留旧 Web 行为，原生全量渲染和用户验收完成前不合并 main，不发正式 tag/Release，不替换稳定面板。
+本批已实现配置/恢复子批，诊断相关契约仍待实施。继续只使用双方 `develop`；保留旧 Web 行为，原生全量渲染和用户验收完成前不合并 main，不发正式 tag/Release，不替换稳定面板。
+
+## 当前配置子批
+
+- FLS `1dc0bf06cb96bd91f494e4785bf5fbb6ab4316f0` / `20261126.7` 已推送 develop：`GET/POST /api/proxy/settings`、`GET /api/proxy/settings/<id>`、`GET /api/proxy/requests/<request_id>`。21 项新增原生测试及旧操作/保存/诊断恢复、存储回归合计 99 项通过；Module `45733413675`、Windows Desktop `45733413678`、Windows EXE `45733413620` 工作流成功。
+- APP `0.1.49+62` 候选新增代理 DTO/manager、列表/编辑入口，覆盖搜索/类型/启用筛选/分页、新增/部分编辑/明确启停/删除、冲突核对与合并、未知结果只读查询。请求 ID 在当前面板上下文内存保留，编辑页退出后可回列表查询；敏感草稿不持久化。进程退出后的统一恢复入口仍待补齐。
+- 写入字段固定为 `action=new|edit|toggle|delete`、32 位 request_id、非新建时 proxy_id/64 位 `version`；new/edit 使用 `settings` 局部字段和 `credentials` 中 username_action/password_action=keep|replace|clear。用户名/密码首尾空白沿用旧 Web 数据模型的规范化行为；替换不能为空或仅空白。type 切换不隐式清空凭据。
+- 原生回执包含 HMAC 请求意图和回执签名，不含明文凭据；原生同一 request ID 不能改写意图。旧 Web 回执仍兼容读取。查询调用代理只读加载，不规范化写回磁盘，不调用保存或网络检测；completed 表示历史完成，另回 current_matches。缺失/损坏/目标已变化不能证明保存则保持未知。
+- APP 本地格式与 analyze 通过，manager/widget 测试待本批 Android CI 实际验证。当前未包含连接/质量/草稿/批量检测及诊断历史，不能将代理域标为全量覆盖；用户手动验收待执行，不做 ADB。
 
 范围包括 FLS 面板代理列表、新增/编辑、明确启停、删除、未保存表单检测、已保存代理连接/质量检测、诊断历史/筛选及显式重试。本机容器镜像加速源选择与测速属于已有独立流程，不能用它代替本域；用户要求的批量检测应显示逐项结果。内置源的发现、实测与前五名只代表测试时间和所在网络，不承诺从 APP 手机测出的结果等于远程面板可达性。
 
@@ -38,7 +46,7 @@
 
 ## 拟定 API
 
-以下为待实现路径草案；编码前对照路由冲突，在 FLS 提交中固定最终契约，再接 APP。已有 Web URL 与 form 语义保持兼容。
+下表前四项配置接口已由上述 FLS 提交实现；checks 相关路径仍为待实现草案。已有 Web URL 与 form 语义保持兼容。
 
 | 方法与路径 | 输入/输出与副作用 |
 | --- | --- |

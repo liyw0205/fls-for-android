@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/panel_server.dart';
 import '../models/panel_config.dart';
+import '../models/panel_proxy.dart';
 import '../models/panel_collection.dart';
 import '../models/panel_dashboard_snapshot.dart';
 import '../models/panel_task_page.dart';
@@ -17,6 +18,7 @@ import '../services/panel_records_manager.dart';
 import '../services/panel_runtime_deps_manager.dart';
 import '../services/panel_global_env_manager.dart';
 import '../services/panel_config_manager.dart';
+import '../services/panel_proxy_manager.dart';
 import '../services/panel_script_files_manager.dart';
 import '../services/panel_script_import_manager.dart';
 import '../services/panel_script_pull_manager.dart';
@@ -28,6 +30,7 @@ import 'panel_records_view.dart';
 import 'panel_runtime_deps_view.dart';
 import 'panel_global_env_view.dart';
 import 'panel_config_view.dart';
+import 'panel_proxy_view.dart';
 import 'panel_script_files_view.dart';
 import 'panel_task_detail_view.dart';
 import 'panel_task_editor_view.dart';
@@ -111,6 +114,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   PanelDashboardManager? _dashboardManager;
   PanelTasksManager? _manager;
   final _configRecovery = PanelConfigRecovery();
+  final _proxyRecovery = PanelProxyRecovery();
   PanelDashboardSnapshot? _dashboard;
   List<PanelTaskSummary> _tasks = const [];
   PanelTaskPage? _taskPage;
@@ -1011,6 +1015,22 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     );
   }
 
+  Future<void> _openProxies() async {
+    final api = _api;
+    if (api == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelProxyView(
+          manager: PanelProxyManager(api),
+          recovery: _proxyRecovery,
+          onUnauthorized: (error) async {
+            await _expireSession(error);
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _openRuntimeDependencies() async {
     final api = _api;
     if (api == null) return;
@@ -1096,6 +1116,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
               if (value == 'runtime-deps') await _openRuntimeDependencies();
               if (value == 'global-env') await _openGlobalEnvironment();
               if (value == 'config') await _openPanelConfig();
+              if (value == 'proxies') await _openProxies();
               if (value == 'logout') {
                 final api = _api;
                 if (api != null) {
@@ -1131,6 +1152,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                 const PopupMenuItem(value: 'global-env', child: Text('全局变量')),
               if (_hasCredential && _api != null)
                 const PopupMenuItem(value: 'config', child: Text('应用配置')),
+              if (_hasCredential && _api != null)
+                const PopupMenuItem(value: 'proxies', child: Text('代理管理')),
               if (_hasCredential && _api != null)
                 const PopupMenuItem(
                   value: 'runtime-deps',
