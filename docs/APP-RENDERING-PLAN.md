@@ -4,7 +4,7 @@
 
 两仓在本轮重新 fetch 核对后继续使用各自 `develop`：FLS B2 `ec318d8` / `20261126.12` 三个打包 workflow 通过；APP B2 `394993b` / `0.1.56+70` 的 CI `45832261224` 通过 214 项测试及 arm64 APK/artifact。状态见 [备份规格](PANEL-BACKUP-PLAN.md#当前推进状态)。后续批次从 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进。全量目标仍是所有适用 FLS Web 业务原生渲染，不限版本或在线脚本；DeepSeek chat-demo 的主题方向也须统一覆盖所有已有和新迁移页面。
 
-本轮已先同步 FLS、再核对 APP，两个 `develop` 均与远端一致；APP 同步时 HEAD `9c6ebae` 仅为文档提交，APK 构建仍对应 `394993b`。两仓 B3 未提交草稿保留，尚无配对 CI/APK；下一步先按备份规格收尾，不重新开发 B1/B2，也不把本地恢复开关当作已交付能力。
+2026-11-27 已先同步 FLS、再核对 APP，两个 `develop` 均与远端一致；APP 同步时 HEAD `64c73ec` 仅为文档提交，APK 构建仍对应 `394993b`。两仓 B3 未提交草稿保留，相关后端回归 121 项、106 个子用例和 APP 格式/分析通过，尚无 B3 配对 CI/APK。下一步按[后续开发计划](DEVELOPMENT-GOALS.md)的清理恢复、身份/并发、APP 全流程、B4 配对顺序收尾，不重新开发 B1/B2，也不把本地恢复开关当作已交付能力。
 
 ## 目标
 

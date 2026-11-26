@@ -14,13 +14,13 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 当前工作区已准备如下：
 
-应用配置、代理配置/诊断、通知 M2a/M2b 及 M3 B1/B2 已有配对自动化候选。2026-11-26 本轮再次 fetch：FLS B2 `ec318d8` / `20261126.12` 三个打包 workflow 通过；APP B2 修复候选 `394993b` / `0.1.56+70` 的 Android CI `45832261224` 通过 214 项测试和 arm64 APK/artifact。真实面板手动验收和全量合并门槛不变。
+应用配置、代理配置/诊断、通知 M2a/M2b 及 M3 B1/B2 已有配对自动化候选。2026-11-27 本轮再次 fetch：FLS B2 `ec318d8` / `20261126.12` 三个打包 workflow 通过；APP B2 修复候选 `394993b` / `0.1.56+70` 的 Android CI `45832261224` 通过 214 项测试和 arm64 APK/artifact。真实面板手动验收和全量合并门槛不变。
 
 M3 B1 已由 FLS `f72624b` 与 APP `ddac555` 配对自动化验证，B2 也已提交并通过双方 CI。当前未提交的是 B3 恢复与独立后续处理草稿；身份保留/回滚、锁顺序及跨进程互斥、证据保留、子进程回收和 APP 全流程仍待收尾，不计已交付。实际状态见 [备份规格](PANEL-BACKUP-PLAN.md#当前推进状态)。全量 APP 原生渲染仍包括所有适用 FLS 页面，不以在线脚本、版本管理或单个备份域完成替代。
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | 同步时 HEAD `9c6ebae`（文档）；已验证代码 `394993b` / `0.1.56+70` | B1 文件/作业及 B2 流式上传/预检查原生候选；Android CI [45832261224](https://github.com/liyw0205/fls-for-android/actions/runs/45832261224) 通过格式/分析/214 项测试和 arm64 APK，[artifact 15122689366](https://github.com/liyw0205/fls-for-android/actions/runs/45832261224/artifacts/15122689366) 到期于 2026-12-10 13:50:56 UTC。B3 另有本地草稿，无 CI/APK；手动验收待用户 |
+| APP (`fls-for-android`) | `develop` | 同步时 HEAD `64c73ec`（文档）；已验证代码 `394993b` / `0.1.56+70` | B1 文件/作业及 B2 流式上传/预检查原生候选；Android CI [45832261224](https://github.com/liyw0205/fls-for-android/actions/runs/45832261224) 通过格式/分析/214 项测试和 arm64 APK，[artifact 15122689366](https://github.com/liyw0205/fls-for-android/actions/runs/45832261224/artifacts/15122689366) 到期于 2026-12-10 13:50:56 UTC。B3 另有本地草稿，无 CI/APK；手动验收待用户 |
 | FLS (`$HOME/fls`) | `develop` | `ec318d8` / `20261126.12`（120） | B1 原生文件/作业与 B2 安全归档预检查；19 项定向、119 项相关回归及 [Module](https://github.com/liyw0205/fls/actions/runs/45830575814)、[Windows Desktop](https://github.com/liyw0205/fls/actions/runs/45830575861)、[Windows EXE](https://github.com/liyw0205/fls/actions/runs/45830575979) 工作流通过。B2 恢复提交关闭；B3 本地草稿未提交，不能用于稳定面板 |
 
 两仓本轮 `fetch origin`、`merge --ff-only origin/develop` 均为最新，领先/落后计数为 `0/0`；现有未提交改动保留。上述工作流只对应表内构建提交，不验证本地 B3。后续文档提交不改变 APK 对应的代码 SHA。
