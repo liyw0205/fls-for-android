@@ -18,7 +18,27 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-2026-11-27 最新数据 I/O 检查点：FLS `7524b052e571ba6a715d70cffbff3766f6bcd1d1` / `20261127.9`（129）。两仓先 fetch 核对最新 develop；本批后端提交只推 develop，APP 代码仍为 `79bbfab` / `0.1.62+76`，不新增版本或 APK。
+2026-11-27 最新脚本作业检查点：FLS `12185fd90a620ba6f67f183171f8330f63a4b514` / `20261127.11`（131），原实现为 `de51d4c` / `20261127.10`（130）。先 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`，再完成本批并推送后端。APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+
+`directory_jobs.py` 为原生单文件下载、Git 拉取、上传导入及其查询/取消/历史整理提供共享作业锁。请求在读取历史和暂存上传前拿 `.backup_native_restore.lock`，并在短 I/O 门禁下确认目录可写；恢复占用、prepared/损坏现场或短 I/O 竞争统一返回 `503 / panel_storage_busy`。线程在构造/start 前另拿共享句柄，请求与 worker 的所有权重叠，避免受理到启动空窗；请求及 worker 各自显式 finally 释放，不依赖 GC。保存、线程构造/start 失败清理上传、父目录句柄和租约，二次回执保存失败返回 unknown。网络等待不持有 storage/config 锁。
+
+Git worker 异常先终止/等待进程，等待 stderr reader 完成，再清 stage、关闭目录句柄；Git/导入在清理后发布终态。单文件作业的 lease 也保留至 response.close 完成。新增 `test_script_directory_jobs.py` 9 项覆盖旧 Web/原生独占恢复对全部相关路由的拒绝、损坏现场/独立进程 I/O 竞争、排队交接、三域保存/构造/start/二次回执失败及 FD 关闭、worker 抛错、响应关闭期间配置仍可写、归档取消、Git reader 延迟清理，以及真实独立进程硬退出后的共享锁回收。Git 子进程和进程锁为真实执行；HTTP 使用响应替身，不访问外网。
+
+原实现本机 9 文件扩展回归 105 项、54 个子用例通过，发布说明 2 项通过。首次运行分别暴露导入与 Git 的终态早于清理竞态，已修复并包含在扩展结果中；未弱化暂存清理断言。Linux 工作流增加该文件及三域完整回归，Windows 增加新文件、Git/导入回归；仅依赖 POSIX symlink 的旧单文件用例仍由 Linux 验证。
+
+原实现 `de51d4c` 的 [Native backup regression 45898745538](https://github.com/liyw0205/fls/actions/runs/45898745538) 未通过：Linux 27 文件 350 项、259 个子用例通过；Windows 既有监管、lease、I/O/认证通过，新增脚本 step 为 23 项、23 个子用例通过，Git 取消暂存清理 1 项失败，后续目录恢复 step 跳过。Git 对象保留 Windows 只读属性，`rmtree` 拒绝删除而 `_remove_entry` 吞掉错误；并非 reader 尚未退出。该提交的 [Module 45898745625](https://github.com/liyw0205/fls/actions/runs/45898745625)、[Desktop 45898745694](https://github.com/liyw0205/fls/actions/runs/45898745694)、[EXE 45898745551](https://github.com/liyw0205/fls/actions/runs/45898745551) 成功，打包不代替失败回归。
+
+修正 `12185fd` / `20261127.11` 只对 Windows 只读属性导致的 unlink/rmdir 拒绝清除属性并重试，拒绝重解析点及其他权限错误；stage 清理失败返回 `unknown / cleanup_failed`，不因已发布目标覆盖成 complete。新增只读对象/替换身份和清理失败 2 项，脚本作业文件合计 11 项。本机修正后四文件定向 28 项、23 个子用例通过。
+
+最终检查点的工作流严格对应 `12185fd90a620ba6f67f183171f8330f63a4b514`：
+
+- [Native backup regression 45899434365](https://github.com/liyw0205/fls/actions/runs/45899434365) 成功：Linux 27 文件 352 项、259 个子用例通过；Windows 全部通过，新增脚本 step 26 项、23 个子用例，既有监管 3 项通过/1 项 POSIX 跳过，lease/归档/顺序 5 项、7 个子用例，共享备份/恢复 9 项、7 个子用例，I/O/认证 16 项、3 个子用例，目录恢复 11 项、10 个子用例。
+- [Module 45899434274](https://github.com/liyw0205/fls/actions/runs/45899434274)、[Desktop 45899434425](https://github.com/liyw0205/fls/actions/runs/45899434425)、[EXE 45899434387](https://github.com/liyw0205/fls/actions/runs/45899434387) 全部成功，正式 Release job 均已核对为 skipped。
+- APP 本批只有方案变更；实际 APK 仍对应 `79bbfab` / `0.1.62+76`、CI `45883212390`、artifact `15148047738`（2026-12-10 19:29:52 UTC 到期）。不做 ADB/模拟器，真实面板手动验收待用户。
+
+本批只完成三类原生文件作业与正常进程退出的恢复互斥。其余脚本文件读写、Web 拉取/导入、在线安装/调试、任务配置及日志句柄继续推进；Git owner 硬退出后子进程仍可能存活，需接监管而不能把共享锁硬退出回收测试当成进程树回收证明。其他 worker 仍需防止整理活跃回执或删除其 stage；Windows 实例锁/WAL/断电、启动器、多 worker 依赖清理、损坏回执维护和 APP 全流程亦未完成。不计 B3/B4 交付，不合并 main、不发布正式 Release。
+
+上一数据 I/O 检查点：FLS `7524b052e571ba6a715d70cffbff3766f6bcd1d1` / `20261127.9`（129）。以下保留该批实现、平台验证及失败修复；它们不替代最新检查点的工作流证据。
 
 本批将短文件访问与长作业分开：`.backup_native_restore.lock` 继续协调完整备份/恢复/依赖作业；新增 `.backup_data_io.lock` 协调 JSON 事务、会话/历史 SQLite 连接与目录替换。普通数据访问持共享锁，目录提交/回滚/清单清理持独占锁；冲突立即拒绝，不在模型锁或 storage/session 锁之后等待前置锁。独占权限仅当前线程可重入，其他线程不能借用；会话持锁顺序为 I/O → storage → session，完整恢复为 I/O 独占 → 模型 → storage/session。data 之外的旧恢复回执事务显式使用 `live_data=False`，底层 data 文件读写仍自行检查门禁。
 
@@ -40,7 +60,7 @@ Python 命令行入口先恢复目录，保留原请求确认入口，再延后�
 - [Module 45895861931](https://github.com/liyw0205/fls/actions/runs/45895861931)、[Desktop 45895861946](https://github.com/liyw0205/fls/actions/runs/45895861946)、[EXE 45895862386](https://github.com/liyw0205/fls/actions/runs/45895862386) 全部成功，三个正式 Release job 均核对为 skipped。
 - APP 本批只更新方案，实际构建仍为下方 `79bbfab` / `0.1.62+76`，CI `45883212390`、artifact `15148047738`（到期 2026-12-10 19:29:52 UTC）。后续文档提交不代表新 APK；无 ADB、模拟器或稳定面板验证。
 
-本批保护范围仍有限：脚本拉取/导入/安装/调试、任务配置文件、长期日志句柄、shell/PowerShell PID 写入须继续协调；广泛 except 对 busy 的响应需逐域核对。Windows 长期持有的实例锁句柄与目录移动、外部 WAL/SHM 状态、断电持久性，以及多 worker 启动整理仍待验证。会话默认 SQLite 模式的测试不证明任意外部 WAL 状态。在线源缓存/失败明细主要写路径已在既有 `storage_transaction` 内；备份依赖清单写入的是临时文件，不能把这些代码搜索结果直接当成未保护的 data 写入。
+该 I/O 检查点当时的保护范围仍有限：脚本拉取/导入/安装/调试、任务配置文件、长期日志句柄、shell/PowerShell PID 写入须继续协调；原生单文件/Git/导入已由上方 `de51d4c` 接续。广泛 except 对 busy 的响应、Windows 长期实例锁句柄/目录移动、外部 WAL/SHM、断电以及多 worker 启动整理仍待验证。会话默认 SQLite 模式的测试不证明任意外部 WAL 状态。在线源缓存/失败明细主要写路径已在既有 `storage_transaction` 内；备份依赖清单写入的是临时文件，不能把这些代码搜索结果直接当成未保护的 data 写入。
 
 上一跨进程门禁检查点：FLS `ef2db1b` / `20261127.7`（127），门禁实现为 `5f49679` / `20261127.6`。以下保留其完整平台回归、失败修复及三个打包工作流证据。
 
@@ -86,7 +106,7 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 | APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
-下一轮从剩余文件作业开始：核对 `routes/scripts/native_pull.py`、`native_repo_pull.py`、`native_import.py`、`online_scripts/install.py`、任务配置文件和日志/调试句柄，网络等待不能长期拿配置锁，最终发布和清理须与目录恢复互斥。再核对 shell/PowerShell 启动器对 PID 的直接写入、Windows 实例锁常驻句柄、外部 WAL 以及多 worker 启动整理；保留已验证的 I/O → 模型 → storage/session 顺序，会话内部为 storage → session，I/O 冲突不反向等待。逐域检查异常捕获是否吞掉 busy，不把未验证路径计作已接入。
+下一轮从剩余文件作业开始：原生 `native_pull.py`、`native_repo_pull.py`、`native_import.py` 的受理/清理 lease 已补；继续 `online_scripts/install.py`、其他脚本读写、Web 拉取/导入、任务配置文件和日志/调试句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。优先补 Git owner 崩溃监管和跨 worker 活跃作业识别，避免锁释放后子进程仍占目录或其他 worker 清理现场。再核对 shell/PowerShell PID 写入、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部为 storage → session，I/O 冲突不反向等待。逐域检查 except 是否吞 busy，不把未验证路径计作已接入。
 
 随后处理 `RESTORE_DEPENDENCY_CLEANUP` 仅在所属 worker 内存中的句柄：其他 worker 不能因只看到持久身份就提前释放原 owner 的 lease，也不能跳过仍在读输出的线程。全部恢复回执损坏时须保留可核验维护入口，查询不执行修复。APP 再覆盖原生备份页嵌套 401/重登、切换面板、旧回包及任务/概览刷新；这些是后续实现任务，当前检查点不证明已支持。
 
@@ -170,7 +190,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 最新 FLS `7524b05` 加入 JSON/会话/历史 SQLite、验证码及 Python 启动的 I/O 门禁，保留目录现场与 APP `79bbfab` 原请求确认；实际 CI/APK 见上方。继续其他文件长作业、shell 启动器、逐域 busy 映射、Windows 实例锁/WAL/断电边界、多 worker 清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 最新 FLS `de51d4c` 在短 I/O 门禁之上保护原生单文件/Git/导入作业，保留目录现场与 APP `79bbfab` 原请求确认；实际 CI/APK 见上方。继续其他文件长作业、Git 崩溃监管、启动器、逐域 busy 映射、Windows 实例锁/WAL/断电、多 worker 清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
