@@ -128,6 +128,194 @@ class PanelBackupManager {
     }
   }
 
+  Future<PanelBackupRestore> createRestore({
+    required String requestId,
+    required PanelBackupPreflight preflight,
+    required List<String> items,
+    required bool restoreDependencies,
+    required bool confirmDataImpact,
+  }) async {
+    _validateRequestId(requestId);
+    _validateRequestId(preflight.requestId);
+    _validateDigest(preflight.archiveSha256);
+    if (items.isEmpty ||
+        items.any((item) => !preflight.items.contains(item)) ||
+        items.toSet().length != items.length ||
+        (items.contains('data') && !confirmDataImpact) ||
+        (restoreDependencies && preflight.dependencyFiles.isEmpty)) {
+      throw ArgumentError('恢复范围或确认无效');
+    }
+    const path = '/api/backup/native/restores';
+    try {
+      final result = _parseRestore(
+        await _api.postJson(path, {
+          'request_id': requestId,
+          'preflight_id': preflight.requestId,
+          'archive_sha256': preflight.archiveSha256,
+          'restore_items': items,
+          'restore_dependencies': restoreDependencies,
+          'confirm_data_impact': confirmDataImpact,
+        }),
+        requestId,
+      );
+      if (result.preflightId != preflight.requestId ||
+          result.archiveSha256 != preflight.archiveSha256 ||
+          result.items.length != items.length ||
+          result.items.any((item) => !items.contains(item)) ||
+          result.restoreDependencies != restoreDependencies) {
+        throw const FormatException('恢复响应与原提交意图不一致');
+      }
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupRestore> fetchRestore(String requestId) async {
+    _validateRequestId(requestId);
+    final path = '/api/backup/native/restores/$requestId';
+    try {
+      return _parseRestore(await _api.getJson(path), requestId);
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupRestore> resolveRestore({
+    required String requestId,
+    required bool restored,
+  }) async {
+    _validateRequestId(requestId);
+    final path = '/api/backup/native/restores/$requestId/resolve';
+    try {
+      return _parseRestore(
+        await _api.postJson(path, {
+          'outcome': restored ? 'restored' : 'not_applied',
+          'confirm': true,
+        }),
+        requestId,
+      );
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupRestoresPage> fetchRestores({
+    int limit = 25,
+    int offset = 0,
+  }) async {
+    if (limit < 1 || limit > 100 || offset < 0 || offset > 100000) {
+      throw ArgumentError('恢复历史分页参数无效');
+    }
+    const path = '/api/backup/native/restores';
+    final query = Uri(
+      queryParameters: {'limit': '$limit', 'offset': '$offset'},
+    );
+    try {
+      return PanelBackupRestoresPage.fromJson(
+        await _api.getJson('$path?${query.query}'),
+      );
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupMaintenance> fetchRestoreMaintenance() async {
+    const path = '/api/backup/native/restore-maintenance';
+    try {
+      return PanelBackupMaintenance.fromJson(await _api.getJson(path));
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupMaintenance> acknowledgeRestoreMaintenance(
+    String eventId,
+  ) async {
+    _validateRequestId(eventId);
+    final path = '/api/backup/native/restore-maintenance/$eventId/ack';
+    try {
+      return PanelBackupMaintenance.fromJson(
+        await _api.postJson(path, const {}),
+      );
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupRestore> reloadScheduler({
+    required String requestId,
+    required String operationId,
+    bool confirmRetry = false,
+  }) => _postRestoreFollowup(
+    requestId,
+    'scheduler-reload',
+    operationId,
+    confirmRetry,
+  );
+
+  Future<PanelBackupRestore> installRestoreDependencies({
+    required String requestId,
+    required String operationId,
+    bool confirmRetry = false,
+  }) => _postRestoreFollowup(
+    requestId,
+    'dependencies',
+    operationId,
+    confirmRetry,
+  );
+
+  Future<PanelBackupRestore> cleanupRestoreDependencies({
+    required String requestId,
+    required String operationId,
+  }) async {
+    _validateRequestId(requestId);
+    _validateRequestId(operationId);
+    final path = '/api/backup/native/restores/$requestId/dependencies/cleanup';
+    try {
+      final result = _parseRestore(
+        await _api.postJson(path, {'operation_id': operationId}),
+        requestId,
+      );
+      if (result.dependencies.operationId != operationId) {
+        throw const FormatException('依赖清理响应不属于原操作');
+      }
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelBackupRestore> _postRestoreFollowup(
+    String requestId,
+    String operation,
+    String operationId,
+    bool confirmRetry,
+  ) async {
+    _validateRequestId(requestId);
+    _validateRequestId(operationId);
+    final path = '/api/backup/native/restores/$requestId/$operation';
+    try {
+      return _parseRestore(
+        await _api.postJson(path, {
+          'operation_id': operationId,
+          'confirm_retry': confirmRetry,
+        }),
+        requestId,
+      );
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  PanelBackupRestore _parseRestore(Object? value, String requestId) {
+    final result = PanelBackupRestore.fromJson(value);
+    if (result.requestId != requestId) {
+      throw const FormatException('恢复响应与原请求标识不一致');
+    }
+    return result;
+  }
+
   Future<Map<String, dynamic>> create({
     required String requestId,
     required List<String> items,
@@ -206,6 +394,12 @@ class PanelBackupManager {
   static void _validateRequestId(String requestId) {
     if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(requestId)) {
       throw ArgumentError('备份请求标识无效');
+    }
+  }
+
+  static void _validateDigest(String digest) {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(digest)) {
+      throw ArgumentError('归档摘要无效');
     }
   }
 

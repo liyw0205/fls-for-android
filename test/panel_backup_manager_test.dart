@@ -52,6 +52,19 @@ void main() {
       }),
       throwsFormatException,
     );
+    final restore = PanelBackupRestore.fromJson({
+      'ok': true,
+      'restore': _restore(),
+    });
+    expect(restore.state, 'restored');
+    expect(restore.scheduler.state, 'pending');
+    expect(
+      () => PanelBackupRestore.fromJson({
+        'ok': true,
+        'restore': {..._restore(), 'archive_sha256': 'bad'},
+      }),
+      throwsFormatException,
+    );
   });
 
   test('uses native endpoints, exact file version, and session CSRF', () async {
@@ -95,6 +108,126 @@ void main() {
       'request_id': 'c' * 32,
       'items': ['scripts'],
     });
+  });
+
+  test(
+    'rejects malformed or contradictory restore results without coercion',
+    () {
+      final invalid = <Map<String, dynamic>>[
+        {'active': 'false'},
+        {'committed': 1},
+        {'archive_size_bytes': '13'},
+        {'archive_size_bytes': -1},
+        {'created_at': 1.5},
+        {'updated_at': 0},
+        {
+          'restore_items': ['data', 1],
+        },
+        {
+          'restore_items': ['data', 'data'],
+        },
+        {
+          'state': 'unknown',
+          'committed': true,
+          'restore_outcome_unknown': true,
+        },
+        {'state': 'restored', 'active': true},
+        {'state': 'restored', 'live_state_unchanged': true},
+        {'error': 'x' * 1001},
+        {
+          'scheduler': {
+            'state': 'succeeded',
+            'required': true,
+            'operation_id': '',
+            'error': '',
+          },
+        },
+        {
+          'dependencies': {
+            'state': 'not_requested',
+            'operation_id': '',
+            'error': '',
+            'output': '中' * 12000,
+          },
+        },
+      ];
+      for (final changes in invalid) {
+        expect(
+          () => PanelBackupRestore.fromJson({
+            'ok': true,
+            'restore': {..._restore(), ...changes},
+          }),
+          throwsFormatException,
+          reason: changes.keys.join(','),
+        );
+      }
+      expect(
+        () => PanelBackupRestoresPage.fromJson({
+          'ok': true,
+          'items': [_restore()],
+          'total': 2,
+          'limit': 25,
+          'offset': 0,
+          'has_more': false,
+        }),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test('accepts unresolved and explicitly unapplied restore outcomes', () {
+    final unknown = PanelBackupRestore.fromJson({
+      'ok': true,
+      'restore': {
+        ..._restore(),
+        'state': 'unknown',
+        'phase': 'committing',
+        'committed': false,
+        'restore_outcome_unknown': true,
+      },
+    });
+    expect(unknown.committed, isFalse);
+    final unapplied = PanelBackupRestore.fromJson({
+      'ok': true,
+      'restore': {
+        ..._restore(),
+        'state': 'failed',
+        'phase': 'failed',
+        'committed': false,
+        'live_state_unchanged': true,
+        'scheduler': {
+          'state': 'not_required',
+          'required': true,
+          'operation_id': '',
+          'error': '',
+        },
+      },
+    });
+    expect(unapplied.liveStateUnchanged, isTrue);
+  });
+
+  test('rejects a restore response bound to another request', () async {
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=session',
+        csrfToken: 'csrf',
+      ),
+      client: MockClient(
+        (_) async => utf8Response(
+          jsonEncode({
+            'ok': true,
+            'restore': {..._restore(), 'request_id': 'e' * 32},
+          }),
+          200,
+        ),
+      ),
+    );
+    addTearDown(api.close);
+    await expectLater(
+      PanelBackupManager(api).fetchRestore('f' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
   });
 
   test(
@@ -186,6 +319,210 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'submits an idempotent restore and independent follow-up operations',
+    () async {
+      final requests = <http.Request>[];
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=backup-session',
+          csrfToken: 'backup-csrf',
+        ),
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'GET' &&
+              request.url.path.endsWith('/restores')) {
+            return utf8Response(
+              jsonEncode({
+                'ok': true,
+                'items': [_restore()],
+                'total': 1,
+                'limit': 10,
+                'offset': 0,
+                'has_more': false,
+              }),
+              200,
+            );
+          }
+          if (request.method == 'GET') {
+            return utf8Response(
+              jsonEncode({'ok': true, 'restore': _restore()}),
+              200,
+            );
+          }
+          return utf8Response(
+            jsonEncode({'ok': true, 'restore': _restore()}),
+            202,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelBackupManager(api);
+      final preflight = PanelBackupPreflight.fromJson({
+        'ok': true,
+        'preflight': _preflight(),
+      });
+
+      final restored = await manager.createRestore(
+        requestId: 'f' * 32,
+        preflight: preflight,
+        items: const ['data'],
+        restoreDependencies: false,
+        confirmDataImpact: true,
+      );
+      final status = await manager.fetchRestore('f' * 32);
+      final history = await manager.fetchRestores(limit: 10);
+      await manager.reloadScheduler(requestId: 'f' * 32, operationId: 'e' * 32);
+
+      expect(restored.state, 'restored');
+      expect(status.requestId, 'f' * 32);
+      expect(history.items.single.requestId, 'f' * 32);
+      expect(requests.map((request) => request.method), [
+        'POST',
+        'GET',
+        'GET',
+        'POST',
+      ]);
+      expect(requests.first.url.path, '/api/backup/native/restores');
+      expect(jsonDecode(requests.first.body), {
+        'request_id': 'f' * 32,
+        'preflight_id': 'a' * 32,
+        'archive_sha256': 'b' * 64,
+        'restore_items': ['data'],
+        'restore_dependencies': false,
+        'confirm_data_impact': true,
+      });
+      expect(requests.first.headers['x-csrf-token'], 'backup-csrf');
+      expect(
+        requests.last.url.path,
+        '/api/backup/native/restores/${'f' * 32}/scheduler-reload',
+      );
+    },
+  );
+
+  test(
+    'cleans the original dependency operation without starting a new attempt',
+    () async {
+      final requests = <http.Request>[];
+      var wrongOperation = false;
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example/prefix',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=backup-session',
+          csrfToken: 'backup-csrf',
+        ),
+        client: MockClient((request) async {
+          requests.add(request);
+          return utf8Response(
+            jsonEncode({
+              'ok': true,
+              'restore': {
+                ..._restore(),
+                'restore_dependencies': true,
+                'dependencies': {
+                  'state': 'unknown',
+                  'operation_id': (wrongOperation ? 'd' : 'e') * 32,
+                  'error': 'The original installation outcome is unknown',
+                  'output': '',
+                  'cleanup_required': false,
+                },
+              },
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelBackupManager(api);
+      final result = await manager.cleanupRestoreDependencies(
+        requestId: 'f' * 32,
+        operationId: 'e' * 32,
+      );
+      expect(result.dependencies.state, 'unknown');
+      expect(result.dependencies.cleanupRequired, isFalse);
+      expect(requests.single.method, 'POST');
+      expect(
+        requests.single.url.path,
+        '/prefix/api/backup/native/restores/${'f' * 32}/dependencies/cleanup',
+      );
+      expect(jsonDecode(requests.single.body), {'operation_id': 'e' * 32});
+      expect(requests.single.headers['x-csrf-token'], 'backup-csrf');
+      wrongOperation = true;
+      await expectLater(
+        manager.cleanupRestoreDependencies(
+          requestId: 'f' * 32,
+          operationId: 'e' * 32,
+        ),
+        throwsA(isA<PanelApiException>()),
+      );
+      for (final cleanup in <Object>[true, 'true']) {
+        expect(
+          () => PanelBackupFollowup.fromJson({
+            'state': 'succeeded',
+            'operation_id': 'e' * 32,
+            'error': '',
+            'cleanup_required': cleanup,
+          }),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+
+  test(
+    'reads restore archive maintenance and acknowledges the original event',
+    () async {
+      final requests = <http.Request>[];
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=backup-session',
+          csrfToken: 'backup-csrf',
+        ),
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'GET') {
+            return utf8Response(
+              jsonEncode({
+                'ok': true,
+                'maintenance': {
+                  'event_id': 'a' * 32,
+                  'required': false,
+                  'kind': 'publication',
+                  'acknowledged': false,
+                  'notice': '恢复归档索引发布已确认',
+                },
+              }),
+              200,
+            );
+          }
+          return utf8Response(
+            jsonEncode({'ok': true, 'maintenance': null}),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+
+      final manager = PanelBackupManager(api);
+      final state = await manager.fetchRestoreMaintenance();
+      final acknowledged = await manager.acknowledgeRestoreMaintenance(
+        state.eventId,
+      );
+
+      expect(state.eventId, 'a' * 32);
+      expect(state.required, isFalse);
+      expect(state.kind, 'publication');
+      expect(acknowledged.acknowledged, isTrue);
+      expect(requests.map((request) => request.method), ['GET', 'POST']);
+      expect(
+        requests.last.url.path,
+        '/api/backup/native/restore-maintenance/${'a' * 32}/ack',
+      );
+    },
+  );
 }
 
 Map<String, dynamic> _preflight() => {
@@ -206,4 +543,35 @@ Map<String, dynamic> _preflight() => {
   'error_code': '',
   'created_at': 1795695731,
   'expires_at': 1795699331,
+};
+
+Map<String, dynamic> _restore() => {
+  'request_id': 'f' * 32,
+  'preflight_id': 'a' * 32,
+  'filename': 'full.zip',
+  'archive_sha256': 'b' * 64,
+  'archive_size_bytes': 13,
+  'restore_items': ['data'],
+  'restore_dependencies': false,
+  'state': 'restored',
+  'phase': 'restored',
+  'active': false,
+  'committed': true,
+  'live_state_unchanged': false,
+  'restore_outcome_unknown': false,
+  'error': '',
+  'created_at': 1795695731,
+  'updated_at': 1795695732,
+  'scheduler': {
+    'state': 'pending',
+    'required': true,
+    'operation_id': '',
+    'error': '',
+  },
+  'dependencies': {
+    'state': 'not_requested',
+    'operation_id': '',
+    'error': '',
+    'output': '',
+  },
 };

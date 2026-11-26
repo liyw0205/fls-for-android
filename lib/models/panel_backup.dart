@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class PanelBackupCapabilities {
   const PanelBackupCapabilities({
     required this.items,
@@ -141,6 +143,342 @@ class PanelBackupPreflight {
       warnings: warnings,
       errorCode: record['error_code']?.toString() ?? '',
       expiresAt: _integer(record['expires_at']),
+    );
+  }
+}
+
+class PanelBackupFollowup {
+  const PanelBackupFollowup({
+    required this.state,
+    required this.operationId,
+    required this.required,
+    required this.error,
+    required this.output,
+    this.cleanupRequired = false,
+  });
+
+  final String state;
+  final String operationId;
+  final bool required;
+  final String error;
+  final String output;
+  final bool cleanupRequired;
+
+  factory PanelBackupFollowup.fromJson(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value['state'] is! String ||
+        value['operation_id'] is! String ||
+        value['error'] is! String ||
+        (value.containsKey('required') && value['required'] is! bool) ||
+        (value.containsKey('cleanup_required') &&
+            value['cleanup_required'] is! bool) ||
+        (value.containsKey('output') && value['output'] is! String)) {
+      throw const FormatException('恢复后续处理状态无效');
+    }
+    final state = value['state'] as String;
+    if (!const {
+      'not_required',
+      'not_requested',
+      'pending',
+      'running',
+      'succeeded',
+      'failed',
+      'unknown',
+    }.contains(state)) {
+      throw const FormatException('恢复后续处理阶段无效');
+    }
+    final operationId = value['operation_id'] as String;
+    if (operationId.isNotEmpty &&
+        !RegExp(r'^[a-f0-9]{32}$').hasMatch(operationId)) {
+      throw const FormatException('恢复后续操作标识无效');
+    }
+    final output = value['output'] as String? ?? '';
+    final error = value['error'] as String;
+    final cleanupRequired = value['cleanup_required'] == true;
+    if (utf8.encode(output).length > 32768 ||
+        utf8.encode(error).length > 1000 ||
+        (const {'running', 'succeeded', 'failed', 'unknown'}.contains(state) &&
+            operationId.isEmpty) ||
+        (const {'pending', 'not_required', 'not_requested'}.contains(state) &&
+            operationId.isNotEmpty) ||
+        (cleanupRequired && state != 'unknown')) {
+      throw const FormatException('恢复后续处理身份或输出无效');
+    }
+    return PanelBackupFollowup(
+      state: state,
+      operationId: operationId,
+      required: value['required'] == true,
+      error: error,
+      output: output,
+      cleanupRequired: cleanupRequired,
+    );
+  }
+}
+
+class PanelBackupRestore {
+  const PanelBackupRestore({
+    required this.requestId,
+    required this.preflightId,
+    required this.filename,
+    required this.archiveSha256,
+    required this.archiveSizeBytes,
+    required this.items,
+    required this.restoreDependencies,
+    required this.state,
+    required this.phase,
+    required this.active,
+    required this.committed,
+    required this.liveStateUnchanged,
+    required this.restoreOutcomeUnknown,
+    required this.error,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.scheduler,
+    required this.dependencies,
+  });
+
+  final String requestId;
+  final String preflightId;
+  final String filename;
+  final String archiveSha256;
+  final int archiveSizeBytes;
+  final List<String> items;
+  final bool restoreDependencies;
+  final String state;
+  final String phase;
+  final bool active;
+  final bool committed;
+  final bool liveStateUnchanged;
+  final bool restoreOutcomeUnknown;
+  final String error;
+  final int createdAt;
+  final int updatedAt;
+  final PanelBackupFollowup scheduler;
+  final PanelBackupFollowup dependencies;
+
+  factory PanelBackupRestore.fromJson(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value['ok'] != true ||
+        value['restore'] is! Map<String, dynamic>) {
+      throw const FormatException('备份恢复响应格式无效');
+    }
+    final record = value['restore'] as Map<String, dynamic>;
+    const stringFields = [
+      'request_id',
+      'preflight_id',
+      'archive_sha256',
+      'filename',
+      'state',
+      'phase',
+      'error',
+    ];
+    const boolFields = [
+      'restore_dependencies',
+      'active',
+      'committed',
+      'live_state_unchanged',
+      'restore_outcome_unknown',
+    ];
+    if (stringFields.any((field) => record[field] is! String) ||
+        boolFields.any((field) => record[field] is! bool) ||
+        record['archive_size_bytes'] is! int ||
+        record['created_at'] is! int ||
+        record['updated_at'] is! int ||
+        record['restore_items'] is! List ||
+        (record['restore_items'] as List).any((item) => item is! String)) {
+      throw const FormatException('备份恢复字段类型无效');
+    }
+    final requestId = record['request_id'] as String;
+    final preflightId = record['preflight_id'] as String;
+    final digest = record['archive_sha256'] as String;
+    final filename = record['filename'] as String;
+    final items = List<String>.unmodifiable(record['restore_items'] as List);
+    final state = record['state'] as String;
+    final phase = record['phase'] as String;
+    if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(requestId) ||
+        !RegExp(r'^[a-f0-9]{32}$').hasMatch(preflightId) ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(digest) ||
+        filename.isEmpty ||
+        filename.length > 255 ||
+        filename != filename.trim() ||
+        filename.contains('/') ||
+        filename.contains('\\') ||
+        !const {
+          'accepted',
+          'extracting',
+          'staging',
+          'committing',
+          'restored',
+          'failed',
+          'unknown',
+        }.contains(state) ||
+        !const {
+          'accepted',
+          'extracting',
+          'staging',
+          'committing',
+          'restored',
+          'failed',
+          'unknown',
+        }.contains(phase) ||
+        items.isEmpty ||
+        items.length != items.toSet().length ||
+        items.any((item) => !const {'data', 'scripts'}.contains(item))) {
+      throw const FormatException('备份恢复记录身份无效');
+    }
+    final active = record['active'] as bool;
+    final committed = record['committed'] as bool;
+    final unchanged = record['live_state_unchanged'] as bool;
+    final unknown = record['restore_outcome_unknown'] as bool;
+    const activeStates = {'accepted', 'extracting', 'staging', 'committing'};
+    final scheduler = PanelBackupFollowup.fromJson(record['scheduler']);
+    final dependencies = PanelBackupFollowup.fromJson(record['dependencies']);
+    final restoreDependencies = record['restore_dependencies'] as bool;
+    if ((record['archive_size_bytes'] as int) < 1 ||
+        (record['created_at'] as int) < 0 ||
+        (record['updated_at'] as int) < (record['created_at'] as int) ||
+        utf8.encode(record['error'] as String).length > 1000 ||
+        active != activeStates.contains(state) ||
+        (active && phase != state) ||
+        committed != (state == 'restored') ||
+        (committed && unchanged) ||
+        unknown != (state == 'unknown') ||
+        (state == 'failed' && !unchanged) ||
+        scheduler.required != items.contains('data') ||
+        scheduler.state == 'not_requested' ||
+        (!items.contains('data') && scheduler.state != 'not_required') ||
+        (items.contains('data') &&
+            scheduler.state == 'not_required' &&
+            state != 'failed') ||
+        dependencies.state == 'not_required' ||
+        (!restoreDependencies && dependencies.state != 'not_requested') ||
+        (restoreDependencies &&
+            dependencies.state == 'not_requested' &&
+            state != 'failed')) {
+      throw const FormatException('备份恢复状态不一致');
+    }
+    return PanelBackupRestore(
+      requestId: requestId,
+      preflightId: preflightId,
+      filename: filename,
+      archiveSha256: digest,
+      archiveSizeBytes: _integer(record['archive_size_bytes']),
+      items: items,
+      restoreDependencies: restoreDependencies,
+      state: state,
+      phase: phase,
+      active: active,
+      committed: committed,
+      liveStateUnchanged: unchanged,
+      restoreOutcomeUnknown: unknown,
+      error: record['error'] as String,
+      createdAt: _integer(record['created_at']),
+      updatedAt: _integer(record['updated_at']),
+      scheduler: scheduler,
+      dependencies: dependencies,
+    );
+  }
+}
+
+class PanelBackupRestoresPage {
+  const PanelBackupRestoresPage({
+    required this.items,
+    required this.total,
+    required this.limit,
+    required this.offset,
+    required this.hasMore,
+  });
+
+  final List<PanelBackupRestore> items;
+  final int total;
+  final int limit;
+  final int offset;
+  final bool hasMore;
+
+  factory PanelBackupRestoresPage.fromJson(Object? value) {
+    if (value is! Map<String, dynamic> ||
+        value['ok'] != true ||
+        value['items'] is! List ||
+        value['total'] is! int ||
+        value['limit'] is! int ||
+        value['offset'] is! int ||
+        value['has_more'] is! bool) {
+      throw const FormatException('备份恢复历史响应格式无效');
+    }
+    final total = value['total'] as int;
+    final limit = value['limit'] as int;
+    final offset = value['offset'] as int;
+    final items = value['items'] as List;
+    if (total < 0 ||
+        total > 1000 ||
+        limit < 1 ||
+        limit > 100 ||
+        offset < 0 ||
+        offset > 100000 ||
+        items.length > limit ||
+        items.length != (total - offset).clamp(0, limit) ||
+        value['has_more'] != (offset + limit < total)) {
+      throw const FormatException('备份恢复历史分页无效');
+    }
+    return PanelBackupRestoresPage(
+      items: (value['items'] as List)
+          .map(
+            (item) =>
+                PanelBackupRestore.fromJson({'ok': true, 'restore': item}),
+          )
+          .toList(growable: false),
+      total: total,
+      limit: limit,
+      offset: offset,
+      hasMore: value['has_more'] == true,
+    );
+  }
+}
+
+class PanelBackupMaintenance {
+  const PanelBackupMaintenance({
+    required this.eventId,
+    required this.required,
+    required this.kind,
+    required this.acknowledged,
+    required this.notice,
+  });
+
+  final String eventId;
+  final bool required;
+  final String kind;
+  final bool acknowledged;
+  final String notice;
+
+  factory PanelBackupMaintenance.fromJson(Object? value) {
+    if (value is! Map<String, dynamic> || value['ok'] != true) {
+      throw const FormatException('恢复归档维护状态响应无效');
+    }
+    if (value['maintenance'] == null) {
+      return const PanelBackupMaintenance(
+        eventId: '',
+        required: false,
+        kind: '',
+        acknowledged: true,
+        notice: '',
+      );
+    }
+    final maintenance = value['maintenance'];
+    if (maintenance is! Map<String, dynamic>) {
+      throw const FormatException('恢复归档维护状态无效');
+    }
+    final eventId = maintenance['event_id']?.toString() ?? '';
+    final kind = maintenance['kind']?.toString() ?? '';
+    if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(eventId) ||
+        !const {'repair', 'publication', 'unavailable'}.contains(kind)) {
+      throw const FormatException('恢复维护事件身份无效');
+    }
+    return PanelBackupMaintenance(
+      eventId: eventId,
+      required: maintenance['required'] == true,
+      kind: kind,
+      acknowledged: maintenance['acknowledged'] == true,
+      notice: maintenance['notice']?.toString() ?? '',
     );
   }
 }
