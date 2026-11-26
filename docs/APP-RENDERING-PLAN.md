@@ -4,7 +4,7 @@
 
 两仓在本轮重新 fetch 核对后继续使用各自 `develop`：FLS B2 `ec318d8` / `20261126.12` 三个打包 workflow 通过；APP B2 `394993b` / `0.1.56+70` 的 CI `45832261224` 通过 214 项测试及 arm64 APK/artifact。状态见 [备份规格](PANEL-BACKUP-PLAN.md#当前推进状态)。后续批次从 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进。全量目标仍是所有适用 FLS Web 业务原生渲染，不限版本或在线脚本；DeepSeek chat-demo 的主题方向也须统一覆盖所有已有和新迁移页面。
 
-2026-11-27 已先同步 FLS、再核对 APP，继续在两个 `develop` 推进。B3 最新 FLS `efc6a4d` / `20261127.12`（132）为 Git 克隆增加独立监管：面板 owner 崩溃后继续持共享锁，命令/子进程退出、结果写入及目录 FD 关闭后才解锁。原生三类文件作业受理/清理保护、短 I/O 门禁、持久目录现场和 APP `79bbfab` / `0.1.62+76` 原请求恢复沿用。本批 APP 无代码变更，不新增版本或 APK。后端 Linux 360 项、259 个子用例及 Windows 定向回归、三个打包 workflow 全部通过，正式 Release 跳过；完整证据和实际 APK 见 [备份规格](PANEL-BACKUP-PLAN.md#b3-原生恢复与后续处理开发测试检查点)。优先跨 worker 活跃回执/stage 身份，再补短 Git HEAD、其他脚本/在线安装/调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 清理、损坏回执维护及 APP 全流程，再做 B4；随后推进 M4-M7，全量目标不变。
+2026-11-27 已先同步 FLS、再核对 APP，继续在两个 `develop` 推进。B3 最新 FLS `bf8cb70` / `20261127.16`（136）接入短 Git HEAD 独立监管和临时文件输出，沿用三类原生作业跨 worker 身份/回执/取消/上传接收、Git 克隆监管、短 I/O 门禁及目录现场。APP 仍为 `79bbfab` / `0.1.62+76` 原请求恢复，本批无代码变更或新 APK；本机八文件 65 项、38 个子用例通过。完整平台终态、Windows 三次失败诊断与实际 APK 见 [备份规格](PANEL-BACKUP-PLAN.md#b3-原生恢复与后续处理开发测试检查点)。接续其他脚本/在线安装/调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程，再做 B4；随后推进 M4-M7，全量目标不变。
 
 ## 目标
 

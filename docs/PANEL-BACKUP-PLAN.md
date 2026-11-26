@@ -18,19 +18,49 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-2026-11-27 最新 Git 克隆监管检查点：FLS `efc6a4d79ba050dbfcca2da656e19fda5e056b55` / `20261127.12`（132）。本批推送后再次 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`。APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+2026-11-27 最新脚本作业检查点：FLS `bf8cb70fee621ea36fe5764108556d47ce4f5c06` / `20261127.16`（136）。本批先 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`。APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+
+短 `_repo_head` 也改由 `DirectoryProcess` 独立监管，保留固定目录 FD 和共享恢复锁；监管和命令隔离面板 stdin，stdout 写入临时文件，命令整树退出后最多读取 256 字节并校验 HEAD。监管自身的工作目录及状态/输出文件位于系统临时目录，HEAD 命令仍在固定仓库目录执行，不改仓库或作业 DTO。启动/查询失败或超时返回无法确认；监管清理进程组/Windows Job Object 后才释放恢复锁。克隆的进度 stderr 仍走原有 reader，输出重定向的新参数沿用既有默认行为。
+
+新增 3 项真实进程测试：命令成功但子进程继承 stdout、查询超时，以及 HEAD 查询期间面板 owner 强制退出；均断言命令/子进程退出后恢复锁才可取得。本机八文件 65 项、38 个子用例通过，线程异常作为错误；`git diff --check` 通过。
+
+本提交四项工作流均已核对 SHA 与成功终态：
+
+- [Native backup regression 45906763722](https://github.com/liyw0205/fls/actions/runs/45906763722)：Linux 29 文件 371 项、274 个子用例通过；Windows 脚本/监管 step 44 项通过、1 项 POSIX FD 用例跳过、38 个子用例通过，此前失败的两个 Git 双 worker 用例通过。Windows 既有依赖监管 3 项通过/1 项 POSIX 跳过，lease/归档/顺序 5 项、7 个子用例，共享备份/恢复 9 项、7 个子用例，I/O/认证 16 项、3 个子用例，目录恢复 11 项、10 个子用例均通过。
+- [Module 45906763794](https://github.com/liyw0205/fls/actions/runs/45906763794)、[Desktop 45906763844](https://github.com/liyw0205/fls/actions/runs/45906763844)、[EXE 45906763773](https://github.com/liyw0205/fls/actions/runs/45906763773) 均成功，三个正式 Release job 均 skipped。
+- APP 实际 APK 仍为 `79bbfab` / `0.1.62+76`，Android CI `45883212390`、[artifact 15148047738](https://github.com/liyw0205/fls-for-android/actions/runs/45883212390/artifacts/15148047738)（2026-12-10 19:29:52 UTC 到期）。本批 APP 只有方案提交，不制造新 APK；不做 ADB/模拟器，用户手动验收待执行。
+
+前序跨 worker 实现为 `5b190299ef415a3b22af542d611c409f21bc02a5` / `20261127.13`（133），以下保留实现和三次实际失败诊断。
+
+`directory_jobs.py` 增加三域独立的跨进程历史事务锁，每次使用内存记录前刷新磁盘快照，受理、重复请求、并发上限、取消及进度/终态保存共用事务。当前 owner 未落盘的进度保留在本进程，其他 worker 的取消状态会合入并触发本地事件；普通进度更新不能将 cancelling 改回执行中。历史锁有 5 秒等待上限，网络/解包等待不持有历史或配置事务锁，实际 JSON 写入仍经过短 I/O 门禁。
+
+每个作业从首次保存前持有 `BASE_DIR/.script_job_locks/<domain>-<id>.lock` 的共享存活锁，持续到执行线程清理结束；Git 独立监管也持同一身份。只有独占探测确认无人持有，才允许将活动记录整理为 unknown 或清理其暂存；失效字节在清理前写入，迟到监管不能再启动命令。上传从打开 `.upload` 前就持身份，并将同一所有权交给 worker；未登记上传也必须确认接收者已退出才回收。身份/保存/线程构造/start 失败均释放资源，上传受理异常由 ExitStack 统一兜底。
+
+新增 `test_script_job_workers.py` 6 项、12 个三域子用例：真实双面板进程预热缓存后查询/取消/重放、并发同 request ID 只启动一次、不同 owner 先后完成不丢回执、原 owner 被杀后保留另一作业暂存、接收中尚无回执的上传保护，以及失活上传回收。Git 使用真实本地临时仓库。另新增 2 项监管身份交接/迟到启动拒绝，并将身份保存失败加入三域异常回归；fixture 等待脚本线程收尾后才卸载模块和临时目录，不隐藏线程异常。
+
+本机扩展 12 文件 91 项、58 个子用例通过（最终接收保护改动前）；最终六文件定向 56 项、38 个子用例通过，线程异常按错误处理；发布说明 2 项及 `git diff --check` 通过。
+
+实现提交 `5b19029` 的 [Native backup regression 45904014337](https://github.com/liyw0205/fls/actions/runs/45904014337) 未通过：Linux 29 文件 368 项、274 个子用例通过；Windows 脚本 step 41 项通过、1 项 POSIX FD 用例跳过、36 个子用例通过，两个 Git 双 worker 用例等待 complete 超时，状态仍为 cloning，后续目录恢复 step 跳过。其他 Windows 监管/lease/I/O 定向回归通过。该提交 [Module 45904014335](https://github.com/liyw0205/fls/actions/runs/45904014335)、[Desktop 45904014474](https://github.com/liyw0205/fls/actions/runs/45904014474)、[EXE 45904014424](https://github.com/liyw0205/fls/actions/runs/45904014424) 成功，打包不代替失败回归。
+
+诊断提交 `3570f74` / `20261127.14`（134）为测试 Git 命令加有界等待，保留命令释放/退出、监管结果及线程栈；本机双 worker 测试和发布说明共 8 项、12 个子用例通过。其 Native `45904784785` 未通过：Linux 368 项、274 个子用例通过，Windows 两个 Git 用例仍失败，另发现临时文件 RPC 回包的共享偏移问题；Module `45904784806`、Desktop `45904784716`、EXE `45904784729` 成功。
+
+`08a1f93` / `20261127.15`（135）将测试 RPC 改成独立 stdout 管道和 reader 队列，修复共享临时文件偏移；本机 8 项、12 个子用例通过。Native `45905454154` 的 Linux 368 项、274 个子用例通过，Windows 两个 Git 用例仍失败，脚本 step 41 项通过、1 项跳过、36 个子用例通过，后续目录恢复 step 跳过。Module `45905454134`、Desktop `45905454039`、EXE `45905454061` 成功，正式 Release 均跳过。诊断已确认真实 Git 克隆及监管结果均为 0，阻塞位于随后 `_repo_head` 的 `subprocess.run`/Windows stdout reader，不能将测试 IPC 修正当成产品故障已经解决。
+
+本批补齐上述三类原生脚本作业的跨 worker 活跃识别、回执协调、取消及接收交接，并接入短 Git HEAD 监管；其余文件/在线安装/调试、任务/日志、启动器、Windows 实例锁/WAL/断电、依赖清理句柄协调、损坏回执维护和 APP 全流程仍待收尾。脚本历史保留失活暂存整理语义，不作为全域 GET 只读的完成证据。B3/B4 尚未交付，总 Goal 继续 M4-M7。
+
+上一 Git 克隆监管检查点：FLS `efc6a4d79ba050dbfcca2da656e19fda5e056b55` / `20261127.12`（132）。以下保留该批实现与平台证据。
 
 新增 `fls_manager/directory_process.py` 独立监管 Git 克隆，POSIX 进程组和 Windows Job Object 能力共用 `fls_manager/process_tree.py`，既有依赖监管保持原生命周期。命令经 stdin 传入，不把 URL/命令写入现场；监管自行持共享恢复锁，面板 owner 被强制结束后通过控制管道 EOF 开始清理。只有命令及子进程全部退出、结果写入且继承目录 FD 关闭后才释放锁。Windows 先将启动门 wrapper 加入 Job Object，再发送命令；正常结束、主动停止及 spawn 失败也清理资源。停止等待超时不提前解锁，监管继续清理。
 
 新增 `tests/test_directory_process.py` 8 项，覆盖启动门、未启动即停止、重复启停、命令父进程先退出、spawn 失败、清理超时仍持锁、POSIX pinned FD 继承、真实本地 Git 克隆，以及真实 Flask owner 受理克隆后被强制结束。最后一项在恢复取得独占锁时确认命令/孙进程已退出。本机扩展 11 文件 118 项、54 个子用例通过（加入真实克隆用例前）；最终监管文件 8 项及发布说明 2 项通过。Git 来源是本地临时仓库，不访问外网，不运行 pip。
 
-本批工作流严格对应 `efc6a4d79ba050dbfcca2da656e19fda5e056b55`，均已核对终态：
+该历史检查点工作流严格对应 `efc6a4d79ba050dbfcca2da656e19fda5e056b55`，均已核对终态：
 
 - [Native backup regression 45901442241](https://github.com/liyw0205/fls/actions/runs/45901442241) 成功：Linux 28 文件 360 项、259 个子用例通过；Windows 脚本/监管 step 33 项通过、1 项仅 POSIX FD 用例跳过、23 个子用例通过，既有依赖监管 3 项通过/1 项 POSIX 跳过，lease/归档/顺序 5 项、7 个子用例，共享备份/恢复 9 项、7 个子用例，I/O/认证 16 项、3 个子用例，目录恢复 11 项、10 个子用例全部通过。
 - [Module 45901442314](https://github.com/liyw0205/fls/actions/runs/45901442314)、[Desktop 45901442192](https://github.com/liyw0205/fls/actions/runs/45901442192)、[EXE 45901442205](https://github.com/liyw0205/fls/actions/runs/45901442205) 全部成功，三个正式 Release job 均为 skipped。
 - APP 实际 APK 仍对应 `79bbfab` / `0.1.62+76`、CI `45883212390`、[artifact 15148047738](https://github.com/liyw0205/fls-for-android/actions/runs/45883212390/artifacts/15148047738)（2026-12-10 19:29:52 UTC 到期）。后续文档提交不代表新 APK；无 ADB/模拟器，手动验收待用户。
 
-本批只覆盖长 Git 克隆的 owner 崩溃清理；短 `_repo_head` 探测仍用 `subprocess.run`。优先继续跨 worker 活跃回执/stage 的可验证身份，避免其他 worker 把正在执行的作业整理为 unknown 或清理暂存；随后补短 HEAD、其他文件作业及 APP 全流程。监管自身被强制结束、子进程逃离进程组、Windows 断电、多 worker 依赖清理与损坏回执维护不在本批完成证据内。B3/B4 尚未交付，全量 Goal 继续推进。
+该历史批次只覆盖长 Git 克隆的 owner 崩溃清理；跨 worker 活跃回执/stage 识别由上方 `5b19029` 接续，短 `_repo_head` 的 `subprocess.run` 则由 `bf8cb70` 改为监管。监管自身被强制结束、子进程逃离进程组、Windows 断电、多 worker 依赖清理与损坏回执维护不在该批完成证据内。B3/B4 尚未交付，全量 Goal 继续推进。
 
 上一脚本作业检查点：FLS `12185fd90a620ba6f67f183171f8330f63a4b514` / `20261127.11`（131），原实现为 `de51d4c` / `20261127.10`（130）。以下保留其实现与失败修复证据，不代替最新检查点验证。
 
@@ -50,7 +80,7 @@ Git worker 异常先终止/等待进程，等待 stderr reader 完成，再清 s
 - [Module 45899434274](https://github.com/liyw0205/fls/actions/runs/45899434274)、[Desktop 45899434425](https://github.com/liyw0205/fls/actions/runs/45899434425)、[EXE 45899434387](https://github.com/liyw0205/fls/actions/runs/45899434387) 全部成功，正式 Release job 均已核对为 skipped。
 - APP 本批只有方案变更；实际 APK 仍对应 `79bbfab` / `0.1.62+76`、CI `45883212390`、artifact `15148047738`（2026-12-10 19:29:52 UTC 到期）。不做 ADB/模拟器，真实面板手动验收待用户。
 
-该历史批次只完成三类原生文件作业与正常进程退出的恢复互斥；Git 克隆 owner 崩溃清理由上方 `efc6a4d` 接续。其余脚本文件读写、Web 拉取/导入、在线安装/调试、任务配置及日志句柄继续推进。其他 worker 仍需防止整理活跃回执或删除其 stage；Windows 实例锁/WAL/断电、启动器、多 worker 依赖清理、损坏回执维护和 APP 全流程亦未完成。不计 B3/B4 交付，不合并 main、不发布正式 Release。
+该历史批次只完成三类原生文件作业与正常进程退出的恢复互斥；Git 克隆 owner 崩溃清理由上方 `efc6a4d` 接续，跨 worker 活跃作业由 `5b19029` 接续。其余脚本文件读写、Web 拉取/导入、在线安装/调试、任务配置及日志句柄继续推进；Windows 实例锁/WAL/断电、启动器、多 worker 依赖清理、损坏回执维护和 APP 全流程亦未完成。不计 B3/B4 交付，不合并 main、不发布正式 Release。
 
 上一数据 I/O 检查点：FLS `7524b052e571ba6a715d70cffbff3766f6bcd1d1` / `20261127.9`（129）。以下保留该批实现、平台验证及失败修复；它们不替代最新检查点的工作流证据。
 
@@ -120,7 +150,7 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 | APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
-下一轮优先跨 worker 活跃作业识别：原生 `native_pull.py`、`native_repo_pull.py`、`native_import.py` 的受理/清理 lease 已补，Git 克隆已有独立 owner 崩溃监管，但全局共享锁不能识别某个作业是否仍在运行。为回执及 stage 建立可探测身份，验证多个真实 worker 查询/整理不会误标 unknown 或清理活跃暂存，并覆盖原 owner 退出后的交接。再继续短 Git HEAD、`online_scripts/install.py`、其他脚本读写、Web 拉取/导入、任务配置和日志/调试句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID 写入、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部为 storage → session，I/O 冲突不反向等待。逐域检查 except 是否吞 busy，不把未验证路径计作已接入。
+下一轮继续其余文件作业：原生三域的受理/清理 lease、Git 克隆和短 HEAD 的独立监管、跨 worker 活跃作业身份及回执协调已补；以实际平台 CI 为准。继续 `online_scripts/install.py`、其他脚本读写、Web 拉取/导入、任务配置和日志/调试句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID 写入、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部为 storage → session，I/O 冲突不反向等待。逐域检查 except 是否吞 busy，不把未验证路径计作已接入。
 
 随后处理 `RESTORE_DEPENDENCY_CLEANUP` 仅在所属 worker 内存中的句柄：其他 worker 不能因只看到持久身份就提前释放原 owner 的 lease，也不能跳过仍在读输出的线程。全部恢复回执损坏时须保留可核验维护入口，查询不执行修复。APP 再覆盖原生备份页嵌套 401/重登、切换面板、旧回包及任务/概览刷新；这些是后续实现任务，当前检查点不证明已支持。
 
@@ -204,7 +234,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 最新 FLS `efc6a4d` / `20261127.12` 为 Git 克隆增加独立 owner 崩溃监管，沿用原生文件作业/短 I/O 门禁、持久目录现场和 APP `79bbfab` 原请求确认；实际 CI/APK 见上方。继续跨 worker 活跃作业身份、短 Git HEAD、其他文件长作业、启动器、逐域 busy 映射、Windows 实例锁/WAL/断电、多 worker 清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 最新 FLS `bf8cb70` / `20261127.16` 追加短 Git HEAD 监管和临时文件输出，沿用三域跨 worker 身份/历史事务/取消、Git 克隆监管、短 I/O 门禁、持久目录现场及 APP `79bbfab` 原请求确认。实际 CI/APK 见上方。继续其他文件长作业、启动器、逐域 busy 映射、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
