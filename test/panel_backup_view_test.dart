@@ -183,19 +183,20 @@ void main() {
       await tester.tap(find.text('恢复'));
       await pumpUntilFound(tester, find.textContaining('archive-0.zip'));
       await tester.pumpAndSettle();
-      final next = find.byTooltip('下一页').last;
-      await tester.scrollUntilVisible(
-        next,
-        500,
-        scrollable: find.byType(Scrollable).last,
-      );
+      final next = find.byIcon(Icons.chevron_right).last;
+      await tester.ensureVisible(next);
+      await tester.pumpAndSettle();
+      expect(next.hitTestable(), findsOneWidget);
       await tester.tap(next);
       await pumpUntilFound(tester, find.textContaining('archive-25.zip'));
       await tester.pumpAndSettle();
       expect(find.textContaining('archive-25.zip'), findsOneWidget);
       expect(offsets, [0, 25]);
       failHistory = true;
-      final refresh = find.byTooltip('刷新恢复历史');
+      final refresh = find.descendant(
+        of: find.byTooltip('刷新恢复历史'),
+        matching: find.byIcon(Icons.refresh),
+      );
       await tester.ensureVisible(refresh);
       await tester.tap(refresh);
       await pumpUntilFound(tester, find.text('恢复历史暂不可用，请重试'));
