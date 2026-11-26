@@ -436,6 +436,7 @@ class PanelApiClient {
     final credentials = body['credentials'];
     final settings = body['settings'];
     return [
+      if (body['draft'] is Map) ..._proxyRedactValues(body['draft'] as Map),
       if (credentials is Map)
         for (final key in const ['username', 'password'])
           if (credentials[key] is String) credentials[key] as String,
@@ -512,7 +513,12 @@ class PanelApiClient {
     if (payload is! Map<String, dynamic>) return null;
     if (includeProxyDetails) {
       final result = <String, dynamic>{
-        for (final key in const ['resolved', 'conflict', 'confirm_required'])
+        for (final key in const [
+          'resolved',
+          'conflict',
+          'confirm_required',
+          'accepted',
+        ])
           if (payload[key] is bool) key: payload[key],
         if (payload.containsKey('saved') &&
             (payload['saved'] == null || payload['saved'] is bool))

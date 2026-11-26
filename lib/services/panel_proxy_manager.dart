@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import '../models/panel_proxy.dart';
+import '../models/panel_proxy_check.dart';
 import 'panel_api_client.dart';
 
 class PanelProxyManager {
@@ -87,6 +88,73 @@ class PanelProxyManager {
       (value) =>
           PanelProxyResult.fromJson(value, expectedId: requestId, query: true),
     );
+  }
+
+  Future<PanelProxyCheck> startCheck(Map<String, Object?> body) {
+    _validateId(body['request_id']);
+    const path = '/api/proxy/checks';
+    return _decode(
+      path,
+      () => _api.postJson(path, body),
+      (value) => _check(value, body['request_id'] as String),
+    );
+  }
+
+  Future<PanelProxyCheck> check(String id) {
+    if (!validProxyCheckId(id)) throw ArgumentError('检测标识无效');
+    final path = '/api/proxy/checks/$id';
+    return _decode(
+      path,
+      () => _api.getJson(path),
+      (value) => _check(value, id),
+    );
+  }
+
+  Future<PanelProxyCheck> retryCheck(
+    String oldId, {
+    required String requestId,
+    required String version,
+  }) {
+    if (!validProxyCheckId(oldId)) throw ArgumentError('检测标识无效');
+    _validateId(requestId);
+    final path = '/api/proxy/checks/$oldId/retry';
+    return _decode(
+      path,
+      () => _api.postJson(path, {'request_id': requestId, 'version': version}),
+      (value) => _check(value, requestId),
+    );
+  }
+
+  Future<PanelProxyCheckPage> checkHistory({
+    int page = 1,
+    String proxyId = '',
+    String kind = '',
+    String status = '',
+  }) {
+    final path = Uri(
+      path: '/api/proxy/checks',
+      queryParameters: {
+        'page': '$page',
+        'limit': '25',
+        'proxy_id': proxyId,
+        'kind': kind,
+        'status': status,
+      },
+    ).toString();
+    return _decode(
+      path,
+      () => _api.getJson(path),
+      PanelProxyCheckPage.fromJson,
+    );
+  }
+
+  PanelProxyCheck _check(Object? value, String id) {
+    if (value is! Map<String, dynamic> || value['ok'] != true) {
+      throw const FormatException('代理检测响应无效');
+    }
+    final check = PanelProxyCheck.fromJson(value['check']);
+    if (check.id != id) throw const FormatException('代理检测标识不匹配');
+    return check;
   }
 
   void _validateId(Object? id) {

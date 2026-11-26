@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/panel_proxy.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_proxy_manager.dart';
+import 'panel_proxy_checks_view.dart';
 
 class PanelProxyView extends StatefulWidget {
   const PanelProxyView({
@@ -27,6 +28,7 @@ class _PanelProxyViewState extends State<PanelProxyView> {
   String? _error, _notice;
   bool _loading = false, _busy = false, _expired = false;
   int _generation = 0;
+  final Map<String, PanelProxy> _selected = {};
 
   @override
   void initState() {
@@ -146,6 +148,14 @@ class _PanelProxyViewState extends State<PanelProxyView> {
   }
 
   Future<void> _action(PanelProxy proxy, String action) async {
+    if (action == 'check') {
+      await _checkProxy(proxy);
+      return;
+    }
+    if (action == 'history') {
+      await _history(proxyId: proxy.id);
+      return;
+    }
     if (action == 'edit') {
       await _open(proxy);
       return;
@@ -206,6 +216,69 @@ class _PanelProxyViewState extends State<PanelProxyView> {
     }
   }
 
+  Future<void> _history({String proxyId = ''}) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => PanelProxyChecksView(
+          manager: widget.manager,
+          recovery: _recovery,
+          proxyId: proxyId,
+          onUnauthorized: _unauthorized,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _checkProxy(PanelProxy proxy) async {
+    if (_recovery.checkIds.isNotEmpty || _busy) return;
+    final options = await proxyCheckOptions(
+      context,
+      customTargets: proxy.type != 'github',
+    );
+    if (options == null || !mounted) return;
+    final id = PanelProxyManager.newRequestId();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => PanelProxyCheckView(
+          manager: widget.manager,
+          recovery: _recovery,
+          id: id,
+          onUnauthorized: _unauthorized,
+          submission: {
+            'request_id': id,
+            'proxy_id': proxy.id,
+            'version': proxy.version,
+            'kind': options.kind,
+            if (options.targets != null) 'targets': options.targets,
+          },
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _batch() async {
+    if (_selected.isEmpty || _recovery.checkIds.isNotEmpty || _busy) return;
+    final options = await proxyCheckOptions(
+      context,
+      customTargets: _selected.values.any((proxy) => proxy.type != 'github'),
+    );
+    if (options == null || !mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => PanelProxyBatchCheckView(
+          manager: widget.manager,
+          recovery: _recovery,
+          proxies: _selected.values.toList(),
+          options: options,
+          onUnauthorized: _unauthorized,
+        ),
+      ),
+    );
+    if (mounted) setState(() => _selected.clear());
+  }
+
   @override
   Widget build(BuildContext context) {
     final blocked = _busy || _loading || _recovery.requestId != null;
@@ -213,6 +286,11 @@ class _PanelProxyViewState extends State<PanelProxyView> {
       appBar: AppBar(
         title: const Text('代理管理'),
         actions: [
+          IconButton(
+            tooltip: '检测历史',
+            onPressed: _busy ? null : _history,
+            icon: const Icon(Icons.history),
+          ),
           IconButton(
             tooltip: '刷新代理',
             onPressed: _busy || _loading ? null : () => _load(_page?.page ?? 1),
@@ -296,6 +374,32 @@ class _PanelProxyViewState extends State<PanelProxyView> {
                     label: const Text('查询原提交'),
                   ),
                 ],
+                if (_recovery.checkIds.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: () => _history(),
+                    icon: const Icon(Icons.restore),
+                    label: const Text('查看未确认检测'),
+                  ),
+                if (_selected.isNotEmpty)
+                  Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('已选择 ${_selected.length} / 12'),
+                      TextButton.icon(
+                        onPressed: blocked || _recovery.checkIds.isNotEmpty
+                            ? null
+                            : _batch,
+                        icon: const Icon(Icons.network_check),
+                        label: const Text('批量检测'),
+                      ),
+                      IconButton(
+                        tooltip: '清除检测选择',
+                        onPressed: () => setState(() => _selected.clear()),
+                        icon: const Icon(Icons.clear),
+                      ),
+                    ],
+                  ),
                 if (_page != null && _page!.items.isEmpty)
                   const Padding(
                     padding: EdgeInsets.all(24),
@@ -305,6 +409,23 @@ class _PanelProxyViewState extends State<PanelProxyView> {
                   const Divider(),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
+                    leading: Checkbox(
+                      value: _selected.containsKey(proxy.id),
+                      semanticLabel: '选择 ${proxy.name} 检测',
+                      onChanged:
+                          blocked ||
+                              !proxy.enabled ||
+                              (_selected.length >= 12 &&
+                                  !_selected.containsKey(proxy.id))
+                          ? null
+                          : (value) => setState(() {
+                              if (value == true) {
+                                _selected[proxy.id] = proxy;
+                              } else {
+                                _selected.remove(proxy.id);
+                              }
+                            }),
+                    ),
                     title: Text(proxy.name),
                     subtitle: Text(
                       '${_typeLabel(proxy.type)} · ${proxy.enabled ? '已启用' : '已停用'}\n${proxy.address}\n关联任务：${proxy.referenceCount}',
@@ -316,6 +437,15 @@ class _PanelProxyViewState extends State<PanelProxyView> {
                       onSelected: (action) => _action(proxy, action),
                       itemBuilder: (_) => [
                         const PopupMenuItem(value: 'edit', child: Text('编辑代理')),
+                        PopupMenuItem(
+                          value: 'check',
+                          enabled: proxy.enabled && _recovery.checkIds.isEmpty,
+                          child: const Text('检测代理'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'history',
+                          child: Text('检测历史'),
+                        ),
                         PopupMenuItem(
                           value: 'toggle',
                           child: Text(proxy.enabled ? '停用代理' : '启用代理'),
@@ -475,6 +605,50 @@ class _ProxyEditViewState extends State<_ProxyEditView>
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _checkDraft() async {
+    if (!_ready ||
+        _busy ||
+        _conflict ||
+        widget.recovery.requestId != null ||
+        widget.recovery.checkIds.isNotEmpty) {
+      return;
+    }
+    final options = await proxyCheckOptions(
+      context,
+      customTargets: _type != 'github',
+    );
+    if (options == null || !mounted) return;
+    final id = PanelProxyManager.newRequestId();
+    final body = <String, Object?>{
+      'request_id': id,
+      'kind': options.kind,
+      if (widget.proxyId != null) 'proxy_id': widget.proxyId,
+      if (_baseline != null) 'version': _baseline!.version,
+      if (options.targets != null) 'targets': options.targets,
+      'draft': {
+        'settings': _changes(),
+        'credentials': {
+          for (final entry in _credentials.entries) ...{
+            '${entry.key}_action': entry.value,
+            if (entry.value == 'replace') entry.key: _fields[entry.key]!.text,
+          },
+        },
+      },
+    };
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => PanelProxyCheckView(
+          manager: widget.manager,
+          recovery: widget.recovery,
+          id: id,
+          submission: body,
+          onUnauthorized: _handleError,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   Future<void> _handleError(PanelApiException error) async {
@@ -720,6 +894,16 @@ class _ProxyEditViewState extends State<_ProxyEditView>
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.proxyId == null ? '新增代理' : '编辑代理'),
+          actions: [
+            IconButton(
+              tooltip: '检测草稿',
+              onPressed:
+                  !_ready || blocked || widget.recovery.checkIds.isNotEmpty
+                  ? null
+                  : _checkDraft,
+              icon: const Icon(Icons.network_check),
+            ),
+          ],
           leading: IconButton(
             tooltip: '返回代理列表',
             onPressed: _busy ? null : _leave,

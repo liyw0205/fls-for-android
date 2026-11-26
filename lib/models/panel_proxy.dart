@@ -9,6 +9,7 @@ const panelProxyTypes = [
 
 class PanelProxyRecovery {
   String? requestId;
+  final Set<String> checkIds = {};
 }
 
 class PanelProxyReference {
