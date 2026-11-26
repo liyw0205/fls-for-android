@@ -8,9 +8,9 @@ M3 接续通知域 M2a/M2b，以 FLS develop `1350cdf71752decaf28ffc0a204ee89135
 
 ## 当前推进状态
 
-2026-11-26 已拉取并核对 FLS `develop` 基线 `1350cdf`。B1 后端已提交并推送 FLS `develop` 为 `f72624b` / `20261126.11`，Module 与 Windows Desktop workflow 通过；Windows EXE 首次运行被 GitHub API rate limit 阻断，已重跑，未发布正式 Release。FLS 契约包括能力、分页文件/作业、作业详情、只读原请求查询、创建/取消、按文件版本流式下载和按版本删除。原生 GET 返回 `no-store` 摘要，不复用会归一化/清理状态的旧查询 helper；未知删除回执不会删除同名替换文件。删除回执写在面板根目录 `.backup_native_delete_requests`，不随可恢复的 `data/` 目录回滚。APP `0.1.54+67` 已提交推送为 `e3b528d`；Actions `45811406407` 有 212 项通过、1 项页面测试因等待异步加载超时失败。已将该测试改为等待加载内容，并将 APP 版本更新为 `0.1.55+68`，待推送后由 Actions 复验。
+2026-11-26 已拉取并核对 FLS `develop` 基线 `1350cdf`。B1 后端已提交并推送 FLS `develop` 为 `f72624b` / `20261126.11`；Module `45810989064`、Windows Desktop `45810988940`、Windows EXE installer `45810989001` 均通过，未发布正式 Release。FLS 契约包括能力、分页文件/作业、作业详情、只读原请求查询、创建/取消、按文件版本流式下载和按版本删除。原生 GET 返回 `no-store` 摘要，不复用会归一化/清理状态的旧查询 helper；未知删除回执不会删除同名替换文件。删除回执写在面板根目录 `.backup_native_delete_requests`，不随可恢复的 `data/` 目录回滚。APP `0.1.54+67` 已提交推送为 `e3b528d`；Actions `45811406407` 暴露紧凑屏幕测试的异步等待超时。修复测试并递增至 `0.1.55+68` 后，提交 `ddac555` 的 Android CI `45813098368` 格式、analyze、Flutter tests、arm64 APK 构建及 develop APK 上传均通过，artifact `15113503595`。
 
-当前验证：`tests.test_native_backup_api`、`tests.test_backup_file_recovery`、`tests.test_backup_orphan_staging`、`tests.test_backup_restore_idempotency`、`tests.test_backup_restore_recovery` 及两项认证/CSRF 回归通过。备份创建真实归档的旧回归在本机 Termux Python 上受 `os.link` 缺失影响而失败，不能据此宣称已通过。APP `flutter analyze --no-pub` 通过；Termux 上 Flutter tester 不支持 Android。Actions `45811406407` 的 212 项通过，紧凑屏幕测试因异步加载等待方式超时；修复后的 `0.1.55+68` 待 Actions 复验。本机 APK 构建另受 Gradle wrapper 缓存 ZIP 损坏阻断。FLS `f72624b` 的 Module/Desktop 工作流通过，EXE 重跑待终态。两个开发分支不合并 `main`。
+当前验证：`tests.test_native_backup_api`、`tests.test_backup_file_recovery`、`tests.test_backup_orphan_staging`、`tests.test_backup_restore_idempotency`、`tests.test_backup_restore_recovery` 及两项认证/CSRF 回归通过。备份创建真实归档的旧回归在本机 Termux Python 上受 `os.link` 缺失影响而失败，不能据此宣称已通过。APP `flutter analyze --no-pub` 通过；Termux 上 Flutter tester 不支持 Android。修复后的 APP CI `45813098368` 已通过 format、analyze、Flutter tests 与 arm64 构建，并上传 artifact `15113503595`。本机 APK 构建仍受 Gradle wrapper 缓存 ZIP 损坏阻断。FLS `f72624b` 的 Module/Desktop/EXE 三个 workflow 均通过。两个开发分支不合并 `main`。
 
 ## 现有实现与缺口
 
