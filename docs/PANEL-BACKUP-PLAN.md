@@ -10,32 +10,40 @@ M3 接续通知域 M2a/M2b。调研时以 FLS develop `1350cdf71752decaf28ffc0a2
 
 2026-11-26 已拉取并核对 FLS `develop` 基线 `1350cdf`。B1 后端已提交并推送 FLS `develop` 为 `f72624b` / `20261126.11`；Module `45810989064`、Windows Desktop `45810988940`、Windows EXE installer `45810989001` 均通过，未发布正式 Release。FLS 契约包括能力、分页文件/作业、作业详情、只读原请求查询、创建/取消、按文件版本流式下载和按版本删除。原生 GET 返回 `no-store` 摘要，不复用会归一化/清理状态的旧查询 helper；未知删除回执不会删除同名替换文件。删除回执写在面板根目录 `.backup_native_delete_requests`，不随可恢复的 `data/` 目录回滚。APP `0.1.54+67` 已提交推送为 `e3b528d`；Actions `45811406407` 暴露紧凑屏幕测试的异步等待超时。修复测试并递增至 `0.1.55+68` 后，提交 `ddac555` 的 Android CI `45813098368` 格式、analyze、Flutter tests、arm64 APK 构建及 develop APK 上传均通过，artifact `15113503595`。
 
-当前已验证基线：2026-11-27 两仓本轮先 `fetch origin`、再 `merge --ff-only origin/develop`，均已是远端最新且无领先/落后提交。FLS B2 `ec318d8` / `20261126.12`（120）与 APP B2 最终候选 `394993b` / `0.1.56+70` 均已推送各自 `develop`；APP 同步时 HEAD `64c73ec` 是后续方案文档，APK 仍对应 `394993b`。FLS Module/Desktop/EXE workflows 全绿。APP 首轮 CI `45830634366` 的一项紧凑屏幕测试因横向 Tab 未滚动可见而失败，修正后的 CI `45832261224` 已通过 format/analyze、214 项测试、arm64 APK 构建并上传 artifact `15122689366`，到期于 2026-12-10 13:50:56 UTC。B2 自动化候选通过；手动验收仍待用户。
+B2 历史已验证基线：FLS `ec318d8` / `20261126.12`（120）与 APP `394993b` / `0.1.56+70` 均已推送各自 `develop`。FLS Module/Desktop/EXE workflows 全绿。APP 首轮 CI `45830634366` 的一项紧凑屏幕测试因横向 Tab 未滚动可见而失败，修正后的 CI `45832261224` 已通过 format/analyze、214 项测试、arm64 APK 构建并上传 artifact `15122689366`，到期于 2026-12-10 13:50:56 UTC。B2 自动化候选通过；手动验收仍待用户。2026-11-27 先 fetch/fast-forward 核对两仓最新 develop，再继续下述 B3。
 
-B2 后端已改为上传完成后启动单个后台检查作业，支持只读查询、协作取消和 1 小时暂存 TTL；TAR/ZIP 通过逐块解包到私有临时目录，验证路径/类型/声明展开量、范围、依赖文件和运行态警告。运行中的重复 request ID 校验归档 SHA-256，不同内容冲突；进程重启后未终结作业只读返回 `unknown`。取消逐块检查期间响应，临时展开目录和失败归档清理；成功快照留存到期。已验证的 B2 基线关闭恢复提交；本地 B3 草稿中的 `restore_enabled=True` 不代表已发布或可部署能力。
+B2 后端已改为上传完成后启动单个后台检查作业，支持只读查询、协作取消和 1 小时暂存 TTL；TAR/ZIP 通过逐块解包到私有临时目录，验证路径/类型/声明展开量、范围、依赖文件和运行态警告。运行中的重复 request ID 校验归档 SHA-256，不同内容冲突；进程重启后未终结作业只读返回 `unknown`。取消逐块检查期间响应，临时展开目录和失败归档清理；成功快照留存到期。已验证的 B2 基线关闭恢复提交；B3 开发检查点中的 `restore_enabled=True` 仅用于隔离测试，不代表已发布或可部署到稳定面板。
 
-### B3 原生恢复与后续处理（未提交草稿）
+### B3 原生恢复与后续处理（开发测试检查点）
 
-两仓有未提交的 B3 代码和测试；尚无 B3 提交 SHA、配对 CI 或 APK，也未递增版本。以下描述草稿方向及收尾要求，不作为已交付承诺。后端入口集中在 `native_api.py`，目录提交在 `restore.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
+为验证 Termux 无法运行的 Windows Job Object 和 Flutter tester，本轮已提交推送 develop 测试检查点：FLS `bfe175b` / `20261127.4`（124），APP `4563e2e` / `0.1.59+73`。检查点不等于 B3 完成，也不满足 B4 配对交付门槛；不合并 main，不发布正式 Release。后端入口集中在 `native_api.py`，依赖进程监管在 `dependency_process.py`，目录提交在 `restore.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-草稿增加摘要/范围绑定的 `POST /api/backup/native/restores`，以及恢复状态/历史、unknown 人工核对、维护状态/确认、独立调度器重载和依赖操作。拟定状态为 accepted/extracting/staging/committing/restored/failed/unknown；恢复不可取消，GET 不写回，unknown 不自动重放；人工核对仅记账，不执行目录替换。这些约束仍需故障和兼容测试证明。
+检查点增加摘要/范围绑定的 `POST /api/backup/native/restores`，以及恢复状态/历史、unknown 人工核对、维护状态/确认、独立调度器重载和依赖操作。状态为 accepted/extracting/staging/committing/restored/failed/unknown；恢复不可取消，GET 不写回，unknown 不自动重放；人工核对仅记账，不执行目录替换。现有测试证据和未完成边界分别记录如下。
 
 按以下顺序收尾；任一项未满足都不把 B3 标成可交付：
 
 | 收尾项 | 完成条件与证据 |
 | --- | --- |
 | 运行态身份与回滚 | 已补剥离归档身份（含本机缺失项），搬运当前密钥/会话/历史/回执及实例锁，以本次已搬运清单回滚；逐项搬运/目录发布失败和回滚失败保留现场已通过定向测试。仍需核对其他后台写入者的锁、重启后现场恢复及多进程会话边界 |
-| 锁顺序与跨进程互斥 | 已移除原生恢复对 storage 的反向获取及 hash/目录遍历期间的配置锁，恢复/调度器/依赖共用带请求/操作身份的进程 lease；构造/启动线程及失败回执写盘故障已验证不泄漏普通执行占用。仍需独立进程竞争、平台文件锁行为和清理未完成时的恢复测试 |
+| 锁顺序与跨进程互斥 | 已移除原生恢复对 storage 的反向获取及 hash/目录遍历期间的配置锁，恢复/调度器/依赖共用带请求/操作身份的进程 lease。后续操作拿锁后重读回执，Linux/Windows 独立 Python 进程验证了持锁查询/重放、竞争拒绝与旧快照不覆盖新记录；构造/启动及失败回执故障也有覆盖。仍需旧 Web 与原生操作竞争和后台写入者的边界 |
 | 证据与原请求保留 | 已从持久恢复回执重建 TTL 保护，unknown/待处理依赖不被清理且计入双暂存容量；读取回执字节和历史扫描有上限。每次后续 operation ID 独立保留（最多 16 次），旧 ID 重放不重新执行；到期/内存引用丢失及旧操作重放测试通过，仍需完整容量/损坏/断电故障覆盖 |
-| 依赖资源清理 | 已独立显式执行、2 秒内限频保存有界脱敏输出、按 UTF-8 字节限长并丢弃超长行；POSIX 进程组超时/父进程先退出的真实子进程测试通过。Windows 仍需完整进程树约束；清理无法确认时保留 workspace/lease，须补显式检查/清理入口及退出证据，不能保持永久无恢复入口的占用 |
-| APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增测试尚未在 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
+| 依赖资源清理 | 已加带启动门的监管进程：持久保存执行/工作目录身份后才执行 pip；POSIX 不提前回收会话首进程、确认组内非僵尸进程退出后释放，面板进程死亡通过控制管道触发回收；Windows 使用带 KILL_ON_JOB_CLOSE 的命名 Job Object，真实 Actions 已验证启动门、命令父进程先退出和所有者崩溃回收。显式 cleanup 按原操作清理且 GET 零副作用；失败、写盘失败、重启恢复、目录替换、输出读取失败均有回归。仍需多 worker 中持有内存清理句柄的进程协调、全部回执损坏时的维护恢复 |
+| APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
-B3 本地验证边界（2026-11-27）：原生备份/身份保留及旧恢复 recovery/idempotency、认证备份回归 121 项、106 个子用例通过；POSIX 子进程测试不运行 pip，不访问网络。APP 全量 Dart 格式及分析通过，新增 manager/widget 测试尚未执行（Termux Flutter tester 不支持 Android）。本地草稿仍未提交、升版或跑 B3 Actions/APK，未做 ADB/模拟器或真实面板恢复。
+B3 本地验证边界（2026-11-27）：`test_backup_dependency_process.py`、`test_native_backup_api.py`、`test_native_restore_identity.py`、旧恢复 recovery/idempotency 及认证备份六个测试文件，共 131 项、110 个子用例通过；真实子进程测试不运行 pip，不访问网络。包含启动门、父命令先退出、面板监管所有者崩溃、清理重试不重复发送进程组信号、独立进程竞争、规范化归档根目录，以及清理写盘失败/重启/替换目录保护。APP 全量 Dart 格式及分析通过；Flutter tester 以 Actions 为准（Termux 不支持 Android 宿主）。未做 ADB/模拟器或真实面板恢复。
 
-扩展的旧创建/取消/文件/归档发布/容量回归曾为 159 项、165 个子用例通过，另有 12 个失败或子用例失败。将未修改的 `origin/develop` 导出到独立临时目录后，创建/取消/原子发布三个测试文件复现了完全相同的 12 个失败（20 项及 37 个子用例通过），包含 `os.link` 在 Termux 不存在的直接错误。记录为既有平台限制，不能声称本机完整备份回归全绿；须由后续 Linux Actions/隔离实例验证。
+开发检查点工作流均已成功，严格对应 FLS `bfe175b` 与 APP `4563e2e`：
 
-B2 历史验证：FLS 原生备份 19 项及相关备份文件/恢复/认证回归合计 119 项通过；Module/Desktop/EXE `45830575814`、`45830575861`、`45830575979` 全部成功。APP `394993b` 的 CI `45832261224` 通过格式、分析、214 项 Flutter 测试及 arm64 APK 构建，artifact `15122689366` 可供用户手动安装。这些结果只证明 B2 提交，不能用于证明未提交 B3。
+- FLS [Native backup regression 45876313543](https://github.com/liyw0205/fls/actions/runs/45876313543)：Linux 12 个原生/旧备份测试文件共 175 项、179 个子用例通过；Windows 监管模块 3 项通过、1 项仅适用 POSIX 而跳过，预检查/进程 lease/回执顺序 5 项、7 个子用例通过。
+- FLS [Module 45876313411](https://github.com/liyw0205/fls/actions/runs/45876313411)、[Desktop 45876313556](https://github.com/liyw0205/fls/actions/runs/45876313556)、[EXE 45876313417](https://github.com/liyw0205/fls/actions/runs/45876313417)：实际打包成功，正式 Release 跳过。
+- APP [Android CI 45875783380](https://github.com/liyw0205/fls-for-android/actions/runs/45875783380)：格式、分析、222 项 Flutter 测试及 arm64 APK 构建成功；[artifact 15144054566](https://github.com/liyw0205/fls-for-android/actions/runs/45875783380/artifacts/15144054566) 到期于 2026-12-10 18:32:29 UTC。正式 Release 跳过；该 APK 是开发检查点，不能据此在稳定面板执行 B3 恢复。
+
+本轮失败与修复保留：后端 `f69b520` 的 Windows 临时目录占用已在 `17be582` 修复为等待监管进程退出；随后 `be7a006` 的明确前置断言定位到 Windows 正常归档预检查被误拒，`bfe175b` 统一规范化根目录并以路径组件验证归属，同时兼容测试 CRLF。APP `36bfde4` 的 3 个异步等待失败已在 `a1cf6b9` 修正；剩余分页点击屏幕外 Tooltip 的失败在 `4563e2e` 改为滚动到实际图标并断言可点击。旧失败 run 不作为当前提交的通过证据。
+
+扩展的旧创建/取消/文件/归档发布/容量回归曾为 159 项、165 个子用例通过，另有 12 个失败或子用例失败。将当时未修改的 `origin/develop` 导出到独立临时目录后，创建/取消/原子发布三个测试文件复现了完全相同的 12 个失败（20 项及 37 个子用例通过），包含 `os.link` 在 Termux 不存在的直接错误。记录为既有平台限制，不能声称本机完整备份回归全绿；本轮 Linux Actions 的上述 12 文件回归已全绿，真实隔离实例仍待手动验收。
+
+B2 历史验证：FLS 原生备份 19 项及相关备份文件/恢复/认证回归合计 119 项通过；Module/Desktop/EXE `45830575814`、`45830575861`、`45830575979` 全部成功。APP `394993b` 的 CI `45832261224` 通过格式、分析、214 项 Flutter 测试及 arm64 APK 构建，artifact `15122689366` 可供用户手动安装。这些结果只证明 B2 提交，不能用于证明 B3。
 
 ## 现有实现与缺口
 
@@ -59,7 +67,7 @@ B2 历史验证：FLS 原生备份 19 项及相关备份文件/恢复/认证回�
 
 ## 原生契约设计
 
-接口位于 `/api/backup/native/` 下，隔离原生 DTO 与请求身份，保持旧 Web 同步接口。能力、文件/作业、下载/删除和预检查已在 B1/B2 验证；恢复及后续处理仍是 B3 草稿，路径以当前草稿列示，收尾后再固定契约。
+接口位于 `/api/backup/native/` 下，隔离原生 DTO 与请求身份，保持旧 Web 同步接口。能力、文件/作业、下载/删除和预检查已在 B1/B2 验证；恢复及后续处理为 B3 开发检查点，尚待完整收尾。
 
 | 能力 | 接口与状态 | 要求 |
 | --- | --- | --- |
@@ -68,10 +76,11 @@ B2 历史验证：FLS 原生备份 19 项及相关备份文件/恢复/认证回�
 | 创建/取消 | `POST /jobs`、`POST /jobs/<id>/cancel` | 独立 request_id、固定意图；先持久化再启动；取消仅可证明仍有当前进程持有的句柄时受理 |
 | 下载/删除 | `GET /files/<name>/download?version=`、`POST /files/delete` | name/version 绑定同一对象；删除带 request_id；下载从验证后的 FD 读取，不在 APP 内存装载整个归档 |
 | 预检查 | `POST /preflights`、`GET /preflights/<id>` | 流式上传或引用列表中的精确文件版本；返回 digest、可用范围、展开量、条目数、依赖文件与警告；不替换目录、不执行依赖 |
-| 恢复提交（B3 草稿） | `POST /restores` | 绑定 preflight ID/version/digest、范围、restore_deps 和新 request_id；再次校验当前 staged 文件身份及互斥/空间条件 |
-| 恢复查询/核对（B3 草稿） | `GET /restores`、`GET /restores/<request_id>`、`POST /restores/<request_id>/resolve` | 恢复按原 request ID 查询；通用 `/requests/<id>` 不代替恢复详情。区分目录恢复、调度器、依赖、维护及未知结果；人工核对只记账 |
-| 后续处理（B3 草稿） | `POST /restores/<request_id>/scheduler-reload`、`POST /restores/<request_id>/dependencies` | 独立 operation ID，用户显式启动；不重新上传或替换目录，调度器重载不顺带安装依赖 |
-| 维护（B3 草稿） | `GET /restore-maintenance`、`POST /restore-maintenance/<event_id>/ack` | 只读展示维护状态，确认绑定当前事件 ID；未修复问题不能仅确认后清除 |
+| 恢复提交（B3 检查点） | `POST /restores` | 绑定 `preflight_id`、`archive_sha256`、`restore_items`、`restore_dependencies`、`confirm_data_impact` 和新 `request_id`；再次校验当前 staged 文件身份及互斥/空间条件 |
+| 恢复查询/核对（B3 检查点） | `GET /restores`、`GET /restores/<request_id>`、`POST /restores/<request_id>/resolve` | 恢复按原 request ID 查询；通用 `/requests/<id>` 不代替恢复详情。区分目录恢复、调度器、依赖、维护及未知结果；人工核对只记账 |
+| 后续处理（B3 检查点） | `POST /restores/<request_id>/scheduler-reload`、`POST /restores/<request_id>/dependencies` | 独立 operation ID，用户显式启动；不重新上传或替换目录，调度器重载不顺带安装依赖 |
+| 依赖清理（B3 检查点） | `POST /restores/<request_id>/dependencies/cleanup` | 仅接受原 dependency operation ID；状态里的 `dependencies.cleanup_required` 为只读提示。确认进程/reader 退出和工作目录身份后才清理、保存回执并释放 lease；失败保留占用，成功清理不等于原安装成功，不再次执行 pip |
+| 维护（B3 检查点） | `GET /restore-maintenance`、`POST /restore-maintenance/<event_id>/ack` | 只读展示维护状态，确认绑定当前事件 ID；未修复问题不能仅确认后清除 |
 
 GET 全部 `no-store`，不写回归一化状态、重建归档、清理 staging 或执行作业。读取冗余索引时只能返回可验证的快照及维护需要，不能调用带修复副作用的旧 helper。请求摘要不存正文、凭据、归档内容或服务器路径；日志按需读取、脱敏并限行/字节。JSON 写入拒绝重复键/未知字段和超限；multipart 拒绝重复关键字段并单独控制文件总量及请求开销。
 
@@ -79,9 +88,9 @@ GET 全部 `no-store`，不写回归一化状态、重建归档、清理 staging
 
 预检查和恢复分别持有身份。预检查成功仅证明所存快照通过检查；用户确认前不安装依赖、不改业务目录。预检查提交需持久化上传意图并绑定 digest；丢失响应后先查询原 ID，不自动重新传输。若无法证明未接收或未提交，保持 unknown。原恢复 request ID 只绑定一次确定意图，相同 ID 查询不会隐式再次恢复。
 
-恢复状态按 B3 草稿细化为 accepted/extracting/staging/committing/restored/failed/unknown，并独立表达目录提交、调度器重载、依赖与维护结果；最终字段以收尾后的 DTO 和测试固定。全部目录提交完成、部分目录提交后回滚失败、依赖失败和调度器失败不能压成一个失败按钮。目录恢复后仅提供当前缺失的后续处理，不能引导用户再次上传同一归档。
+恢复状态按 B3 检查点细化为 accepted/extracting/staging/committing/restored/failed/unknown，并独立表达目录提交、调度器重载、依赖与维护结果；最终字段以收尾后的 DTO 和测试固定。全部目录提交完成、部分目录提交后回滚失败、依赖失败和调度器失败不能压成一个失败按钮。目录恢复后仅提供当前缺失的后续处理，不能引导用户再次上传同一归档。
 
-B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理快照、单次上传和展开沿服务端有效上限、预检查最多 1 个执行且无无限队列、成功预检查保留 1 小时。B3 须补恢复最多 1 个执行并复用全局互斥；被已受理恢复引用的快照不得到期删除。空间不足在受理前拒绝，拒绝容量不得清理未知恢复所需证据。压缩/展开/依赖进程需真实退出才释放执行槽；依赖安装现有 1800 秒 timeout 不代表输出或整个恢复的资源上限，须补进程组、输出量和退出清理边界。
+B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理快照、单次上传和展开沿服务端有效上限、预检查最多 1 个执行且无无限队列、成功预检查保留 1 小时。B3 检查点已为原生恢复/后续处理加入单个跨进程 lease，并保护未完成恢复引用的快照；旧 Web/后台写入的全局互斥仍待统一。空间不足在受理前拒绝，拒绝容量不得清理未知恢复所需证据。依赖作业有 1800 秒等待期限、32 KiB 脱敏输出及独立进程监管，只有进程树和 reader 退出、工作目录清理与回执保存完成才释放；多 worker 清理和回执全部损坏的维护路径尚待补齐。
 
 取消上传只代表 APP 停止传输；服务器是否已受理仍查原 ID。预检查可取消时以服务端状态为准。进入目录提交后不提供“取消恢复成功”；退出页面只停止轮询。预检查到期、缺失、损坏、同名归档替换或实例变化均禁止重用旧确认。回执/索引/运行态的保留与 data 替换必须在设计时一并验证。
 
@@ -101,7 +110,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 两仓 develop 本地未提交草稿；身份剥离/逐步回滚、lease/证据保留、后续操作回执和 APP 历史/查询已补，当前相关回归及分析见上方；继续 Windows/清理恢复、并发与 APP 全流程验证 | 身份保护/逐步回滚、锁与多进程、证据保留、后续操作幂等、子进程回收及 APP 全流程测试通过；不得借用 B2 CI 标为完成 |
+| B3 恢复及后续处理 | 两仓 develop 已推送测试检查点 FLS `bfe175b`、APP `4563e2e`；实际 CI/APK 见上方，继续断电现场恢复、旧 Web/后台写入、多 worker 清理与 APP 全流程验证 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
