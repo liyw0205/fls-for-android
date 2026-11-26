@@ -197,6 +197,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('离开'));
     await pumpUntilFound(tester, find.text('有未确认的代理提交'));
+    await tester.pumpAndSettle();
     expect(recovery.requestId, isNotNull);
     await tester.tap(find.text('查询原提交'));
     await pumpUntilFound(tester, find.text('原提交结果仍未知，暂不能发起新操作'));
@@ -277,6 +278,196 @@ void main() {
     expect(writes, 2);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'referenced proxy cannot be disabled and the result remains visible',
+    (tester) async {
+      var writes = 0;
+      final recovery = PanelProxyRecovery();
+      final proxy = {...proxyFixture(), 'reference_count': 1};
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: proxySession,
+        client: panelMockClient((request) async {
+          if (request.method == 'POST') {
+            final body = jsonDecode(request.body) as Map;
+            expect(body['action'], 'toggle');
+            expect(body['enabled'], false);
+            expect(body['version'], 'a' * 64);
+            writes++;
+            return utf8Response(
+              jsonEncode({
+                'ok': false,
+                'msg': '代理仍被任务引用',
+                'saved': false,
+                'resolved': true,
+                'reference_count': 1,
+                'references': [
+                  {'id': 't', 'name': 'Referenced task'},
+                ],
+              }),
+              409,
+            );
+          }
+          return utf8Response(jsonEncode(proxyPageFixture(proxy)), 200);
+        }),
+      );
+      addTearDown(api.close);
+      await _launch(tester, api, recovery: recovery);
+      await tester.tap(find.byTooltip('Alpha 操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('停用代理'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认'));
+      await pumpUntilFound(tester, find.textContaining('Referenced task'));
+      expect(writes, 1);
+      expect(recovery.requestId, isNull);
+      expect(find.textContaining('已启用'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'prepared receipt is retried only after confirmation with original id',
+    (tester) async {
+      var writes = 0;
+      String? id;
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: proxySession,
+        client: panelMockClient((request) async {
+          if (request.method == 'POST') {
+            final body = jsonDecode(request.body) as Map;
+            writes++;
+            if (writes == 1) {
+              id = body['request_id'] as String;
+              return utf8Response(
+                jsonEncode({
+                  'ok': false,
+                  'msg': '保存中断',
+                  'saved': false,
+                  'confirm_required': true,
+                }),
+                500,
+              );
+            }
+            expect(body['request_id'], id);
+            expect(body['confirm_retry'], true);
+            expect(body['settings'], {'name': 'Edited'});
+            return utf8Response(
+              jsonEncode({
+                'ok': true,
+                'request_id': id,
+                'saved': true,
+                'proxy_id': 'p',
+              }),
+              200,
+            );
+          }
+          if (request.url.path.contains('/requests/')) {
+            return utf8Response(
+              jsonEncode({
+                'ok': true,
+                'request_id': id,
+                'saved': false,
+                'proxy_id': 'p',
+                'resolved': true,
+                'state': 'prepared',
+                'retry_allowed': true,
+                'confirm_required': true,
+                'current_matches': false,
+              }),
+              200,
+            );
+          }
+          return utf8Response(
+            jsonEncode(
+              request.url.path.endsWith('/settings/p')
+                  ? {'ok': true, 'proxy': proxyFixture()}
+                  : proxyPageFixture(proxyFixture()),
+            ),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      await _launch(tester, api);
+      await _edit(tester);
+      await tester.enterText(_field('代理名称'), 'Edited');
+      await _save(tester);
+      await pumpUntilFound(tester, find.text('重试原提交'));
+      expect(writes, 1);
+      await tester.tap(find.text('重试原提交'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认重试'));
+      await pumpUntilFound(tester, find.text('代理已保存'));
+      expect(writes, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'unauthorized editor leaves nested pages and retains only recovery id',
+    (tester) async {
+      var expired = 0;
+      final recovery = PanelProxyRecovery();
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: proxySession,
+        client: panelMockClient((request) async {
+          if (request.method == 'POST') {
+            return utf8Response(
+              jsonEncode({'ok': false, 'msg': 'expired'}),
+              401,
+            );
+          }
+          return utf8Response(
+            jsonEncode(
+              request.url.path.endsWith('/settings/p')
+                  ? {'ok': true, 'proxy': proxyFixture()}
+                  : proxyPageFixture(proxyFixture()),
+            ),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PanelProxyView(
+                      manager: PanelProxyManager(api),
+                      recovery: recovery,
+                      onUnauthorized: (_) async {
+                        expired++;
+                      },
+                    ),
+                  ),
+                ),
+                child: const Text('打开代理'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开代理'));
+      await pumpUntilFound(tester, find.text('Alpha'));
+      await _edit(tester);
+      await tester.enterText(_field('代理名称'), 'Sensitive draft');
+      await _save(tester);
+      await pumpUntilFound(tester, find.text('打开代理'));
+      await tester.pumpAndSettle();
+      expect(expired, 1);
+      expect(recovery.requestId, isNotNull);
+      expect(find.byType(PanelProxyView), findsNothing);
+      expect(find.text('Sensitive draft'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('narrow large-text proxy editor keeps save control reachable', (
     tester,

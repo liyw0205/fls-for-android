@@ -25,7 +25,7 @@ class _PanelProxyViewState extends State<PanelProxyView> {
   PanelProxyPage? _page;
   String _type = '', _enabled = '';
   String? _error, _notice;
-  bool _loading = false, _busy = false;
+  bool _loading = false, _busy = false, _expired = false;
   int _generation = 0;
 
   @override
@@ -41,6 +41,8 @@ class _PanelProxyViewState extends State<PanelProxyView> {
   }
 
   Future<void> _unauthorized(PanelApiException error) async {
+    if (_expired) return;
+    _expired = true;
     final route = ModalRoute.of(context);
     final navigator = Navigator.of(context);
     await widget.onUnauthorized(error);
@@ -50,6 +52,7 @@ class _PanelProxyViewState extends State<PanelProxyView> {
   }
 
   Future<void> _load([int page = 1]) async {
+    if (_expired) return;
     final generation = ++_generation;
     setState(() {
       _loading = true;
@@ -190,6 +193,11 @@ class _PanelProxyViewState extends State<PanelProxyView> {
         return;
       }
       if (error.data?['saved'] is bool) _recovery.requestId = null;
+      if (error.data?['saved'] == true) {
+        setState(() => _notice = '$label已完成，请核对当前状态');
+        await _load(_page?.page ?? 1);
+        return;
+      }
       setState(() => _error = _operationError(error));
     } catch (_) {
       if (mounted) setState(() => _error = '代理操作结果未知，请查询原提交');
