@@ -2,7 +2,7 @@
 
 ## 基线与范围
 
-从全局变量批次后继续：FLS `fa5361c` / `20261126.5`，APP `7d3fb75` / `0.1.47+60`。当前配置候选为 FLS `20261126.6`、APP `0.1.48+61`，仅使用各自 `develop`；下列 JSON 接口及 APP 原生入口已实现，CI 结果与提交在功能矩阵记录。真实面板及设备手动验收仍待用户，全量原生目标与 main 合并门槛不变。
+从全局变量批次后继续：FLS `fa5361c` / `20261126.5`，APP `7d3fb75` / `0.1.47+60`。配置候选为 FLS `418640f96d3239ac6d9fa9b8af945aab9f73ef91` / `20261126.6`、APP `1af43571a8a5765a30695afa134a26d51cb31987` / `0.1.48+61`，仅使用各自 `develop`。下列 JSON 接口及 APP 原生入口已实现，自动化验证通过；真实面板及设备手动验收仍待用户，全量原生目标与 main 合并门槛不变。
 
 实现位于 FLS `routes/config/native.py`，复用 Web 的 `_config_snapshot`、`_apply_revision` 和 `_apply_saved_config`；JSON 字段严格校验，旧 Web 表单及非 JSON `/api/config/apply` 保持兼容。APP 使用独立 DTO/manager/原生页面，不请求 `/config` HTML。
 
@@ -55,4 +55,6 @@
 
 APP 覆盖 DTO/HTTP 契约、敏感值不读回、草稿冲突、未知结果查询、保存成功但应用失败仅重试应用、认证变化重新登录、窄屏/横屏/大字体。Termux 不运行 Flutter tester，依靠 develop CI 的格式、analyze、完整测试和 arm64 APK；真实面板和 Android 生命周期由用户手动验收，不做 ADB。
 
-每批记录双方提交、候选版本、CI 与 APK artifact。下一批实施到此域完整可验证后，继续代理/通知、备份恢复和维护，以及矩阵其余缺口；仍不合并 main。
+本批证据：FLS 配置 API、应用恢复及认证备份相关回归共 81 项通过；Module `45730070050`、Windows Desktop `45730070074`、Windows EXE `45730070116` 均成功。APP Android CI [45730187486](https://github.com/liyw0205/fls-for-android/actions/runs/45730187486) 通过格式、静态分析、166 项测试和 arm64 APK 构建，测试 APK [artifact 15075239851](https://github.com/liyw0205/fls-for-android/actions/runs/45730187486/artifacts/15075239851)，到期时间为 2026-12-10 00:44 UTC。APK 对应上方 APP 代码 SHA，后续文档提交不改变产物对应关系。两仓正式发布步骤均跳过，未发布正式 Release。
+
+下一批按 [代理迁移规格](PANEL-PROXY-PLAN.md) 推进，再继续通知、备份恢复和维护，以及矩阵其余缺口；仍不合并 main。
