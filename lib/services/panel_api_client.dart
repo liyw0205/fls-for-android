@@ -206,6 +206,98 @@ class PanelApiClient {
     }
   }
 
+  Future<int> downloadFile(
+    String path, {
+    required String destinationPath,
+    required void Function(int receivedBytes, int? totalBytes) onProgress,
+  }) async {
+    final uri = _apiUri(path);
+    final request = http.Request('GET', uri)
+      ..headers.addAll({
+        'Accept': 'application/octet-stream, application/json',
+        'X-Requested-With': 'FLS-APP',
+      });
+    final cookie = _sessionCookie;
+    if (cookie != null) request.headers['Cookie'] = cookie;
+
+    try {
+      final response = await _client.send(request).timeout(requestTimeout);
+      final newCookie = _sessionCookieFromHeader(
+        response.headers['set-cookie'],
+      );
+      if (newCookie != null) _sessionCookie = newCookie;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final bytes = <int>[];
+        await for (final chunk in response.stream.timeout(requestTimeout)) {
+          if (bytes.length + chunk.length > maxResponseBytes) {
+            throw PanelApiException(
+              '面板错误响应超过 ${maxResponseBytes ~/ (1024 * 1024)} MB 限制',
+              statusCode: response.statusCode,
+              path: uri.path,
+            );
+          }
+          bytes.addAll(chunk);
+        }
+        final text = utf8.decode(bytes, allowMalformed: true).trim();
+        final decoded = text.isEmpty
+            ? null
+            : _decodeJson(text, response.statusCode, uri.path);
+        final redactValues = [if (cookie != null) cookie.split('=').last];
+        throw PanelApiException(
+          _errorMessage(
+            decoded,
+            response.statusCode,
+            redactValues,
+            redactPanelPaths: false,
+          ),
+          statusCode: response.statusCode,
+          path: uri.path,
+          data: _errorMetadata(
+            decoded,
+            redactValues,
+            includeTaskActionDetails: false,
+            includeOnlineScriptDetails: false,
+            includeScriptFileDetails: false,
+            includeDependencyDetails: false,
+          ),
+        );
+      }
+
+      final totalBytes = response.contentLength;
+      final file = File(destinationPath);
+      await file.parent.create(recursive: true);
+      final sink = file.openWrite();
+      var receivedBytes = 0;
+      try {
+        onProgress(receivedBytes, totalBytes);
+        await for (final chunk in response.stream.timeout(requestTimeout)) {
+          receivedBytes += chunk.length;
+          sink.add(chunk);
+          onProgress(receivedBytes, totalBytes);
+        }
+        await sink.flush();
+        await sink.close();
+      } catch (_) {
+        try {
+          await sink.close();
+        } catch (_) {}
+        await file.delete().catchError((_) => file);
+        rethrow;
+      }
+      if (totalBytes != null && receivedBytes != totalBytes) {
+        await file.delete().catchError((_) => file);
+        throw PanelApiException('下载长度与面板声明不一致', path: uri.path);
+      }
+      return receivedBytes;
+    } on TimeoutException {
+      throw PanelApiException('连接面板超时', path: uri.path);
+    } on SocketException {
+      throw PanelApiException('无法连接到面板，请检查地址和网络', path: uri.path);
+    } on http.ClientException {
+      throw PanelApiException('面板连接失败，请检查地址和网络', path: uri.path);
+    }
+  }
+
   Future<Object?> postJson(String path, Object? body) =>
       _sendJson('POST', path, body: body);
 

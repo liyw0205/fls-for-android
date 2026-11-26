@@ -16,6 +16,7 @@ import '../services/panel_credential_store.dart';
 import '../services/panel_dashboard_manager.dart';
 import '../services/panel_online_scripts_manager.dart';
 import '../services/panel_records_manager.dart';
+import '../services/panel_backup_manager.dart';
 import '../services/panel_runtime_deps_manager.dart';
 import '../services/panel_global_env_manager.dart';
 import '../services/panel_config_manager.dart';
@@ -29,6 +30,7 @@ import '../services/panel_tasks_manager.dart';
 import 'panel_collections_view.dart';
 import 'panel_online_scripts_view.dart';
 import 'panel_records_view.dart';
+import 'panel_backup_view.dart';
 import 'panel_runtime_deps_view.dart';
 import 'panel_global_env_view.dart';
 import 'panel_config_view.dart';
@@ -1064,6 +1066,21 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     );
   }
 
+  Future<void> _openBackup() async {
+    final api = _api;
+    if (api == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelBackupView(
+          manager: PanelBackupManager(api),
+          onUnauthorized: (error) async {
+            await _expireSession(error);
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _openPanelFiles() async {
     final api = _api;
     if (api == null) return;
@@ -1136,6 +1153,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
               if (value == 'config') await _openPanelConfig();
               if (value == 'proxies') await _openProxies();
               if (value == 'notifications') await _openNotifications();
+              if (value == 'backup') await _openBackup();
               if (value == 'logout') {
                 final api = _api;
                 if (api != null) {
@@ -1178,6 +1196,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
                   value: 'notifications',
                   child: Text('通知渠道'),
                 ),
+              if (_hasCredential && _api != null)
+                const PopupMenuItem(value: 'backup', child: Text('备份恢复')),
               if (_hasCredential && _api != null)
                 const PopupMenuItem(
                   value: 'runtime-deps',

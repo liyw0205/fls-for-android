@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'panel_test_http.dart';
 
@@ -9,6 +10,78 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('streams a download to disk and reports byte progress', () async {
+    final directory = await Directory.systemTemp.createTemp('fls-download-');
+    addTearDown(() => directory.delete(recursive: true));
+    final destination = '${directory.path}/backup.tar.gz';
+    late http.BaseRequest captured;
+    final progress = <(int, int?)>[];
+    final client = PanelApiClient(
+      baseUrl: 'https://fls.example/panel',
+      credentials: const PanelSessionCredentials(
+        cookie: 'fls_native_session=stream-session',
+        csrfToken: 'csrf-token',
+      ),
+      client: _StreamingClient((request) async {
+        captured = request;
+        return http.StreamedResponse(
+          Stream<List<int>>.fromIterable([
+            utf8.encode('archive-'),
+            utf8.encode('bytes'),
+          ]),
+          200,
+          contentLength: 13,
+        );
+      }),
+    );
+    addTearDown(client.close);
+
+    final received = await client.downloadFile(
+      '/api/backup/native/files/archive.tar.gz/download?version=${'a' * 64}',
+      destinationPath: destination,
+      onProgress: (bytes, total) => progress.add((bytes, total)),
+    );
+
+    expect(received, 13);
+    expect(await File(destination).readAsString(), 'archive-bytes');
+    expect(progress.first, (0, 13));
+    expect(progress.last, (13, 13));
+    expect(
+      captured.url.path,
+      '/panel/api/backup/native/files/archive.tar.gz/download',
+    );
+    expect(captured.url.queryParameters['version'], 'a' * 64);
+    expect(captured.headers['cookie'], 'fls_native_session=stream-session');
+    expect(captured.headers['x-csrf-token'], isNull);
+  });
+
+  test('removes a partial download after a length mismatch', () async {
+    final directory = await Directory.systemTemp.createTemp('fls-download-');
+    addTearDown(() => directory.delete(recursive: true));
+    final destination = '${directory.path}/partial.tar.gz';
+    final client = PanelApiClient(
+      baseUrl: 'https://fls.example',
+      client: _StreamingClient(
+        (_) async => http.StreamedResponse(
+          Stream<List<int>>.value(utf8.encode('short')),
+          200,
+          contentLength: 10,
+        ),
+      ),
+    );
+    addTearDown(client.close);
+
+    await expectLater(
+      client.downloadFile(
+        '/api/backup/native/files/partial.tar.gz/download?version=${'b' * 64}',
+        destinationPath: destination,
+        onProgress: (_, _) {},
+      ),
+      throwsA(isA<PanelApiException>()),
+    );
+    expect(await File(destination).exists(), isFalse);
+  });
+
   test('submits the admin token once, then uses the session cookie', () async {
     final requests = <http.Request>[];
     final client = PanelApiClient(
@@ -442,4 +515,15 @@ void main() {
       ),
     );
   });
+}
+
+class _StreamingClient extends http.BaseClient {
+  _StreamingClient(this.handler);
+
+  final Future<http.StreamedResponse> Function(http.BaseRequest request)
+  handler;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      handler(request);
 }
