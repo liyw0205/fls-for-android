@@ -56,7 +56,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.textContaining('文件 · 1'));
 
     expect(find.text('备份恢复'), findsOneWidget);
     expect(find.textContaining('文件 · 1'), findsOneWidget);
