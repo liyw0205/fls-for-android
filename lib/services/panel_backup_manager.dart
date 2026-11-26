@@ -200,6 +200,19 @@ class PanelBackupManager {
     }
   }
 
+  Future<PanelBackupRestore> recoverRestoreDirectories(String requestId) async {
+    _validateRequestId(requestId);
+    final path = '/api/backup/native/restores/$requestId/recover-directories';
+    try {
+      return _parseRestore(
+        await _api.postJson(path, {'confirm': true}),
+        requestId,
+      );
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
   Future<PanelBackupRestoresPage> fetchRestores({
     int limit = 25,
     int offset = 0,

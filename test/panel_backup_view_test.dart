@@ -11,6 +11,128 @@ import 'package:http/testing.dart';
 import 'panel_test_http.dart';
 
 void main() {
+  for (final initialState in ['unknown', 'restored']) {
+    testWidgets(
+      'directory recovery for $initialState queries after a lost response',
+      (tester) async {
+        final posts = <String>[];
+        var recovered = false;
+        var recoveryQueries = 0;
+        Map<String, dynamic> restore() {
+          final state = recovered && initialState == 'unknown'
+              ? 'failed'
+              : initialState;
+          return {
+            ...jsonDecode(_restore()) as Map<String, dynamic>,
+            'state': state,
+            'phase': state,
+            'committed': state == 'restored',
+            'live_state_unchanged': state == 'failed',
+            'restore_outcome_unknown': state == 'unknown',
+            'directory_recovery_required': !recovered,
+            'scheduler': {
+              'state': state == 'failed' ? 'not_required' : 'pending',
+              'required': true,
+              'operation_id': '',
+              'error': '',
+            },
+          };
+        }
+
+        final api = PanelApiClient(
+          baseUrl: 'https://fls.example',
+          credentials: const PanelSessionCredentials(
+            cookie: 'fls_native_session=session',
+            csrfToken: 'csrf',
+          ),
+          client: MockClient((request) async {
+            final path = request.url.path;
+            if (request.method == 'POST') {
+              posts.add(path);
+              expect(path, endsWith('/recover-directories'));
+              expect(jsonDecode(request.body), {'confirm': true});
+              recovered = true;
+              return utf8Response('{"ok":false,"msg":"response lost"}', 503);
+            }
+            if (path.endsWith('/capabilities')) {
+              return utf8Response(
+                '{"ok":true,"items":["data","scripts"],"formats":["zip"],"upload_limit_bytes":10,"extracted_limit_bytes":20,"entry_limit":30,"preflight_enabled":true,"restore_enabled":true}',
+                200,
+              );
+            }
+            if (path.endsWith('/restore-maintenance')) {
+              return utf8Response('{"ok":true,"maintenance":null}', 200);
+            }
+            if (path.endsWith('/restores')) {
+              return utf8Response(
+                jsonEncode({
+                  'ok': true,
+                  'items': [restore()],
+                  'total': 1,
+                  'limit': 25,
+                  'offset': 0,
+                  'has_more': false,
+                }),
+                200,
+              );
+            }
+            if (path.endsWith('/restores/${'c' * 32}')) {
+              if (recovered) recoveryQueries++;
+              return utf8Response(
+                jsonEncode({'ok': true, 'restore': restore()}),
+                200,
+              );
+            }
+            return utf8Response(
+              '{"ok":true,"items":[],"page":1,"pages":1,"total":0}',
+              200,
+            );
+          }),
+        );
+        addTearDown(api.close);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PanelBackupView(
+              manager: PanelBackupManager(api),
+              onUnauthorized: (_) async {},
+            ),
+          ),
+        );
+        await pumpUntilFound(tester, find.text('文件 · 0'));
+        await tester.tap(find.text('恢复'));
+        await pumpUntilFound(tester, find.byTooltip('查询此恢复请求'));
+        await tester.pumpAndSettle();
+        final history = find.byTooltip('查询此恢复请求');
+        await tester.ensureVisible(history);
+        await tester.tap(history);
+        await pumpUntilFound(tester, find.text('恢复目录现场'));
+        await tester.pumpAndSettle();
+        expect(find.text('确认归档已应用'), findsNothing);
+        expect(find.text('确认原目录未变'), findsNothing);
+        if (initialState == 'restored') {
+          final scheduler = tester.widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, '仅重新加载调度器'),
+          );
+          expect(scheduler.onPressed, isNull);
+        }
+        final recover = find.text('恢复目录现场');
+        await tester.ensureVisible(recover);
+        await tester.tap(recover);
+        await tester.pumpAndSettle();
+        expect(posts, isEmpty);
+        await tester.tap(find.text('确认恢复现场'));
+        await pumpUntilFound(tester, find.text('现场恢复结果已通过原请求查询'));
+        await tester.pumpAndSettle();
+        expect(posts, [
+          '/api/backup/native/restores/${'c' * 32}/recover-directories',
+        ]);
+        expect(recoveryQueries, 1);
+        expect(find.text('恢复目录现场'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'dependency cleanup uses the original operation after a lost response',
     (tester) async {

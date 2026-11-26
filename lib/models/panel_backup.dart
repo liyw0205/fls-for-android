@@ -235,6 +235,7 @@ class PanelBackupRestore {
     required this.updatedAt,
     required this.scheduler,
     required this.dependencies,
+    this.directoryRecoveryRequired = false,
   });
 
   final String requestId;
@@ -255,6 +256,7 @@ class PanelBackupRestore {
   final int updatedAt;
   final PanelBackupFollowup scheduler;
   final PanelBackupFollowup dependencies;
+  final bool directoryRecoveryRequired;
 
   factory PanelBackupRestore.fromJson(Object? value) {
     if (value is! Map<String, dynamic> ||
@@ -281,6 +283,8 @@ class PanelBackupRestore {
     ];
     if (stringFields.any((field) => record[field] is! String) ||
         boolFields.any((field) => record[field] is! bool) ||
+        (record.containsKey('directory_recovery_required') &&
+            record['directory_recovery_required'] is! bool) ||
         record['archive_size_bytes'] is! int ||
         record['created_at'] is! int ||
         record['updated_at'] is! int ||
@@ -327,6 +331,8 @@ class PanelBackupRestore {
       throw const FormatException('备份恢复记录身份无效');
     }
     final active = record['active'] as bool;
+    final directoryRecoveryRequired =
+        record['directory_recovery_required'] == true;
     final committed = record['committed'] as bool;
     final unchanged = record['live_state_unchanged'] as bool;
     final unknown = record['restore_outcome_unknown'] as bool;
@@ -339,6 +345,7 @@ class PanelBackupRestore {
         (record['updated_at'] as int) < (record['created_at'] as int) ||
         utf8.encode(record['error'] as String).length > 1000 ||
         active != activeStates.contains(state) ||
+        (active && directoryRecoveryRequired) ||
         (active && phase != state) ||
         committed != (state == 'restored') ||
         (committed && unchanged) ||
@@ -376,6 +383,7 @@ class PanelBackupRestore {
       updatedAt: _integer(record['updated_at']),
       scheduler: scheduler,
       dependencies: dependencies,
+      directoryRecoveryRequired: directoryRecoveryRequired,
     );
   }
 }

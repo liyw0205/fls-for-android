@@ -680,6 +680,9 @@ class _PanelBackupViewState extends State<PanelBackupView>
     PanelBackupRestore restore, {
     required bool directoriesRestored,
   }) async {
+    if (restore.directoryRecoveryRequired || _sessionExpired || _busy != null) {
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -723,6 +726,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
     if (restore == null ||
         _busy != null ||
         !restore.committed ||
+        restore.directoryRecoveryRequired ||
         restore.dependencies.cleanupRequired ||
         restore.restoreOutcomeUnknown) {
       return;
@@ -791,6 +795,66 @@ class _PanelBackupViewState extends State<PanelBackupView>
       }
     } finally {
       if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  Future<void> _recoverRestoreDirectories(PanelBackupRestore restore) async {
+    if (!restore.directoryRecoveryRequired ||
+        _busy != null ||
+        _sessionExpired) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('恢复目录现场'),
+        content: const Text(
+          '面板将根据原恢复记录核对目录和实例身份。未完成的替换会回滚，已完成的替换会保留；核对失败时保留现场供后续处理。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认恢复现场'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || _sessionExpired || confirmed != true || _busy != null) {
+      return;
+    }
+    setState(() => _busy = 'directory-recovery');
+    try {
+      final result = await widget.manager.recoverRestoreDirectories(
+        restore.requestId,
+      );
+      if (!mounted || _sessionExpired) return;
+      setState(() => _restore = result);
+      _notice(
+        result.directoryRecoveryRequired ? '目录现场仍需处理，请查询原请求' : '目录现场已核对并恢复',
+      );
+    } catch (error) {
+      if (!mounted || _sessionExpired) return;
+      if (await _handleUnauthorized(error)) return;
+      try {
+        final result = await widget.manager.fetchRestore(restore.requestId);
+        if (!mounted || _sessionExpired) return;
+        setState(() => _restore = result);
+        _notice(
+          result.directoryRecoveryRequired
+              ? '目录现场尚未恢复完成，请核对后重试'
+              : '现场恢复结果已通过原请求查询',
+        );
+      } catch (queryError) {
+        if (await _handleUnauthorized(queryError)) return;
+        if (mounted && !_sessionExpired) _notice('现场恢复结果未知，请查询原恢复请求');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = null);
+      unawaited(_loadRestoreHistory());
     }
   }
 
@@ -1301,7 +1365,21 @@ class _PanelBackupViewState extends State<PanelBackupView>
       Text(status, style: Theme.of(context).textTheme.titleSmall),
       Text(restore.items.map(_scopeLabel).join(' + ')),
       if (restore.error.isNotEmpty) Text(restore.error),
-      if (restore.restoreOutcomeUnknown) ...[
+      if (restore.directoryRecoveryRequired) ...[
+        const Text('面板检测到中断的目录恢复记录，请先恢复现场。'),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _busy == null
+                ? () => _recoverRestoreDirectories(restore)
+                : null,
+            icon: const Icon(Icons.restore),
+            label: const Text('恢复目录现场'),
+          ),
+        ),
+      ],
+      if (restore.restoreOutcomeUnknown &&
+          !restore.directoryRecoveryRequired) ...[
         const Text('请检查实际目录结果；不得自动重新导入。'),
         Wrap(
           spacing: 8,
@@ -1342,7 +1420,10 @@ class _PanelBackupViewState extends State<PanelBackupView>
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
-              onPressed: _busy == null && !restore.dependencies.cleanupRequired
+              onPressed:
+                  _busy == null &&
+                      !restore.directoryRecoveryRequired &&
+                      !restore.dependencies.cleanupRequired
                   ? () => _runFollowup(dependencies: false)
                   : null,
               icon: const Icon(Icons.refresh),
@@ -1369,7 +1450,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
-              onPressed: _busy == null
+              onPressed: _busy == null && !restore.directoryRecoveryRequired
                   ? () => _runFollowup(dependencies: true)
                   : null,
               icon: const Icon(Icons.build_outlined),

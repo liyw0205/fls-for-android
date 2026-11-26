@@ -114,6 +114,15 @@ void main() {
     'rejects malformed or contradictory restore results without coercion',
     () {
       final invalid = <Map<String, dynamic>>[
+        {'directory_recovery_required': 'true'},
+        {'directory_recovery_required': null},
+        {
+          'state': 'committing',
+          'phase': 'committing',
+          'committed': false,
+          'active': true,
+          'directory_recovery_required': true,
+        },
         {'active': 'false'},
         {'committed': 1},
         {'archive_size_bytes': '13'},
@@ -468,6 +477,56 @@ void main() {
           throwsFormatException,
         );
       }
+    },
+  );
+
+  test(
+    'recovers directories using the original request and rejects another identity',
+    () async {
+      final requests = <http.Request>[];
+      var wrongRequest = false;
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example/prefix',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=backup-session',
+          csrfToken: 'backup-csrf',
+        ),
+        client: MockClient((request) async {
+          requests.add(request);
+          return utf8Response(
+            jsonEncode({
+              'ok': true,
+              'restore': {
+                ..._restore(),
+                'request_id': (wrongRequest ? 'e' : 'f') * 32,
+                'directory_recovery_required': false,
+              },
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelBackupManager(api);
+      final legacy = PanelBackupRestore.fromJson({
+        'ok': true,
+        'restore': _restore(),
+      });
+      expect(legacy.directoryRecoveryRequired, isFalse);
+      final result = await manager.recoverRestoreDirectories('f' * 32);
+      expect(result.directoryRecoveryRequired, isFalse);
+      expect(requests.single.method, 'POST');
+      expect(
+        requests.single.url.path,
+        '/prefix/api/backup/native/restores/${'f' * 32}/recover-directories',
+      );
+      expect(jsonDecode(requests.single.body), {'confirm': true});
+      expect(requests.single.headers['x-csrf-token'], 'backup-csrf');
+      wrongRequest = true;
+      await expectLater(
+        manager.recoverRestoreDirectories('f' * 32),
+        throwsA(isA<PanelApiException>()),
+      );
     },
   );
 
