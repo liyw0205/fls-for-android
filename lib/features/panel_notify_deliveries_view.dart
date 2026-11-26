@@ -108,53 +108,49 @@ class _PanelNotifyDeliveriesViewState extends State<PanelNotifyDeliveriesView> {
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _status,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: '投递状态'),
-                    items: [
-                      const DropdownMenuItem(value: '', child: Text('全部状态')),
-                      for (final status in notifyDeliveryStates)
-                        DropdownMenuItem(
-                          value: status,
-                          child: Text(notifyDeliveryLabel(status)),
-                        ),
-                    ],
-                    onChanged: _loading
-                        ? null
-                        : (value) {
-                            setState(() => _status = value!);
-                            _load();
-                          },
-                  ),
+                DropdownButtonFormField<String>(
+                  initialValue: _status,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: '投递状态'),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text('全部状态')),
+                    for (final status in notifyDeliveryStates)
+                      DropdownMenuItem(
+                        value: status,
+                        child: Text(notifyDeliveryLabel(status)),
+                      ),
+                  ],
+                  onChanged: _loading
+                      ? null
+                      : (value) {
+                          setState(() => _status = value!);
+                          _load();
+                        },
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _channel,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: '渠道类型'),
-                    items: [
-                      const DropdownMenuItem(value: '', child: Text('全部渠道')),
-                      for (final channel in _channels)
-                        DropdownMenuItem(
-                          value: channel.id,
-                          child: Text(
-                            channel.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _channel,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: '渠道类型'),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text('全部渠道')),
+                    for (final channel in _channels)
+                      DropdownMenuItem(
+                        value: channel.id,
+                        child: Text(
+                          channel.name,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                    ],
-                    onChanged: _loading
-                        ? null
-                        : (value) {
-                            setState(() => _channel = value!);
-                            _load();
-                          },
-                  ),
+                      ),
+                  ],
+                  onChanged: _loading
+                      ? null
+                      : (value) {
+                          setState(() => _channel = value!);
+                          _load();
+                        },
                 ),
               ],
             ),
@@ -211,7 +207,12 @@ class _PanelNotifyDeliveriesViewState extends State<PanelNotifyDeliveriesView> {
                       : () => _load(_page!.page - 1),
                   icon: const Icon(Icons.chevron_left),
                 ),
-                Text('${_page!.page} / ${_page!.pages} · ${_page!.total} 条'),
+                Expanded(
+                  child: Text(
+                    '${_page!.page} / ${_page!.pages} · ${_page!.total} 条',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
                 IconButton(
                   tooltip: '下一页',
                   onPressed: _loading || _page!.page >= _page!.pages
@@ -640,7 +641,12 @@ class _ChannelPickerState extends State<_ChannelPicker> {
                       : () => _load(_page!.page - 1),
                   icon: const Icon(Icons.chevron_left),
                 ),
-                Text('${_page!.page} / ${_page!.pages}'),
+                Expanded(
+                  child: Text(
+                    '${_page!.page} / ${_page!.pages}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
                 IconButton(
                   tooltip: '下一页渠道',
                   onPressed: _loading || _page!.page >= _page!.pages

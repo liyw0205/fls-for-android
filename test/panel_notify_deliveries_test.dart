@@ -406,9 +406,20 @@ void main() {
       await launchDetail(tester, api);
       await tester.tap(find.text('重新选择渠道并投递'));
       await pumpUntilFound(tester, find.text('Alpha'));
-      await idle(tester);
+      await pumpUntil(
+        tester,
+        () => find
+            .descendant(
+              of: find.byType(AlertDialog),
+              matching: find.byType(LinearProgressIndicator),
+            )
+            .evaluate()
+            .isEmpty,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('Alpha'));
-      await tester.pumpAndSettle();
+      await pumpUntilFound(tester, find.text('确认重新投递'));
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.textContaining('将只发送截断后的内容'), findsOneWidget);
       await tester.tap(find.text('确认重新投递'));
       await pumpUntil(tester, () => submitted != null);
