@@ -125,7 +125,14 @@ void main() {
         await pumpUntil(
           tester,
           () =>
-              tester.widget<IconButton>(find.byTooltip('刷新恢复历史')).onPressed !=
+              tester
+                  .widget<IconButton>(
+                    find.byWidgetPredicate(
+                      (widget) =>
+                          widget is IconButton && widget.tooltip == '刷新恢复历史',
+                    ),
+                  )
+                  .onPressed !=
               null,
         );
         await tester.pumpAndSettle();
