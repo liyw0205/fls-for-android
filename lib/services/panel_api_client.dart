@@ -372,6 +372,12 @@ class PanelApiClient {
             ..._configRedactValues(body),
           if (Uri.parse(path).path.startsWith('/api/proxy/') && body is Map)
             ..._proxyRedactValues(body),
+          if (uri.path.startsWith('/api/notify/') &&
+              body is Map &&
+              body['credentials'] is Map)
+            for (final intent in (body['credentials'] as Map).values)
+              if (intent is Map && intent['value'] is String)
+                intent['value'] as String,
           if (uri.path.startsWith('/api/env/') && body is Map)
             for (final key in ['value', 'env_text'])
               if (body[key] is String) body[key] as String,
@@ -400,6 +406,7 @@ class PanelApiClient {
               path,
             ).path.startsWith('/api/config/'),
             includeProxyDetails: Uri.parse(path).path.startsWith('/api/proxy/'),
+            includeNotifyDetails: uri.path.startsWith('/api/notify/'),
           ),
         );
       }
@@ -509,9 +516,10 @@ class PanelApiClient {
     bool includeEnvironmentDetails = false,
     bool includeConfigDetails = false,
     bool includeProxyDetails = false,
+    bool includeNotifyDetails = false,
   }) {
     if (payload is! Map<String, dynamic>) return null;
-    if (includeProxyDetails) {
+    if (includeProxyDetails || includeNotifyDetails) {
       final result = <String, dynamic>{
         for (final key in const [
           'resolved',
