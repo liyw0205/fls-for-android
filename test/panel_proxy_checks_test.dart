@@ -437,7 +437,10 @@ void main() {
             return utf8Response(
               jsonEncode({
                 'ok': true,
-                'check': checkFixture(id: body['request_id'] as String),
+                'check': checkFixture(
+                  id: body['request_id'] as String,
+                  name: 'Retried',
+                ),
               }),
               200,
             );
@@ -480,6 +483,8 @@ void main() {
       await pumpUntilFound(tester, find.text('重新检测当前代理？'));
       expect(retries, 0);
       await tester.tap(find.text('重新检测'));
+      await pumpUntil(tester, () => retries == 1);
+      await pumpUntilFound(tester, find.text('Retried'));
       await tester.pumpAndSettle();
       expect(retries, 1);
       expect(tester.takeException(), isNull);
