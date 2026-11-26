@@ -87,10 +87,12 @@ void main() {
       );
       await pumpUntilFound(tester, find.text('文件 · 0'));
       await tester.tap(find.text('恢复'));
+      await pumpUntilFound(tester, find.byTooltip('查询此恢复请求'));
       await tester.pumpAndSettle();
       final history = find.byTooltip('查询此恢复请求');
       await tester.ensureVisible(history);
       await tester.tap(history);
+      await pumpUntilFound(tester, find.text('清理原依赖作业'));
       await tester.pumpAndSettle();
       expect(find.text('单独安装恢复依赖'), findsNothing);
       final scheduler = tester.widget<OutlinedButton>(
@@ -103,6 +105,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(posts, isEmpty);
       await tester.tap(find.text('确认清理'));
+      await pumpUntilFound(tester, find.text('单独安装恢复依赖'));
       await tester.pumpAndSettle();
       expect(posts, [
         '/api/backup/native/restores/${'c' * 32}/dependencies/cleanup',
@@ -178,6 +181,7 @@ void main() {
       );
       await pumpUntilFound(tester, find.text('文件 · 0'));
       await tester.tap(find.text('恢复'));
+      await pumpUntilFound(tester, find.textContaining('archive-0.zip'));
       await tester.pumpAndSettle();
       final next = find.byTooltip('下一页').last;
       await tester.scrollUntilVisible(
@@ -186,6 +190,7 @@ void main() {
         scrollable: find.byType(Scrollable).last,
       );
       await tester.tap(next);
+      await pumpUntilFound(tester, find.textContaining('archive-25.zip'));
       await tester.pumpAndSettle();
       expect(find.textContaining('archive-25.zip'), findsOneWidget);
       expect(offsets, [0, 25]);
@@ -193,6 +198,7 @@ void main() {
       final refresh = find.byTooltip('刷新恢复历史');
       await tester.ensureVisible(refresh);
       await tester.tap(refresh);
+      await pumpUntilFound(tester, find.text('恢复历史暂不可用，请重试'));
       await tester.pumpAndSettle();
       expect(find.text('恢复历史暂不可用，请重试'), findsOneWidget);
       expect(find.textContaining('archive-25.zip'), findsOneWidget);
@@ -268,10 +274,12 @@ void main() {
     final restoreTab = find.text('恢复');
     await tester.ensureVisible(restoreTab);
     await tester.tap(restoreTab);
+    await pumpUntilFound(tester, find.textContaining('已恢复 · full.zip'));
     await tester.pumpAndSettle();
     expect(find.text('选择备份文件'), findsOneWidget);
     expect(find.textContaining('已恢复 · full.zip'), findsOneWidget);
     await tester.tap(find.byTooltip('查询此恢复请求'));
+    await pumpUntilFound(tester, find.text('目录已恢复'));
     await tester.pumpAndSettle();
     expect(find.text('目录已恢复'), findsOneWidget);
     expect(tester.takeException(), isNull);
