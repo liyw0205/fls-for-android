@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'panel_proxy_manager_test.dart'
     show proxyFixture, proxyPageFixture, proxySession;
 import 'panel_test_http.dart';
+import 'panel_proxy_checks_test.dart' show checkFixture;
 
 Finder _field(String label) => find.byWidgetPredicate(
   (widget) => widget is TextField && widget.decoration?.labelText == label,
@@ -46,6 +47,67 @@ Future<void> _save(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('editor checks a changed draft without saving proxy settings', (
+    tester,
+  ) async {
+    var checks = 0;
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: proxySession,
+      client: panelMockClient((request) async {
+        if (request.method == 'POST') {
+          expect(request.url.path, '/api/proxy/checks');
+          final body = jsonDecode(request.body) as Map;
+          expect(body['proxy_id'], 'p');
+          expect(body['version'], 'a' * 64);
+          expect(body['draft'], {
+            'settings': {'name': 'Draft name'},
+            'credentials': {
+              'username_action': 'keep',
+              'password_action': 'keep',
+            },
+          });
+          expect(body['targets'], ['https://target.example']);
+          checks++;
+          return utf8Response(
+            jsonEncode({
+              'ok': true,
+              'check': checkFixture(
+                id: body['request_id'] as String,
+                source: 'draft',
+              ),
+            }),
+            200,
+          );
+        }
+        return utf8Response(
+          jsonEncode(
+            request.url.path.endsWith('/settings/p')
+                ? {'ok': true, 'proxy': proxyFixture()}
+                : proxyPageFixture(proxyFixture()),
+          ),
+          200,
+        );
+      }),
+    );
+    addTearDown(api.close);
+    await _launch(tester, api);
+    await _edit(tester);
+    await tester.enterText(_field('代理名称'), 'Draft name');
+    await tester.tap(find.byTooltip('检测草稿'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field('检测目标（可选）'), 'https://target.example');
+    await tester.tap(find.text('开始检测'));
+    await pumpUntilFound(tester, find.text('未保存草稿'));
+    await tester.pumpAndSettle();
+    expect(checks, 1);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Draft name'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('proxy editor saves only local changes and keeps credentials', (
     tester,
   ) async {

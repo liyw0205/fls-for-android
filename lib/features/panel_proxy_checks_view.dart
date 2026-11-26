@@ -16,109 +16,120 @@ class ProxyCheckOptions {
 Future<ProxyCheckOptions?> proxyCheckOptions(
   BuildContext context, {
   bool customTargets = true,
-}) async {
+}) => showDialog<ProxyCheckOptions>(
+  context: context,
+  builder: (_) => _ProxyCheckOptionsDialog(customTargets: customTargets),
+);
+
+class _ProxyCheckOptionsDialog extends StatefulWidget {
+  const _ProxyCheckOptionsDialog({required this.customTargets});
+  final bool customTargets;
+
+  @override
+  State<_ProxyCheckOptionsDialog> createState() =>
+      _ProxyCheckOptionsDialogState();
+}
+
+class _ProxyCheckOptionsDialogState extends State<_ProxyCheckOptionsDialog> {
   final targets = TextEditingController();
   var kind = 'test';
   String? error;
-  try {
-    return await showDialog<ProxyCheckOptions>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('代理检测'),
-          scrollable: true,
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('检测网络：当前 FLS 面板'),
-                const SizedBox(height: 16),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(
-                      value: 'test',
-                      icon: Icon(Icons.network_check),
-                      label: Text('连接'),
-                    ),
-                    ButtonSegment(
-                      value: 'quality',
-                      icon: Icon(Icons.speed),
-                      label: Text('质量'),
-                    ),
-                  ],
-                  selected: {kind},
-                  onSelectionChanged: (value) => setState(() {
-                    kind = value.single;
-                    error = null;
-                  }),
-                ),
-                if (customTargets) ...[
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: targets,
-                    maxLength: 5120,
-                    minLines: 2,
-                    maxLines: 5,
-                    decoration: InputDecoration(
-                      labelText: '检测目标（可选）',
-                      hintText: 'https://www.baidu.com',
-                      errorText: error,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+
+  @override
+  void dispose() {
+    targets.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('代理检测'),
+    scrollable: true,
+    content: SizedBox(
+      width: 360,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('检测网络：当前 FLS 面板'),
+          const SizedBox(height: 16),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                value: 'test',
+                icon: Icon(Icons.network_check),
+                label: Text('连接'),
+              ),
+              ButtonSegment(
+                value: 'quality',
+                icon: Icon(Icons.speed),
+                label: Text('质量'),
+              ),
+            ],
+            selected: {kind},
+            onSelectionChanged: (value) => setState(() {
+              kind = value.single;
+              error = null;
+            }),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final urls = targets.text
-                    .split(RegExp(r'\s+'))
-                    .where((value) => value.isNotEmpty)
-                    .toList();
-                if (urls.isNotEmpty &&
-                    (urls.length > (kind == 'test' ? 1 : 5) ||
-                        urls.toSet().length != urls.length ||
-                        urls.any((value) {
-                          final uri = Uri.tryParse(value);
-                          return value.length > 1024 ||
-                              uri == null ||
-                              !const ['http', 'https'].contains(uri.scheme) ||
-                              uri.host.isEmpty ||
-                              uri.userInfo.isNotEmpty ||
-                              uri.hasQuery ||
-                              uri.hasFragment ||
-                              value.contains('\\');
-                        }))) {
-                  setState(
-                    () => error = kind == 'test'
-                        ? '填写一个无凭据或查询串的 HTTP/HTTPS 地址'
-                        : '最多五个不同的 HTTP/HTTPS 地址，每行一个',
-                  );
-                  return;
-                }
-                Navigator.pop(
-                  context,
-                  ProxyCheckOptions(kind, urls.isEmpty ? null : urls),
-                );
-              },
-              child: const Text('开始检测'),
+          if (widget.customTargets) ...[
+            const SizedBox(height: 16),
+            TextField(
+              controller: targets,
+              maxLength: 5120,
+              minLines: 2,
+              maxLines: 5,
+              decoration: InputDecoration(
+                labelText: '检测目标（可选）',
+                hintText: 'https://www.baidu.com',
+                errorText: error,
+              ),
             ),
           ],
-        ),
+        ],
       ),
-    );
-  } finally {
-    // Route disposal follows the closing animation.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    targets.dispose();
-  }
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () {
+          final urls = targets.text
+              .split(RegExp(r'\s+'))
+              .where((value) => value.isNotEmpty)
+              .toList();
+          if (urls.isNotEmpty &&
+              (urls.length > (kind == 'test' ? 1 : 5) ||
+                  urls.toSet().length != urls.length ||
+                  urls.any((value) {
+                    final uri = Uri.tryParse(value);
+                    return value.length > 1024 ||
+                        uri == null ||
+                        !const ['http', 'https'].contains(uri.scheme) ||
+                        uri.host.isEmpty ||
+                        uri.userInfo.isNotEmpty ||
+                        uri.hasQuery ||
+                        uri.hasFragment ||
+                        value.contains('\\');
+                  }))) {
+            setState(
+              () => error = kind == 'test'
+                  ? '填写一个无凭据或查询串的 HTTP/HTTPS 地址'
+                  : '最多五个不同的 HTTP/HTTPS 地址，每行一个',
+            );
+            return;
+          }
+          Navigator.pop(
+            context,
+            ProxyCheckOptions(kind, urls.isEmpty ? null : urls),
+          );
+        },
+        child: const Text('开始检测'),
+      ),
+    ],
+  );
 }
 
 class PanelProxyChecksView extends StatefulWidget {

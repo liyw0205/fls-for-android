@@ -466,7 +466,16 @@ void main() {
         ),
       );
       await pumpUntilFound(tester, find.text('Alpha'));
-      await tester.scrollUntilVisible(find.text('重新检测当前代理'), 250);
+      await tester.scrollUntilVisible(
+        find.text('重新检测当前代理'),
+        250,
+        scrollable: find
+            .descendant(
+              of: find.byType(ListView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await tester.tap(find.text('重新检测当前代理'));
       await pumpUntilFound(tester, find.text('重新检测当前代理？'));
       expect(retries, 0);
