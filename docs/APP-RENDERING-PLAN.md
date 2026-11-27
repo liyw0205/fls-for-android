@@ -4,7 +4,7 @@
 
 两仓继续使用各自 `develop`，最新候选见下段。历史 B2 配对基线为 FLS `ec318d8` / `20261126.12`、APP `394993b` / `0.1.56+70`，相关工作流与 214 项 APP 测试已通过，证据见 [备份规格](PANEL-BACKUP-PLAN.md#当前推进状态)。后续批次从 [DEVELOPMENT-GOALS.md](DEVELOPMENT-GOALS.md) 推进。全量目标仍是所有适用 FLS Web 业务原生渲染，不限版本或在线脚本；DeepSeek chat-demo 的主题方向也须统一覆盖所有已有和新迁移页面。
 
-2026-11-27 已先同步 FLS、再核对 APP，继续在两个 `develop` 推进。B3 最新任务源同步候选为 FLS `b2a0ef7` / `20261127.29`（149）与 APP `4f4dd2e` / `0.1.64+78`：后端补恢复门禁、真实身份/回执/确认归档认领、共享缓存发布及原刷新失败项恢复修复；APP 补活跃/归档操作禁用、409/失联只查询原请求、查询失败禁止动作和过期回包隔离。新增 6 项 Widget 回归，本机格式/分析通过；后端最终本机九文件 195 项/135 子用例通过。实际平台终态、测试等待修复和 APK 见 [备份规格](PANEL-BACKUP-PLAN.md#b3-原生恢复与后续处理开发测试检查点)。下一批是整源刷新受理/线程/日志的恢复门禁与跨 worker 协调，随后继续 B3 其余范围、B4 与 M4-M7，全量目标不变。
+2026-11-27 已先同步 FLS、再核对 APP，继续在两个 `develop` 推进。B3 最新整源刷新候选为 FLS `c2da9c7` / `20261127.30`（150）与 APP `efa31ba` / `0.1.67+81`：后端补全部刷新入口门禁、跨 worker 身份/回执/恢复认领及至日志/finally 的 lease；APP 补可信状态/活跃禁用、原 child/task-link ID 查询、失败项分页和旧回包/401 隔离。新增 9 项 Widget、3 项 manager 回归；Android CI `45985662877` 与 arm64 APK 成功，artifact `15191673420`。FLS Linux 和三项打包成功，Windows attempt 2 被整个作业 15 分钟时限中断，完整回归待补齐；实际范围、测试修复和 APK 期限见 [备份规格](PANEL-BACKUP-PLAN.md#b3-原生恢复与后续处理开发测试检查点)。下一批先处理该 CI 时限，再做脚本调试的身份/回执、持久停止与独立监管，随后继续 B3 其余范围、B4 与 M4-M7，全量目标不变。
 
 ## 目标
 
@@ -61,7 +61,7 @@
 | 1. 浏览 | `GET` `/catalog`、`/detail/<script_id>`、`/doc/<script_id>` | 服务端搜索/分页，详情保留来源和文档入口。文档有 1 MiB 上限且限制 HTTPS 重定向；Markdown 用 `NativeMarkdownView`，HTML 与纯文本不交给 WebView。 |
 | 2. 安装/更新 | `GET` `/install-options/<script_id>`；`POST` `/install/<script_id>` | 代理与任务按服务端选项展示；支持分页选择，默认不导入或启用。覆盖文件须明确确认。区分 409 覆盖确认、已有作业运行和普通冲突；已有作业直接定位，不重复提交。 |
 | 3. 状态/恢复 | `GET` `/log/<install_id>?state_only=1`、`/install-history`；`POST` `/install-stop/<install_id>`、`/install-retry/<install_id>`、`/install-start-retry/<install_id>`、`/install-task-confirm/<install_id>`、`/install-task-retry/<install_id>`、`/install-reload/<install_id>` | 状态轻量轮询，日志按需读取有限行数。可靠总量才显示 `xx MB / xx MB · xx%`；未知总量或 Git 操作使用不定进度。轮询不得把下载完成当作安装完成；任务导入和调度器恢复分别显示。历史以 `snapshot` 分页，409 后从第一页重读。 |
-| 4. 源同步 | `POST` `/refresh`、`/refresh-recover/<request_id>`、`/refresh-confirm/<request_id>`、`/refresh-retry/<request_id>`；`GET` `/refresh-options`、`/refresh-status/<request_id>`、`/refresh-history`、`/refresh-task-link-failures/<request_id>`、`/refresh-log/<request_id>` | Flutter 原生同步页可选启用代理、查看最近 10 次刷新、轮询状态和日志、确认/恢复未知结果、重试失败项，并按原请求绑定重试单个外部任务源。 |
+| 4. 源同步 | `POST` `/refresh`、`/refresh-recover/<request_id>`、`/refresh-confirm/<request_id>`、`/refresh-retry/<request_id>`；`GET` `/refresh-options`、`/refresh-status/<request_id>`、`/refresh-history`、`/refresh-task-link-failures/<request_id>`、`/refresh-log/<request_id>` | Flutter 原生同步页可选代理、看最近 10 次刷新、轮询状态/日志及显式确认/恢复/重试。查询失败保留已知结果并禁用写入，409/失联只查原 ID；重试前保存 child ID，失败项同步保留 task-link ID。失败明细按 100 项分页，核对原请求/offset/digest/total；旧后端可缺 `ok/active`，已有字段严格校验。 |
 | 5. 单独任务操作与源缓存 | 既有 `/import-tasks*`、`/task-link*`、`/refresh-task-link*`；新增 `/source` JSON GET/PUT，使用 `cache_revision` 做并发保护 | 详情页可选择并独立导入任务、同步 `task_link`；任务操作历史可确认未知回执、恢复调度器、重试允许的原请求和归档失败记录。源缓存编辑有 4 MiB 缓存/8 MiB 请求上限，校验 JSON、条目和重复 ID；冲突时保留草稿并允许查看/采用服务器版本。 |
 
 APP `develop` 已在 `PanelTasksView` 接入独立 manager、DTO 和原生页面，远程与本机面板共用会话边界。写操作复用原 request ID 恢复，不把代理凭据或任务变量值放进列表 DTO。真实面板仍待手动验收；在线脚本只是一个业务域，其余适用页面继续按矩阵迁移。
@@ -163,7 +163,7 @@ Git 仓库拉取现已补齐 FLS JSON 作业 API，APP 原生复用拉取页并�
 5. **设备手动验收：由用户执行，不阻塞代码推进**。无需配置 ADB 或模拟器。用户反馈真实设备上遇到的问题后，将可复现部分转成自动化回归测试。
 
 6. **已交付纵切：FLS 面板在线脚本**。源管理、独立任务操作、恢复管理与后端 API 已推送两仓 `develop`，仍待隔离面板手动验收。
-7. **当前纵切：全量面板业务迁移**。目录/编辑/改名/删除/拉取/归档导入/调试、依赖/运行时、全局变量、应用配置、代理、M2a/M2b 通知及 M3 B1/B2 已有 `develop` 原生入口和自动化证据。先审查并完成 B3 恢复/后续处理本地草稿、B4 配对验证，再继续 M4-M7 的首次设置/维护、既有域缺口/跨进程恢复、全域导航/主题和最终验收。主题覆盖全部原生页面；任何子批或单域完成都不等于全 APP 原生化，全量及用户验收前两仓保持 `main` 不动。
+7. **当前纵切：全量面板业务迁移**。目录/编辑/改名/删除/拉取/归档导入/调试、依赖/运行时、全局变量、应用配置、代理、M2a/M2b 通知及 M3 B1/B2 已有 `develop` 原生入口和自动化证据。B3 已有目录恢复、I/O 门禁、安装/导入/任务源同步/整源刷新协调候选；接着补调试、任务/日志、平台与多 worker 清理边界及 APP 全流程，再做 B4 配对验证。继续 M4-M7 的首次设置/维护、既有域缺口/跨进程恢复、全域导航/主题和最终验收。主题覆盖全部原生页面；任何子批或单域完成都不等于全 APP 原生化，全量及用户验收前两仓保持 `main` 不动。
 
 ### 手动验收清单
 

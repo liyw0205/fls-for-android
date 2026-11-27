@@ -18,7 +18,30 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-2026-11-27 最新任务源同步候选：FLS `b2a0ef700695365d3980bca6bb3ec27dd24c0fcf` / `20261127.29`（149），实现 `05622bd`、`9b34573`，平台修正 `b2a0ef7`；APP `4f4dd2e248a026b00c1e602063cc803f759c4663` / `0.1.64+78`，实现 `c0feec4`。本批先 fetch/fast-forward 两仓 `develop`，均为最新且工作区干净，再继续开发。以下区分本批与历史检查点，文档提交不改变 APK 构建 SHA。
+2026-11-27 最新整源刷新候选：FLS `c2da9c75a4c476a7fca1822add45d8b4c87171ab` / `20261127.30`（150）；APP `efa31ba13e867d86dbb9fa5f7dab10ca73287e8a` / `0.1.67+81`，原实现 `91a1575`，契约与测试修正 `56eba65`、`efa31ba`。本批先 fetch/fast-forward 两仓 `develop`，均为最新且工作区干净，再继续开发；收尾再次 fetch/fast-forward 核对。以下区分本批与历史检查点，文档提交不改变 APK 构建 SHA。
+
+后端新增 `online_scripts/refresh_coordination.py`，用跨进程短事务替代进程内刷新锁，顺序为 storage → SOURCE_CACHE_LOCK → REFRESH_IDENTITIES → TASK_LINK_IDENTITIES；网络等待不持事务。首次 reserve/retry 在回执落盘前认领身份，交给刷新线程；共享恢复 lease 从 HTTP 请求延续至线程、response.close、缓存/失败明细发布、终态日志与 finally。全部刷新 Web/API、在线脚本页及日志读取接恢复门禁，broad except 不吞 `PanelStorageBusy`。
+
+状态与历史按真实身份判活，其他 worker 不因空内存将运行中回执改成 unknown；owner 已退出则保留原 ID 的 unknown，不重新抓取。可选 `active: bool` 延续至终态清理结束，日志轮询同时检查 running/active。确认与恢复独立认领，竞争返回 409；认领前只 peek 回执，不因无效动作触发历史修复。current/history/失败分页共用事务，保留 200 条历史链和 snapshot 分页，缺失回执的活跃身份仍占容量。更新核对 expected ID；旧 owner 的磁盘诊断仅在磁盘快照未变化时保留，不能覆盖另一 worker 的新终态。首次刷新及 retry 均检查提交时缓存指纹，发布前再次检查，拒绝覆盖已编辑缓存。
+
+APP `_RefreshJobViewState` 加查询代次和可信标记：查询失败保留已知页并禁用写入；动作 409/失联只 GET 原 ID。retry 发送前保留 child ID，失联转为查询 child，不自动再 POST；每个失败项的 task-link ID 独立保留，可查原请求且禁止重复提交同项。失败明细按 100 项分页，核对原 request/offset/digest/total，拒收错页或过期回包。当前 401 退出嵌套页，旧页面回包/401 不影响新页。状态 manager 兼容真实旧接口缺少 `ok/active`，拒绝 `ok:false`、错身份及非法字段类型；失败/启动失败/部分完成/未知均可在可信且不活跃时显式确认重试。
+
+新增 `tests/test_online_refresh_workers.py` 11 项覆盖真实双 worker 的 prepared、HTTP read/close、终态清理活跃查询，owner 强退、首次同 ID/父子重试竞争、确认/恢复认领、缺失活跃回执容量、新终态覆盖旧诊断、首次保存至线程交接及故障释放、全部 Web/API 门禁和缓存编辑竞争。旧 Web/CSRF、刷新/日志/存储恢复回归保留；旧 running fixture 改为持真实身份，终态后释放，Windows fixture 等待刷新线程结束。原有并发 recover 保留唯一副作用及结束后 replay 断言，活动竞争允许 409。
+
+本机首轮九文件 200 项/152 子用例通过（在最后四个 worker 用例前）；最后三文件 72 项/43 子用例，最终日志/worker 两文件 43 项/42 子用例通过。APP 122 文件格式与静态分析通过；新增 9 项 Widget 和 3 项 manager 回归由 Actions 执行。Termux 不支持 Flutter tester，不做 ADB/模拟器，未执行真实面板手动验收。
+
+本批平台证据严格对应上述 FLS/APP SHA：
+
+- FLS [Native backup regression 45984836435](https://github.com/liyw0205/fls/actions/runs/45984836435)：最终 attempt 2 为 cancelled，不能记为双平台通过。attempt 1 Linux 全部 969 项/882 子用例通过，1 项 Windows 短路径/junction 跳过、2 条既有 tar 警告；该成功结果保留。Windows 首轮在线安装 step 为 180 项/134 子用例通过、5 项 sh 用例跳过，既有 Node 轮询用例 `test_log_polling_inserts_recovery_action_for_terminal_unknown` 超过 5 秒子进程时限，后两步跳过；本机复核该项 1 passed。仅重跑 Windows 后，在线安装 181 项/134 子用例、独立任务导入 66 项/76 子用例及全部更早步骤通过；最后任务源/刷新 step 已有 183 项/144 子用例通过，但被整个作业 15 分钟时限中断，未运行完整，未报告业务断言失败。下一批先调整或拆分 Windows 回归时间预算，保留全部用例并取得完整终态；不靠反复重跑或三项打包代替完整回归。
+- FLS [Module 45984836409](https://github.com/liyw0205/fls/actions/runs/45984836409)、[Desktop 45984836381](https://github.com/liyw0205/fls/actions/runs/45984836381)、[EXE 45984836421](https://github.com/liyw0205/fls/actions/runs/45984836421) 全部成功，三个正式 Release job 均核对为 skipped。开发产物分别为 [Module 15191241608](https://github.com/liyw0205/fls/actions/runs/45984836409/artifacts/15191241608)、[Desktop 15191785446](https://github.com/liyw0205/fls/actions/runs/45984836381/artifacts/15191785446)、[EXE 15191216759](https://github.com/liyw0205/fls/actions/runs/45984836421/artifacts/15191216759)，到期均为 2027-02-25 10:45:53 UTC；仅用于隔离实例。
+- APP [Android CI 45985662877](https://github.com/liyw0205/fls-for-android/actions/runs/45985662877) 成功：格式、静态分析、243 项测试、arm64 release APK 构建及 develop 上传通过，正式 Release skipped。[develop APK artifact 15191673420](https://github.com/liyw0205/fls-for-android/actions/runs/45985662877/artifacts/15191673420) 到期于 2026-12-11 10:58:52 UTC，ZIP 为 11,115,296 字节，SHA-256 `23701e264da6d70717196f7c4d45a1060e6c27f46c200243c98b3f38f48068c5`；这是 artifact ZIP 校验值，不是 APK 本体校验值。
+- APP 失败修复保留：`56eba65` 的 [45984919632](https://github.com/liyw0205/fls-for-android/actions/runs/45984919632) 格式/分析成功、240 项测试通过/1 项失败；分页测试通过请求和页面内容断言后，将 Tooltip finder 找到的 RawTooltip 转为 IconButton 导致类型错误。`efa31ba` 按 IconButton 类型及 tooltip 属性查找，保留分页/按钮业务断言，并补部分完成/未知显式重试和当前 401 用例；最终 CI 已验证。
+
+本批手动验收：使用上述 develop APK 和隔离 FLS 候选，从刷新历史进入同一原请求，核对 active 时禁止确认/恢复/重试；查询失败保留已知内容并禁用写入。retry 响应丢失后只查询本次 child ID，失败项响应丢失后按原 task-link ID 查询；超过 100 项失败时逐页查看，翻页失败不开放写入。离页、切面板与 401 不接收旧回包。双 worker 刷新/确认竞争及 HTTP 等待期间编辑缓存仅在隔离数据验证，不以新 ID 重新提交代替核对原请求。记录双方 SHA、步骤、实际/预期和脱敏错误；用户手动反馈不阻塞接续开发。
+
+下一批先关闭上述 Windows 完整回归缺口，再按下方“脚本调试下一批”推进；随后继续任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护、APP 全流程与 B4，再推进 M4-M7。B3、全量原生前端及手动验收均未完成，总 Goal 保持 active，不合并 main、不发正式 Release。
+
+上一任务源同步候选：FLS `b2a0ef700695365d3980bca6bb3ec27dd24c0fcf` / `20261127.29`（149），实现 `05622bd`、`9b34573`，平台修正 `b2a0ef7`；APP `4f4dd2e248a026b00c1e602063cc803f759c4663` / `0.1.64+78`，实现 `c0feec4`。以下保留其历史证据，不替代本批验证。
 
 `task_link.py` 的直接同步、原刷新失败项同步、状态/历史、确认与归档全部 Web/API 接入 `directory_job_operation`；`source_json.py` 的 Web/API 读取与保存同时接入门禁。首次回执前取得真实身份，持有至 HTTP response.close、缓存发布、终态回执与 finally；保存/读取/关闭异常及 owner 强退均不留下假活跃。准备中/执行中可被另一 worker 正确查询；确认与归档先独立认领，再释放受理锁，其他 worker 的重复/交叉动作返回 409。缺失活跃回执仍占 200 条容量，原代理、元数据版本和原刷新身份不可重绑。
 
@@ -57,7 +80,7 @@ Linux 与 Windows 脚本 step 各保留 2 条既有 tar 解包弃用警告。该
 
 本批手动验收：以对应 develop APK 连接隔离 FLS 候选，分别从导入与外部同步历史进入同一 request ID；有 active 时恢复按钮禁用，409 后查询原状态，离页或刷新后的旧响应不能覆盖新结果。两个 worker 同步不同任务时缓存都保留，使用旧 revision 保存源编辑返回冲突并保留草稿。故障/强退仅在隔离数据中复核，未知结果先核对原请求，不以重新安装或新 ID 代替。记录 APP/FLS SHA、面板模式、步骤、实际/预期和脱敏错误；不做 ADB，用户手动反馈不阻塞下一域开发。
 
-下一批优先整源刷新作业的受理/线程/日志与跨 worker 生命周期；共享缓存锁和失败项恢复回执锁不代表整个刷新域完成。随后继续调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护、APP 全流程及 B4，再推进 M4-M7。总 Goal 保持 active，不合并 main、不发布正式 Release。
+该历史检查点之后的整源刷新作业已由本节顶部 `c2da9c7` 接续，不能用历史共享缓存锁和失败项恢复锁代替新作业生命周期证据。当前接续脚本调试及下列 B3 其余范围，再做 B4 和 M4-M7；总 Goal 未完成。
 
 上一独立在线任务导入检查点：FLS `55a007dbb64cfa6361ac01b3512fef64bcda270e` / `20261127.26`（146），实现为 `9f7e4df3154e327e20244486726c80f1be2097d9` / `20261127.25`（145）。该历史批次 APP 代码为 `79bbfab` / `0.1.62+76`，只更新方案，未新增版本或 APK。
 
@@ -318,14 +341,14 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 
 | 收尾项 | 完成条件与证据 |
 | --- | --- |
-| 运行态身份与回滚 | 已剥离归档身份、持久保存搬运清单，启动先恢复目录；`7524b05` 延后 Python 入口写入至原请求确认，`5626ac9` 接入同步脚本文件与 Web 传输保护。硬退出及恢复再次中断已测试；仍需在线安装/调试、任务/日志作业、shell/PowerShell 启动器、Windows 实例锁句柄/断电与多 worker 启动边界 |
+| 运行态身份与回滚 | 已剥离归档身份、持久保存搬运清单，启动先恢复目录；`7524b05` 延后 Python 入口写入至原请求确认，`5626ac9` 接入同步文件/Web 传输，后续已补在线安装/导入/任务源同步及整源刷新。硬退出及恢复再次中断已测试；仍需调试、任务/日志作业、shell/PowerShell 启动器、Windows 实例锁句柄/断电与多 worker 启动边界 |
 | 锁顺序与跨进程互斥 | `5f49679` 统一备份/恢复长作业锁；`7524b05` 接入 JSON、会话/历史 SQLite、验证码和实例锁初始化的短 I/O 门禁，验证连接关闭、线程隔离及真实提交中认证 503。继续其他文件作业、逐域 busy 映射与外部 WAL 状态；本批平台 CI 见上方 |
 | 证据与原请求保留 | 已从持久恢复回执重建 TTL 保护，unknown/待处理依赖不被清理且计入双暂存容量；读取回执字节和历史扫描有上限。每次后续 operation ID 独立保留（最多 16 次），旧 ID 重放不重新执行；到期/内存引用丢失及旧操作重放测试通过，仍需完整容量/损坏/断电故障覆盖 |
 | 依赖资源清理 | 已加带启动门的监管进程：持久保存执行/工作目录身份后才执行 pip；POSIX 不提前回收会话首进程、确认组内非僵尸进程退出后释放，面板进程死亡通过控制管道触发回收；Windows 使用带 KILL_ON_JOB_CLOSE 的命名 Job Object，真实 Actions 已验证启动门、命令父进程先退出和所有者崩溃回收。显式 cleanup 按原操作清理且 GET 零副作用；失败、写盘失败、重启恢复、目录替换、输出读取失败均有回归。仍需多 worker 中持有内存清理句柄的进程协调、全部回执损坏时的维护恢复 |
 | APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
-下一轮核对整源刷新受理/线程/日志入口，再继续调试、任务配置和日志句柄。`b8c8b60` 已补安装 lease/命令监管，`a9c1cc1` 接续在线安装跨 worker 协调，`9f7e4df` 补独立任务导入/安装选择，`05622bd` 与 `9b34573` 补任务源同步和共享缓存/恢复回执协调；不重复开发已验证保护，以实际平台 CI 为准。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部 storage → session，I/O 冲突不反向等待。逐域检查 except 吞 busy，未验证路径不计已接入。
+下一轮先补齐本节顶部 Windows 被总时限中断的完整回归，再处理脚本调试、任务配置和日志句柄。`b8c8b60` 已补安装 lease/命令监管，`a9c1cc1` 接续在线安装跨 worker 协调，`9f7e4df` 补独立任务导入/安装选择，`05622bd` 与 `9b34573` 补任务源同步和共享缓存/恢复回执协调，`c2da9c7` 补整源刷新；不重复开发已验证保护，以各 SHA 的实际平台 CI 为准。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部 storage → session，I/O 冲突不反向等待。逐域检查 except 吞 busy，未验证路径不计已接入。
 
 入口批次的当前状态与退出条件如下；候选实现不代表 B3 全量完成：
 
@@ -333,7 +356,7 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 | --- | --- | --- |
 | 安装选择/独立任务导入 | `9f7e4df` 已补 Web/API 恢复 lease、跨 worker 身份与回执事务、独立恢复认领及在线任务发布合并；新增 10 项 worker/恢复测试 | 后端历史双平台终态见上方；APP `4f4dd2e` 已补 active 按钮禁用、原请求查询与旧回包隔离。用户手动验收待完成，不重复重做候选 |
 | 外部任务源同步 | `05622bd` / `9b34573` 已补全部 Web/API 恢复门禁、真实身份/回执/独立恢复认领、缓存合并和原刷新恢复回执修复协调；APP 同批补活跃动作禁用和原请求查询 | 本批证据见本节顶部；只合并在线源 task_cron，不写 tasks.json 或重载调度器。手动验收待用户，不重复重做候选 |
-| 在线源刷新/日志及源编辑 | 源编辑及刷新缓存发布已共享跨 worker 事务，抓取期间缓存变化拒绝覆盖；`refresh_worker/start_refresh_thread` 和 `refresh.py` 的受理/活跃状态仍基于进程内锁和缓存 | 首次回执/线程交接到日志与清理均持 lease；跨 worker 受理/活跃状态按真实身份与最新回执协调；坏历史/写入失败不重复联网或覆盖源缓存 |
+| 在线源刷新/日志及源编辑 | `c2da9c7` 已补全部入口门禁、首次回执前真实身份、线程/HTTP 关闭/日志清理 lease、跨 worker 回执及独立恢复认领；源编辑/任务源/刷新协调发布 | 本批真实平台结论见本节顶部；APP `efa31ba` 已补可信查询、原 child/task-link ID、失败分页及旧回包/401，隔离面板手动验收待用户 |
 
 实现时纳入现有 import/replay/confirmation/retention、task-link、source-refresh、refresh-log/storage-recovery 及旧 Web 回归，并新增真实独立 worker、HTTP/线程失败释放、恢复竞争和 busy 不被吞的测试。APP 既有入口继续复用；若契约有变化，同批更新 DTO、manager、原生错误与恢复操作，而不以 WebView 代替。完成该批后仍须接续下列 B3 其余范围及 M4-M7。
 
@@ -353,15 +376,25 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 5. 同 ID/同选项复用原安装，选项变化冲突，同脚本和父子重试仲裁；任务补导入、确认和调度器恢复持独立认领。force、原请求恢复和历史容量既有规则保留。
 6. 双真实 worker 覆盖活跃查询、同 ID/父子重试竞争、进度合并、远端停止/失败再试、owner 硬退出、三类恢复认领、旧 ID/缓存与坏历史；既有门禁/交接/失败释放测试保留，Linux/Windows 工作流验证。自动化不替代 APP 用户手动验收。
 
-整源刷新下一批从以下具体入口推进；以下尚未实现，不能据共享缓存保护推断已支持：
+整源刷新在 `c2da9c7` / APP `efa31ba` 已实施以下范围，不再作为下一批待重做事项；平台结论见本节顶部：
 
-1. `refresh.py` 的 options、首次提交、retry/recover/confirm、全局/按请求状态、历史与失败项分页，`logs.py` 的 Web/API refresh-log，以及 `pages.py` 的在线脚本页刷新状态/历史读取全部接恢复门禁。受理请求与后台线程分别持 lease，覆盖首次回执、线程交接、HTTP 关闭、缓存/失败明细发布、终态日志与 finally；构造/start 失败释放独立资源。`pages.py` 与日志入口现有 broad except 须保留 busy 状态，不能把恢复占用吞成空历史或普通错误页面。
-2. `constants.py` 的 `reserve_online_refresh/get_online_refresh_submission/claim_online_refresh_retry` 以跨 worker 受理和真实存活身份协调，首次落盘前认领，沿原 ID 查询；owner 强退后保留 unknown，不靠另一 worker 的空内存判定失败或再次联网。同请求代理/源/缓存绑定、单活动刷新、父子重试、200 条历史链和 snapshot 分页全部保留。
-3. 刷新 current/history/失败明细及双份恢复副本的所有读改写明确共享顺序；已经存在的 `source_cache_transaction` 与 `task_link_receipt_transaction` 继续复用，不能在身份锁内反向等待缓存或受理。网络等待不持 storage。另一 worker 的恢复/新终态优先于旧 owner 内存；查询修复不得覆盖更新后的代次或吞 busy。
-4. recover/confirm/retry 独立认领原请求；状态/历史/日志查询不重新联网，保留旧 Web 回执修复语义和 APP 原 ID 恢复。APP 刷新页补 active/忙碌禁用、409 后只读查询、旧回包隔离、切页与 401；如增加字段，按可选严格类型兼容旧面板，不复用任务源同步状态冒充整源刷新状态。
-5. 新增真实双 worker、首次回执/线程交接/HTTP 关闭/日志故障、写前写后失败、强退、同时首次提交与父子重试、确认/恢复竞争、容量/坏历史、缓存编辑竞争和旧回包回归。保留现有刷新/日志/存储恢复及 Web 测试，递增实际修改仓库版本并取得对应平台 CI/APK，手动验收单列。
+1. `refresh.py` 全部 options/提交/retry/recover/confirm/状态/历史/失败分页、`logs.py` 的 Web/API 日志及 `pages.py` 状态/历史接入恢复门禁。请求和线程分别持 lease，覆盖初次回执到 HTTP 关闭、发布、终态日志/finally；构造/start/保存/busy 失败释放身份。
+2. `constants.py` 以 `REFRESH_IDENTITIES` 协调 reserve/retry/状态/历史，落盘前认领，owner 强退只保留原 ID unknown。保留代理/源/缓存绑定、单活动刷新、父子重试、200 条链及 snapshot，缺失回执的活跃身份仍占容量。
+3. current/history/失败明细使用 storage → 缓存 → 刷新身份 → task-link 身份的短事务；旧 owner 更新核对 expected ID，磁盘已有新终态时不保留旧诊断。首次抓取及重试均核对受理和发布时的缓存指纹；网络等待不持事务。
+4. confirm/recover 独立认领并保留旧 Web 修复语义，状态/历史/日志 GET 不联网。可选 active 覆盖清理阶段，APP 可信状态/查询代次阻止忙碌/未知查询时写入；409/失联只查原 ID，旧回包和 401 隔离。
+5. APP retry 先保留 child ID，单失败项先保留 task-link ID；响应丢失只查对应原请求。失败明细使用 100 项分页并校验 request/offset/digest/total；可兼容旧状态响应没有 ok/active，不借任务源状态冒充整源刷新。
+6. 新增 11 项后端 worker/故障、9 项 Widget、3 项 manager 回归；保留旧 Web/刷新/日志/存储恢复测试及真实双进程验证。两仓已递增版本并推送 develop，真实面板与设备仍待用户手动验收；跨 APP 进程保留 ID 的统一实现属于 M5。
 
-已核对的下一批根因：`get_online_refresh_state()` 目前仅因从磁盘载入 running 回执便转成未知，`start_refresh_thread()` 直接启动 daemon 线程；这不能区分其他 worker 正在执行与 owner 已退出。下一批先以真实身份覆盖首次回执和线程交接，再迁移这些读取/恢复逻辑，不能仅给持久化函数加文件锁便认定完成。APP `_RefreshJobViewState` 也还没有查询代次或状态可信标记，查询失败会保留旧操作，动作失败只显示错误；按前述第 4 步同时修正。整源 retry 在发送前保留 child request ID，失联后查询 child；失败项同步查询原 task-link ID，均不得自动再发 POST。大于首屏的失败项使用现有分页 API，核对原刷新身份后继续加载。
+#### 脚本调试下一批
+
+先调整或拆分 Windows Native 回归的总时限并取得完整通过证据，不删减原有用例；流程改动也在 develop 提交，记录新 SHA 与原代码候选的关系。以下是随后脚本调试的实现任务，来自只读调研，当前候选尚未支持：
+
+1. 从 `fls_manager/routes/scripts/debug.py`、`native_debug.py` 及实际 Web 调试/停止/日志页面追踪起止；`SCRIPT_DEBUG_LOCK/RUNNING` 仍是进程内，`_debug_rows` 将另一 worker 的 running 误判 unknown，`load_script_debug_runs` 可能在读取时写回并吞异常。先定义跨 worker 受理、回执/真实身份及只读原提交查询；保留 Web 兼容，原生 GET 不启动、停止或修复作业。
+2. 所有 Web/API 启动、停止、状态/历史/日志入口先接恢复门禁；首次回执前认领身份，请求与后台分别持 lease。`_start_script_debug_run` 当前直接 `Popen`、打开 log 并启动裸 watch 线程，需复用既有 `DirectoryProcess`/`start_directory_job` 监管，覆盖启动门、真实进程树结束、输出/日志关闭、终态回执及 finally；线程/日志/持久化失败不遗留进程或假终态。
+3. 启动沿 request ID 幂等并绑定脚本，两个 worker 同 ID 不得启动两次；身份到执行交接无空档，缺失/损坏活跃回执不开放重复执行。回执/容量/未知/本地诊断以最新磁盘与真实身份协调，不能由旧内存覆盖新终态。核对 `TASKS_MUTATION_LOCK` 到 storage/回执的顺序；网络、命令等待和进程清理不长期持模型锁。
+4. 停止先持久保存原作业的停止意图，再由 owner/监管消费；非 owner worker 不凭 PID 发信号，也不因没有本地句柄就假报已停止。保存失败零信号，停止受理与整树实际退出分开；停止失败仍活跃可显式再试。owner 强退后须等监管清理整树、关闭日志再允许目录恢复；失联只查原请求，不自动启动新调试。
+5. 复用 APP `PanelScriptDebugView`、`PanelScriptDebugManager` 与 DTO。现有启动失联仅保留 pending ID，下一批补真正的只读原提交查询 API/入口；查询失败禁用写入、动作与轮询隔离代次、停止丢响应只 GET 原 run。可选新字段严格兼容旧面板，覆盖当前/迟到 401、返回历史、切面板、同 ID 错响应及原 run 绑定；不抓 Web HTML。
+6. 新增真实双 worker、首次保存/线程交接/日志关闭失败、并发相同 ID、跨 worker 停止、停止保存失败、owner 强退、命令父进程先退出而子进程仍在及恢复竞争；保留现有调试/文件/改名/Web 回归。取得 Linux/Windows 和 APP 对应 CI/APK，记录精确配对 SHA，再接任务/日志域；手动验收单列，不据一域完成关闭 B3。
 
 随后处理 `RESTORE_DEPENDENCY_CLEANUP` 仅在所属 worker 内存中的句柄：其他 worker 不能因只看到持久身份就提前释放原 owner 的 lease，也不能跳过仍在读输出的线程。全部恢复回执损坏时须保留可核验维护入口，查询不执行修复。APP 再覆盖原生备份页嵌套 401/重登、切换面板、旧回包及任务/概览刷新；这些是后续实现任务，当前检查点不证明已支持。
 
@@ -445,7 +478,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 最新任务源同步候选 FLS `b2a0ef7` / `20261127.29`、APP `4f4dd2e` / `0.1.64+78`，沿用安装/独立导入、文件/Web 传输、三域跨 worker、I/O 门禁和目录现场；本批补同步身份/回执/恢复与共享缓存发布、APP 活跃操作禁用及原请求查询，实际 CI/APK 见上方。继续整源刷新作业、调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 最新整源刷新候选 FLS `c2da9c7` / `20261127.30`、APP `efa31ba` / `0.1.67+81`，沿用安装/独立导入/任务源同步、文件/Web 传输、I/O 门禁和目录现场；本批补整源刷新身份/回执/恢复、APP 可信状态/原 child 与 task-link ID 查询及失败分页，实际 CI/APK 见上方。继续调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
