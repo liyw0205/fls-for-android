@@ -114,6 +114,7 @@ class _RefreshTabState extends State<_RefreshTab> {
         proxyId: _proxyId,
       );
       final acceptedId = result['request_id']?.toString() ?? requestId;
+      if (acceptedId != requestId) throw const FormatException('刷新响应身份不一致');
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -131,10 +132,11 @@ class _RefreshTabState extends State<_RefreshTab> {
         await _expire(error, routesToClose: 1);
       } else if (error is PanelApiException &&
           (error.statusCode == null ||
+              error.statusCode == 409 ||
               error.statusCode! >= 500 ||
               error.data?['accepted'] == true ||
               error.data?['replayed'] == true)) {
-        final existingId = error.data?['request_id']?.toString() ?? requestId;
+        final existingId = requestId;
         if (_validRequestId(existingId)) {
           await Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
@@ -308,7 +310,16 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
   String _log = '';
   String? _error;
   bool _busy = false;
-  bool _receiptMissing = false;
+  bool _trusted = false;
+  bool _querying = false;
+  int _generation = 0;
+  int _failureOffset = 0;
+  List<Map> _failures = const [];
+  String? _pendingRetryId;
+  final Map<String, String> _pendingTasks = {};
+
+  bool get _active => _state?['active'] == true || _state?['running'] == true;
+  bool get _canAct => !_busy && !_querying && _trusted && !_active;
 
   @override
   void initState() {
@@ -318,32 +329,60 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
 
   @override
   void dispose() {
+    _generation++;
     _timer?.cancel();
     super.dispose();
   }
 
-  Future<void> _poll() async {
+  Future<void> _poll({int? failureOffset}) async {
     _timer?.cancel();
+    final generation = ++_generation;
+    setState(() {
+      _querying = true;
+      _trusted = false;
+    });
     try {
       final state = await widget.manager.fetchRefreshState(widget.requestId);
+      if (!mounted || generation != _generation) return;
       String log = _log;
       try {
         log = await widget.manager.fetchRefreshLog(widget.requestId);
       } on PanelApiException catch (error) {
         if (error.statusCode == 401) rethrow;
       }
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
+      var offset = failureOffset ?? _failureOffset;
+      final total = state['task_link_failure_count'];
+      if (total is int && offset >= total) offset = 0;
+      var failures = state['task_link_failures'];
+      if (offset > 0) {
+        final page = await widget.manager.fetchRefreshTaskLinkFailures(
+          widget.requestId,
+          offset: offset,
+        );
+        if (page['digest'] != state['task_link_failure_digest'] ||
+            page['total'] != total) {
+          throw const FormatException('失败项已变化，请重新读取第一页。');
+        }
+        failures = page['items'];
+      }
+      if (!mounted || generation != _generation) return;
       setState(() {
         _state = state;
         _log = log;
         _error = null;
-        _receiptMissing = false;
+        _trusted = true;
+        _querying = false;
+        _failureOffset = offset;
+        _failures = failures is List
+            ? failures.whereType<Map>().toList()
+            : const [];
       });
-      if (state['running'] == true) {
+      if (state['running'] == true || state['active'] == true) {
         _timer = Timer(const Duration(seconds: 2), _poll);
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       if (error is PanelApiException && error.statusCode == 401) {
         await widget.onUnauthorized(error);
         if (mounted) Navigator.of(context).pop();
@@ -351,14 +390,17 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
       }
       setState(() {
         _error = error.toString();
-        _receiptMissing = error is PanelApiException && error.statusCode == 404;
+        _querying = false;
+        _trusted = false;
       });
       _timer = Timer(const Duration(seconds: 5), _poll);
     }
   }
 
   Future<void> _action(String action) async {
-    if (_busy) return;
+    if (!_canAct) return;
+    _timer?.cancel();
+    _generation++;
     setState(() => _busy = true);
     try {
       switch (action) {
@@ -377,6 +419,7 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
         if (mounted) Navigator.of(context).pop();
       } else {
         setState(() => _error = error.toString());
+        await _poll();
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -384,7 +427,7 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
   }
 
   Future<void> _retryRefresh() async {
-    if (_busy) return;
+    if (!_canAct || _pendingRetryId != null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -402,9 +445,12 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || !_canAct) return;
+    _timer?.cancel();
+    _generation++;
     setState(() => _busy = true);
     final retryId = PanelOnlineScriptsManager.newRequestId();
+    _pendingRetryId = retryId;
     try {
       final result = await widget.manager.retryRefresh(
         requestId: widget.requestId,
@@ -412,6 +458,7 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
         proxyId: _state?['proxy_id']?.toString() ?? '',
       );
       final acceptedId = result['request_id']?.toString() ?? retryId;
+      if (acceptedId != retryId) throw const FormatException('重试响应身份不一致');
       if (!mounted || !_validRequestId(acceptedId)) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -430,6 +477,7 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
         if (mounted) Navigator.of(context).pop();
       } else {
         setState(() => _error = error.toString());
+        await _openPending(retryId, task: false);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -437,7 +485,12 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
   }
 
   Future<void> _retryTaskFailure(Map failure) async {
-    if (_busy) return;
+    if (!_canAct ||
+        _pendingTasks.containsKey(failure['task_link_request_id']) ||
+        failure['recovery_error'] != null ||
+        failure['recovery'] != null) {
+      return;
+    }
     final scriptId = failure['script_id']?.toString() ?? '';
     final requestId = failure['task_link_request_id']?.toString() ?? '';
     final originId = _state?['request_id']?.toString() ?? widget.requestId;
@@ -448,6 +501,9 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
       return;
     }
     setState(() => _busy = true);
+    _timer?.cancel();
+    _generation++;
+    _pendingTasks[requestId] = failure['name']?.toString() ?? scriptId;
     try {
       final result = await widget.manager.linkTasks(
         scriptId: scriptId,
@@ -456,6 +512,7 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
         refreshRequestId: originId,
       );
       final acceptedId = result['request_id']?.toString() ?? requestId;
+      if (acceptedId != requestId) throw const FormatException('任务源响应身份不一致');
       if (!mounted || !_validRequestId(acceptedId)) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -475,23 +532,45 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
         if (mounted) Navigator.of(context).pop();
       } else {
         setState(() => _error = error.toString());
+        await _openPending(requestId, task: true);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
+  Future<void> _openPending(String requestId, {required bool task}) async {
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => task
+            ? _TaskHistoryOperationView(
+                manager: widget.manager,
+                requestId: requestId,
+                taskImport: false,
+                onUnauthorized: widget.onUnauthorized,
+              )
+            : _RefreshJobView(
+                manager: widget.manager,
+                requestId: requestId,
+                onUnauthorized: widget.onUnauthorized,
+              ),
+      ),
+    );
+    if (mounted) await _poll();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = _state;
-    final failures = state?['task_link_failures'];
+    final failures = _failures;
     return Scaffold(
       appBar: AppBar(
         title: const Text('脚本源同步状态'),
         actions: [
           IconButton(
             tooltip: '刷新状态',
-            onPressed: _poll,
+            onPressed: _busy || _querying ? null : _poll,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -499,10 +578,16 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (_querying) const LinearProgressIndicator(minHeight: 2),
           if (_error != null)
             MaterialBanner(
               content: Text(_error!),
-              actions: [TextButton(onPressed: _poll, child: const Text('重试'))],
+              actions: [
+                TextButton(
+                  onPressed: _busy || _querying ? null : _poll,
+                  child: const Text('查询原请求'),
+                ),
+              ],
             ),
           Text(
             state?['status']?.toString() ?? '正在读取状态',
@@ -537,28 +622,47 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (_receiptMissing || state?['receipt_missing'] == true)
+              if (state?['persistence_recovery'] is Map ||
+                  state?['receipt_missing'] == true)
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _action('recover'),
+                  onPressed: _canAct ? () => _action('recover') : null,
                   icon: const Icon(Icons.healing),
                   label: const Text('修复回执'),
                 ),
               if (state?['status'] == '结果未知' || state?['status'] == 'unknown')
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _action('confirm'),
+                  onPressed: _canAct ? () => _action('confirm') : null,
                   icon: const Icon(Icons.fact_check_outlined),
                   label: const Text('核对结果'),
                 ),
               if (state?['running'] != true &&
                   const {'失败', '启动失败'}.contains(state?['status']))
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : _retryRefresh,
+                  onPressed: _canAct && _pendingRetryId == null
+                      ? _retryRefresh
+                      : null,
                   icon: const Icon(Icons.replay),
                   label: const Text('重试同步'),
                 ),
+              if (_pendingRetryId != null)
+                OutlinedButton.icon(
+                  onPressed: _busy || _querying
+                      ? null
+                      : () => _openPending(_pendingRetryId!, task: false),
+                  icon: const Icon(Icons.search),
+                  label: const Text('查询本次重试'),
+                ),
+              for (final pending in _pendingTasks.entries)
+                OutlinedButton.icon(
+                  onPressed: _busy || _querying
+                      ? null
+                      : () => _openPending(pending.key, task: true),
+                  icon: const Icon(Icons.search),
+                  label: Text('查询任务源：${pending.value}'),
+                ),
             ],
           ),
-          if (failures is List && failures.isNotEmpty) ...[
+          if (failures.isNotEmpty) ...[
             const SizedBox(height: 20),
             Text('外部任务源失败', style: Theme.of(context).textTheme.titleMedium),
             for (final failure in failures.whereType<Map>())
@@ -569,10 +673,49 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
                 subtitle: const Text('外部任务源同步失败，可用原请求安全重试。'),
                 trailing: IconButton(
                   tooltip: '重试此任务源',
-                  onPressed: _busy ? null : () => _retryTaskFailure(failure),
+                  onPressed:
+                      _canAct &&
+                          !_pendingTasks.containsKey(
+                            failure['task_link_request_id'],
+                          ) &&
+                          failure['recovery_error'] == null &&
+                          failure['recovery'] == null
+                      ? () => _retryTaskFailure(failure)
+                      : null,
                   icon: const Icon(Icons.sync),
                 ),
               ),
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '上一页失败项',
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: _busy || _querying || _failureOffset == 0
+                      ? null
+                      : () => _poll(
+                          failureOffset: (_failureOffset - 100).clamp(0, 5000),
+                        ),
+                ),
+                Expanded(
+                  child: Text(
+                    '${_failureOffset + 1}-${_failureOffset + failures.length} / ${state?['task_link_failure_count'] ?? failures.length}',
+                  ),
+                ),
+                IconButton(
+                  tooltip: '下一页失败项',
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed:
+                      _busy ||
+                          _querying ||
+                          !_trusted ||
+                          state?['task_link_failure_count'] is! int ||
+                          _failureOffset + failures.length >=
+                              (state!['task_link_failure_count'] as int)
+                      ? null
+                      : () => _poll(failureOffset: _failureOffset + 100),
+                ),
+              ],
+            ),
           ],
           const SizedBox(height: 20),
           Text('同步日志', style: Theme.of(context).textTheme.titleMedium),

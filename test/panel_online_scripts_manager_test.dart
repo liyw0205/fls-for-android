@@ -14,6 +14,85 @@ void main() {
   const snapshot =
       'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
+  test(
+    'refresh state rejects a different request and malformed active flags',
+    () async {
+      for (final change in <Map<String, dynamic>>[
+        {'request_id': historyId},
+        {'active': 'true'},
+        {'running': 1},
+      ]) {
+        final api = PanelApiClient(
+          baseUrl: 'https://fls.example',
+          client: MockClient(
+            (_) async => utf8Response(
+              jsonEncode({
+                'request_id': requestId,
+                'status': '运行中',
+                'running': true,
+                ...change,
+              }),
+              200,
+            ),
+          ),
+        );
+        try {
+          await expectLater(
+            PanelOnlineScriptsManager(api).fetchRefreshState(requestId),
+            throwsA(isA<PanelApiException>()),
+          );
+        } finally {
+          api.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'refresh failure pages bind request, offset, digest and bounds',
+    () async {
+      final page = <String, dynamic>{
+        'ok': true,
+        'request_id': requestId,
+        'offset': 100,
+        'total': 101,
+        'digest': snapshot,
+        'items': [
+          {'script_id': 'last'},
+        ],
+        'has_more': false,
+      };
+      for (final change in <Map<String, dynamic>>[
+        {},
+        {'request_id': historyId},
+        {'offset': 0},
+        {'total': 100},
+        {'digest': 'invalid'},
+        {'has_more': 'false'},
+      ]) {
+        final api = PanelApiClient(
+          baseUrl: 'https://fls.example',
+          client: MockClient((request) async {
+            expect(request.url.queryParameters['offset'], '100');
+            return utf8Response(jsonEncode({...page, ...change}), 200);
+          }),
+        );
+        try {
+          final future = PanelOnlineScriptsManager(
+            api,
+          ).fetchRefreshTaskLinkFailures(requestId, offset: 100);
+          if (change.isEmpty) {
+            expect((await future)['items'], page['items']);
+          } else {
+            await expectLater(future, throwsA(isA<PanelApiException>()));
+          }
+        } finally {
+          api.close();
+        }
+      }
+    },
+  );
+
   test('redacts secrets from script diagnostics', () {
     final safe = PanelOnlineScriptsManager.sanitizeDiagnostic(
       'https://source.example/tasks.json?token=secret-value&mode=1 '

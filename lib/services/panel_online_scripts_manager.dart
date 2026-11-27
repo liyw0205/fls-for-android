@@ -57,7 +57,14 @@ class PanelOnlineScriptsManager {
 
   Future<Map<String, dynamic>> fetchRefreshState(String requestId) async {
     final path = '/api/online-scripts/refresh-status/${_segment(requestId)}';
-    return _readMap(await _api.getJson(path), path);
+    final state = _readMap(await _api.getJson(path), path);
+    if (state['request_id'] != requestId ||
+        state['status'] is! String ||
+        state['running'] is! bool ||
+        (state.containsKey('active') && state['active'] is! bool)) {
+      throw PanelApiException('刷新状态身份或字段无效', path: path);
+    }
+    return state;
   }
 
   Future<Map<String, dynamic>> fetchRefreshHistory({
@@ -122,7 +129,23 @@ class PanelOnlineScriptsManager {
       '/api/online-scripts/refresh-task-link-failures/${_segment(requestId)}',
       {'limit': '$limit', 'offset': '$offset'},
     );
-    return _readMap(await _api.getJson(path), path);
+    final page = _readMap(await _api.getJson(path), path);
+    final total = page['total'];
+    final items = page['items'];
+    if (page['request_id'] != requestId ||
+        page['offset'] != offset ||
+        total is! int ||
+        total < 0 ||
+        total > 5000 ||
+        page['digest'] is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(page['digest'] as String) ||
+        items is! List ||
+        items.length > limit ||
+        offset + items.length > total ||
+        page['has_more'] is! bool) {
+      throw PanelApiException('刷新失败项分页响应无效', path: path);
+    }
+    return page;
   }
 
   Future<Map<String, dynamic>> recoverRefresh(String requestId) =>
