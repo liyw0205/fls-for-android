@@ -41,8 +41,27 @@ PanelApiClient apiFor(Future<http.Response> Function(http.Request) handler) =>
       client: panelMockClient(handler),
     );
 
-http.Response logResponse(String text) =>
-    utf8Response(jsonEncode({'ok': true, 'task_id': 'a', 'log': text}), 200);
+http.Response logResponse(String text, {String id = 'a'}) =>
+    utf8Response(jsonEncode({'ok': true, 'task_id': id, 'log': text}), 200);
+
+class _ObservedTasksManager extends PanelTasksManager {
+  _ObservedTasksManager(super.api);
+
+  bool detailSettled = false;
+  Object? detailError;
+
+  @override
+  Future<PanelTaskDetail> fetchTaskDetail(String taskId) async {
+    try {
+      return await super.fetchTaskDetail(taskId);
+    } catch (error) {
+      detailError = error;
+      rethrow;
+    } finally {
+      detailSettled = true;
+    }
+  }
+}
 
 Widget page(
   PanelTasksManager manager,
@@ -114,24 +133,37 @@ void main() {
   ) async {
     final oldResponse = Completer<http.Response>();
     var unauthorized = 0;
-    final oldApi = apiFor((request) => oldResponse.future);
+    var oldReads = 0;
+    final oldApi = apiFor((request) {
+      oldReads++;
+      return oldResponse.future;
+    });
+    final oldManager = _ObservedTasksManager(oldApi);
     final newApi = apiFor(
       (request) async => request.url.path.endsWith('/log')
-          ? logResponse('new output')
+          ? logResponse('new output', id: 'b')
           : utf8Response(jsonEncode(detail('stopped', id: 'b')), 200),
     );
     addTearDown(oldApi.close);
     addTearDown(newApi.close);
     Future<void> expired(Object _) async => unauthorized++;
-    await tester.pumpWidget(page(PanelTasksManager(oldApi), expired));
-    await tester.pump();
+    await tester.pumpWidget(page(oldManager, expired));
+    await pumpUntil(tester, () => oldReads == 1);
     await tester.pumpWidget(page(PanelTasksManager(newApi), expired, id: 'b'));
     await pumpUntilFound(tester, find.text('已停止'));
+    await pumpUntil(
+      tester,
+      () => find.byType(CircularProgressIndicator).evaluate().isEmpty,
+    );
     oldResponse.complete(utf8Response('{"ok":false,"msg":"expired"}', 401));
+    await pumpUntil(tester, () => oldManager.detailSettled);
     await tester.pumpAndSettle();
+    expect(oldManager.detailError, isA<PanelApiException>());
+    expect((oldManager.detailError as PanelApiException).statusCode, 401);
     expect(find.text('task b.py'), findsOneWidget);
     expect(find.text('task a.py'), findsNothing);
     expect(unauthorized, 0);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('current polling 401 hides content and stops further reads', (
