@@ -227,4 +227,211 @@ void main() {
     expect(find.textContaining('token=[已隐藏]'), findsOneWidget);
     expect(find.textContaining('private-value'), findsNothing);
   });
+
+  for (final taskImport in [true, false]) {
+    final kind = taskImport ? 'import-tasks' : 'task-link';
+    const requestId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    Map<String, dynamic> record({
+      bool active = false,
+      String state = 'unknown',
+    }) => {
+      'ok': true,
+      'request_id': requestId,
+      'script_id': 'demo',
+      'state': state,
+      'active': active,
+      'retry_allowed': true,
+      'receipt_confirmation_required': true,
+      'scheduler_reload_required': true,
+    };
+
+    testWidgets('$kind disables recovery while another worker is active', (
+      tester,
+    ) async {
+      var writes = 0;
+      final api = PanelApiClient(
+        baseUrl: 'https://fls.example',
+        client: MockClient((request) async {
+          if (request.method != 'GET') writes++;
+          return utf8Response(
+            jsonEncode(
+              request.url.path.endsWith('-history')
+                  ? {
+                      'ok': true,
+                      'items': [record(active: true)],
+                    }
+                  : record(active: true),
+            ),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      await openTaskOperation(tester, api, taskImport: taskImport);
+      for (final label in ['核对原请求', '继续原请求', if (taskImport) '重新加载调度器']) {
+        final button = find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+        );
+        expect(tester.widget<ButtonStyleButton>(button).onPressed, isNull);
+      }
+      expect(find.text('归档记录'), findsNothing);
+      expect(writes, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets(
+      '$kind queries original request after 409 and ignores an older 401',
+      (tester) async {
+        var reads = 0;
+        var writes = 0;
+        var unauthorized = 0;
+        final oldResponse = Completer<void>();
+        final api = PanelApiClient(
+          baseUrl: 'https://fls.example',
+          client: MockClient((request) async {
+            if (request.url.path.endsWith('-history')) {
+              return utf8Response(
+                jsonEncode({
+                  'ok': true,
+                  'items': [record()],
+                }),
+                200,
+              );
+            }
+            if (request.method == 'POST') {
+              writes++;
+              expect(
+                request.url.path,
+                '/api/online-scripts/$kind-confirm/$requestId',
+              );
+              return utf8Response(
+                '{"ok":false,"msg":"原操作仍在处理中","active":true}',
+                409,
+              );
+            }
+            reads++;
+            expect(
+              request.url.path,
+              '/api/online-scripts/$kind-status/$requestId',
+            );
+            if (reads == 2) {
+              await oldResponse.future;
+              return utf8Response(
+                '{"ok":false,"msg":"expired old response"}',
+                401,
+              );
+            }
+            return utf8Response(
+              jsonEncode(
+                reads == 1
+                    ? record()
+                    : {
+                        'ok': true,
+                        'request_id': requestId,
+                        'script_id': 'demo',
+                        'state': 'completed',
+                      },
+              ),
+              200,
+            );
+          }),
+        );
+        addTearDown(api.close);
+        await openTaskOperation(
+          tester,
+          api,
+          taskImport: taskImport,
+          onUnauthorized: (_) async {
+            unauthorized++;
+          },
+        );
+        await tester.tap(find.byTooltip('刷新状态'));
+        await pumpUntil(tester, () => reads == 2);
+        await tester.tap(find.text('核对原请求'));
+        await pumpUntilFound(tester, find.text('completed'));
+        expect(reads, 3);
+        expect(writes, 1);
+        oldResponse.complete();
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+        await tester.pump();
+        expect(find.text('completed'), findsOneWidget);
+        expect(unauthorized, 0);
+        expect(writes, 1);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets(
+      '$kind exits nested operation on a current unauthorized response',
+      (tester) async {
+        var unauthorized = 0;
+        final api = PanelApiClient(
+          baseUrl: 'https://fls.example',
+          client: MockClient((request) async {
+            if (request.url.path.endsWith('-history')) {
+              return utf8Response(
+                jsonEncode({
+                  'ok': true,
+                  'items': [record()],
+                }),
+                200,
+              );
+            }
+            return utf8Response('{"ok":false,"msg":"session expired"}', 401);
+          }),
+        );
+        addTearDown(api.close);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: PanelOnlineScriptTaskHistoryView(
+                manager: PanelOnlineScriptsManager(api),
+                onUnauthorized: (_) async {
+                  unauthorized++;
+                },
+              ),
+            ),
+          ),
+        );
+        if (!taskImport) {
+          await tester.tap(find.text('外部任务同步'));
+        }
+        await pumpUntilFound(tester, find.text('demo'));
+        await tester.tap(find.text('demo'));
+        await pumpUntil(tester, () => unauthorized == 1);
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('刷新状态'), findsNothing);
+        expect(find.byTooltip('刷新记录'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+}
+
+Future<void> openTaskOperation(
+  WidgetTester tester,
+  PanelApiClient api, {
+  required bool taskImport,
+  Future<void> Function(Object)? onUnauthorized,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: PanelOnlineScriptTaskHistoryView(
+          manager: PanelOnlineScriptsManager(api),
+          onUnauthorized: onUnauthorized ?? (_) async {},
+        ),
+      ),
+    ),
+  );
+  await pumpUntilFound(tester, find.text('demo'));
+  if (!taskImport) {
+    await tester.tap(find.text('外部任务同步'));
+    await pumpUntilFound(tester, find.text('demo'));
+  }
+  await tester.tap(find.text('demo'));
+  await pumpUntilFound(tester, find.text('核对原请求'));
 }

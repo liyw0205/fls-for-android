@@ -1045,6 +1045,8 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
   Map<String, dynamic>? _record;
   String? _error;
   bool _busy = false;
+  bool _stateCurrent = false;
+  int _readGeneration = 0;
 
   @override
   void initState() {
@@ -1058,36 +1060,54 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({String? actionError}) async {
     _timer?.cancel();
+    final generation = ++_readGeneration;
     try {
       final record = widget.taskImport
           ? await widget.manager.fetchTaskImportState(widget.requestId)
           : await widget.manager.fetchTaskLinkState(widget.requestId);
-      if (!mounted) return;
+      if (!mounted || generation != _readGeneration) return;
       setState(() {
         _record = record;
-        _error = null;
+        _stateCurrent = true;
+        _error = actionError;
       });
       if (record['active'] == true || record['state'] == 'running') {
         _timer = Timer(const Duration(seconds: 2), _load);
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _readGeneration) return;
       if (error is PanelApiException && error.statusCode == 401) {
         await widget.onUnauthorized(error);
         if (mounted) Navigator.of(context).pop();
         return;
       }
-      setState(() => _error = error.toString());
+      setState(() {
+        _stateCurrent = false;
+        _error = error.toString();
+      });
       _timer = Timer(const Duration(seconds: 5), _load);
     }
   }
 
   Future<void> _action(String action) async {
     final record = _record;
-    if (record == null || _busy) return;
-    setState(() => _busy = true);
+    if (record == null ||
+        _busy ||
+        !_stateCurrent ||
+        record['active'] == true ||
+        record['archived'] == true ||
+        record['state'] == 'running' ||
+        record['state'] == 'prepared') {
+      return;
+    }
+    _timer?.cancel();
+    _readGeneration++;
+    setState(() {
+      _busy = true;
+      _stateCurrent = false;
+    });
     try {
       switch (action) {
         case 'confirm':
@@ -1138,7 +1158,7 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
         await widget.onUnauthorized(error);
         if (mounted) Navigator.of(context).pop();
       } else {
-        setState(() => _error = error.toString());
+        await _load(actionError: error.toString());
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -1149,6 +1169,12 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
   Widget build(BuildContext context) {
     final record = _record;
     final status = record?['state']?.toString() ?? '读取中';
+    final canAct =
+        _stateCurrent &&
+        record?['active'] != true &&
+        record?['archived'] != true &&
+        status != 'running' &&
+        status != 'prepared';
     final canConfirm =
         record?['receipt_confirmation_required'] == true || status == 'unknown';
     final canReload =
@@ -1168,7 +1194,7 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
         actions: [
           IconButton(
             tooltip: '刷新状态',
-            onPressed: _load,
+            onPressed: _busy ? null : _load,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -1178,8 +1204,15 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
         children: [
           if (_error != null)
             MaterialBanner(
-              content: Text(_error!),
-              actions: [TextButton(onPressed: _load, child: const Text('重试'))],
+              content: Text(
+                PanelOnlineScriptsManager.sanitizeDiagnostic(_error!),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: _busy ? null : _load,
+                  child: const Text('重试'),
+                ),
+              ],
             ),
           Text(status, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
@@ -1211,25 +1244,25 @@ class _TaskHistoryOperationViewState extends State<_TaskHistoryOperationView> {
             children: [
               if (canConfirm)
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _action('confirm'),
+                  onPressed: _busy || !canAct ? null : () => _action('confirm'),
                   icon: const Icon(Icons.fact_check_outlined),
                   label: const Text('核对原请求'),
                 ),
               if (canReload)
                 FilledButton.tonalIcon(
-                  onPressed: _busy ? null : () => _action('reload'),
+                  onPressed: _busy || !canAct ? null : () => _action('reload'),
                   icon: const Icon(Icons.sync),
                   label: const Text('重新加载调度器'),
                 ),
               if (canRetry)
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _action('retry'),
+                  onPressed: _busy || !canAct ? null : () => _action('retry'),
                   icon: const Icon(Icons.replay),
                   label: const Text('继续原请求'),
                 ),
               if (canArchive)
                 TextButton.icon(
-                  onPressed: _busy ? null : () => _confirmArchive(),
+                  onPressed: _busy || !canAct ? null : () => _confirmArchive(),
                   icon: const Icon(Icons.archive_outlined),
                   label: const Text('归档记录'),
                 ),
