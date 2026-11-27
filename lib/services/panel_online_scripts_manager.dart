@@ -57,8 +57,9 @@ class PanelOnlineScriptsManager {
 
   Future<Map<String, dynamic>> fetchRefreshState(String requestId) async {
     final path = '/api/online-scripts/refresh-status/${_segment(requestId)}';
-    final state = _readMap(await _api.getJson(path), path);
-    if (state['request_id'] != requestId ||
+    final state = _readMap(await _api.getJson(path), path, requireOk: false);
+    if (state['ok'] == false ||
+        state['request_id'] != requestId ||
         state['status'] is! String ||
         state['running'] is! bool ||
         (state.containsKey('active') && state['active'] is! bool)) {

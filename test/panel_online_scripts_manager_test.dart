@@ -15,6 +15,35 @@ void main() {
       'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
   test(
+    'refresh state accepts the existing receipt without an ok or active field',
+    () async {
+      final api = PanelApiClient(
+        baseUrl: 'https://fls.example',
+        client: MockClient(
+          (_) async => utf8Response(
+            jsonEncode({
+              'request_id': requestId,
+              'status': '失败',
+              'running': false,
+            }),
+            200,
+          ),
+        ),
+      );
+      try {
+        expect(
+          (await PanelOnlineScriptsManager(
+            api,
+          ).fetchRefreshState(requestId))['status'],
+          '失败',
+        );
+      } finally {
+        api.close();
+      }
+    },
+  );
+
+  test(
     'refresh state rejects a different request and malformed active flags',
     () async {
       for (final change in <Map<String, dynamic>>[
