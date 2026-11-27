@@ -473,6 +473,10 @@ class PanelApiClient {
           if (uri.path.startsWith('/api/env/') && body is Map)
             for (final key in ['value', 'env_text'])
               if (body[key] is String) body[key] as String,
+          if (_isTaskConfigPath(Uri.parse(path).path) &&
+              body is Map &&
+              body['content'] is String)
+            body['content'] as String,
           if (cookie != null) cookie.split('=').last,
         ];
         throw PanelApiException(
@@ -501,6 +505,7 @@ class PanelApiClient {
             includeNotifyDetails: Uri.parse(
               path,
             ).path.startsWith('/api/notify/'),
+            includeTaskConfigDetails: _isTaskConfigPath(Uri.parse(path).path),
           ),
         );
       }
@@ -611,8 +616,30 @@ class PanelApiClient {
     bool includeConfigDetails = false,
     bool includeProxyDetails = false,
     bool includeNotifyDetails = false,
+    bool includeTaskConfigDetails = false,
   }) {
     if (payload is! Map<String, dynamic>) return null;
+    if (includeTaskConfigDetails) {
+      return {
+        if (payload['saved'] is bool) 'saved': payload['saved'],
+        if (const {
+          'revision_conflict',
+          'task_not_found',
+          'config_path_missing',
+          'rename_pending',
+          'invalid_config_path',
+          'file_too_large',
+          'invalid_request',
+          'not_utf8_text',
+          'save_failed',
+          'request_unknown',
+          'request_unavailable',
+          'request_mismatch',
+          'storage_unavailable',
+        }.contains(payload['code']))
+          'code': payload['code'],
+      };
+    }
     if (includeProxyDetails || includeNotifyDetails) {
       final result = <String, dynamic>{
         for (final key in const [
@@ -1139,7 +1166,12 @@ class PanelApiClient {
       _isOnlineScriptPath(path) ||
       _isScriptFilePath(path) ||
       _isDependencyPath(path) ||
+      _isTaskConfigPath(path) ||
       path.startsWith('/api/notify/');
+
+  bool _isTaskConfigPath(String path) => RegExp(
+    r'^/api/tasks/[^/]+/config-file(?:/requests/[^/]+)?$',
+  ).hasMatch(path);
 
   bool _isScriptFilePath(String path) =>
       path == '/api/scripts/file' ||

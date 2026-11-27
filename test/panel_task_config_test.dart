@@ -76,6 +76,10 @@ Widget editor(
 String draft(WidgetTester tester) =>
     tester.widget<TextField>(find.byType(TextField)).controller!.text;
 
+Finder saveButton() => find.byWidgetPredicate(
+  (widget) => widget is IconButton && widget.tooltip == '保存配置',
+);
+
 void main() {
   test(
     'binds config reads, writes and read-only receipts to the task and original request',
@@ -155,6 +159,45 @@ void main() {
         }),
         throwsFormatException,
       );
+    },
+  );
+
+  test(
+    'config errors retain only typed flags and known codes on mounted panels',
+    () async {
+      final api = PanelApiClient(
+        baseUrl: 'https://fls.example/panel',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=config',
+          csrfToken: 'csrf',
+        ),
+        client: panelMockClient((request) async {
+          expect(request.url.path, '/panel$configPath');
+          return jsonResponse({
+            'ok': false,
+            'saved': false,
+            'code': 'revision_conflict',
+            'msg': 'rejected secret draft at /root/fls/scripts/conf/app.yml',
+            'current': {'content': 'server secret'},
+            'credentials': 'private',
+          }, 409);
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelTasksManager(api);
+      final file = PanelTaskConfigSnapshot.fromJson(configFile()['file']);
+      try {
+        await manager.saveTaskConfig(
+          file,
+          content: 'secret draft',
+          requestId: 'b' * 32,
+        );
+        fail('expected config conflict');
+      } on PanelApiException catch (error) {
+        expect(error.data, {'saved': false, 'code': 'revision_conflict'});
+        expect(error.message, isNot(contains('secret draft')));
+        expect(error.message, isNot(contains('/root/fls')));
+      }
     },
   );
 
@@ -241,10 +284,7 @@ void main() {
       await tester.tap(find.byTooltip('保存配置'));
       await pumpUntilFound(tester, find.text('对照并合并草稿'));
       expect(draft(tester), 'local\n');
-      expect(
-        tester.widget<IconButton>(find.byTooltip('保存配置')).onPressed,
-        isNull,
-      );
+      expect(tester.widget<IconButton>(saveButton()).onPressed, isNull);
       await tester.tap(find.text('对照并合并草稿'));
       await pumpUntilFound(tester, find.text('核对任务配置'));
       expect(find.text('server\n'), findsOneWidget);
@@ -303,10 +343,7 @@ void main() {
                 null,
       );
       expect(manager.configRecoveryFor('daily').requestId, requestId);
-      expect(
-        tester.widget<IconButton>(find.byTooltip('保存配置')).onPressed,
-        isNull,
-      );
+      expect(tester.widget<IconButton>(saveButton()).onPressed, isNull);
       await tester.tap(find.text('查询原提交'));
       await pumpUntilFound(tester, find.text('核对当前配置'));
       expect(queries, 1);
@@ -419,10 +456,7 @@ void main() {
       await pumpUntil(tester, () => unauthorized == 1);
       expect(find.byType(TextField), findsNothing);
       expect(manager.configRecoveryFor('daily').requestId, isNotNull);
-      expect(
-        tester.widget<IconButton>(find.byTooltip('保存配置')).onPressed,
-        isNull,
-      );
+      expect(tester.widget<IconButton>(saveButton()).onPressed, isNull);
     },
   );
 

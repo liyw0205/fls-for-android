@@ -93,6 +93,7 @@ class _PanelTaskConfigViewState extends State<PanelTaskConfigView>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (mounted) {
       setState(() => _background = state != AppLifecycleState.resumed);
+      if (_background) _closeDialog();
     }
   }
 
@@ -275,7 +276,7 @@ class _PanelTaskConfigViewState extends State<PanelTaskConfigView>
     });
     try {
       final latest = await widget.manager.fetchTaskConfig(widget.taskId);
-      if (!_current(generation) || !mounted) return;
+      if (!_current(generation) || !mounted || _background) return;
       BuildContext? dialogContext;
       final adoptServer = await showDialog<bool>(
         context: context,
