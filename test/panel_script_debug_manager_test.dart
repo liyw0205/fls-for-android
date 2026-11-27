@@ -128,6 +128,109 @@ void main() {
       await expectLater(manager.fetchRun('bad'), throwsArgumentError);
     },
   );
+
+  test(
+    'queries the original request without a POST and validates its identity',
+    () async {
+      var wrongId = false;
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example',
+        credentials: session,
+        client: panelMockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/api/scripts/debug-requests/${'c' * 32}');
+          return utf8Response(
+            jsonEncode({
+              'ok': true,
+              'run': {
+                ..._run(status: 'stopping'),
+                'running': true,
+                'active': true,
+                'request_id': (wrongId ? 'd' : 'c') * 32,
+              },
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelScriptDebugManager(api);
+      expect((await manager.fetchRequest('c' * 32)).isActive, isTrue);
+      wrongId = true;
+      await expectLater(
+        manager.fetchRequest('c' * 32),
+        throwsA(isA<PanelApiException>()),
+      );
+    },
+  );
+
+  test('rejects wrong run identities and malformed optional fields', () async {
+    Map<String, dynamic> value = _run(status: 'succeeded');
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: session,
+      client: panelMockClient(
+        (request) async => utf8Response(
+          jsonEncode({'ok': true, 'run': value, 'log': ''}),
+          200,
+        ),
+      ),
+    );
+    addTearDown(api.close);
+    final manager = PanelScriptDebugManager(api);
+    await expectLater(
+      manager.fetchRun('a' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
+    await expectLater(
+      manager.stop('a' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
+    value = {..._run(status: 'succeeded'), 'active': 'false'};
+    await expectLater(
+      manager.fetchRun('b' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
+    value = {..._run(status: 'succeeded'), 'request_id': 'bad'};
+    await expectLater(
+      manager.fetchRun('b' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
+    value = {..._run(status: 'succeeded'), 'active': true};
+    expect((await manager.fetchRun('b' * 32)).run.isActive, isTrue);
+  });
+
+  test('start rejects a different path or bound request', () async {
+    var wrongPath = true;
+    final api = PanelApiClient(
+      baseUrl: 'https://panel.example',
+      credentials: session,
+      client: panelMockClient(
+        (request) async => utf8Response(
+          jsonEncode({
+            'ok': true,
+            'run': {
+              ..._run(status: 'running'),
+              'path': wrongPath ? 'other.py' : 'jobs/demo.py',
+              'request_id': 'f' * 32,
+            },
+          }),
+          202,
+        ),
+      ),
+    );
+    addTearDown(api.close);
+    final manager = PanelScriptDebugManager(api);
+    await expectLater(
+      manager.start(path: 'jobs/demo.py', requestId: 'a' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
+    wrongPath = false;
+    await expectLater(
+      manager.start(path: 'jobs/demo.py', requestId: 'a' * 32),
+      throwsA(isA<PanelApiException>()),
+    );
+  });
 }
 
 Map<String, dynamic> _run({required String status}) => {

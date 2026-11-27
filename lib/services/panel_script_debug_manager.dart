@@ -31,10 +31,15 @@ class PanelScriptDebugManager {
       if (payload is! Map<String, dynamic> || payload['ok'] != true) {
         throw const FormatException('脚本调试启动响应格式无效');
       }
-      return PanelScriptDebugRun.fromJson(
+      final run = PanelScriptDebugRun.fromJson(
         payload['run'],
         replayed: payload['replayed'] == true,
       );
+      if (run.path != path ||
+          (run.requestId != null && run.requestId != requestId)) {
+        throw const FormatException('脚本调试启动响应与原请求不一致');
+      }
+      return run;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: endpoint);
     }
@@ -58,7 +63,29 @@ class PanelScriptDebugManager {
     if (lines < 1 || lines > 1200) throw ArgumentError.value(lines, 'lines');
     final path = '/api/scripts/debug-runs/$debugId?lines=$lines';
     try {
-      return PanelScriptDebugDetail.fromJson(await _api.getJson(path));
+      final detail = PanelScriptDebugDetail.fromJson(await _api.getJson(path));
+      if (detail.run.id != debugId) {
+        throw const FormatException('脚本调试状态返回了其他作业');
+      }
+      return detail;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelScriptDebugRun> fetchRequest(String requestId) async {
+    _requireId(requestId, 'requestId');
+    final path = '/api/scripts/debug-requests/$requestId';
+    try {
+      final payload = await _api.getJson(path);
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('原调试提交响应格式无效');
+      }
+      final run = PanelScriptDebugRun.fromJson(payload['run']);
+      if (run.requestId != requestId) {
+        throw const FormatException('原调试提交返回了其他请求');
+      }
+      return run;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -72,7 +99,11 @@ class PanelScriptDebugManager {
       if (payload is! Map<String, dynamic> || payload['ok'] != true) {
         throw const FormatException('脚本调试停止响应格式无效');
       }
-      return PanelScriptDebugRun.fromJson(payload['run']);
+      final run = PanelScriptDebugRun.fromJson(payload['run']);
+      if (run.id != debugId) {
+        throw const FormatException('停止响应返回了其他调试作业');
+      }
+      return run;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }

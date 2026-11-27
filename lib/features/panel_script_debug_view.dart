@@ -14,13 +14,19 @@ class PanelScriptDebugView extends StatefulWidget {
     required this.onUnauthorized,
     this.initialPath,
     this.initialRunId,
+    this.initialRequestId,
     this.routesToClose = 1,
-  }) : assert(initialPath != null || initialRunId != null);
+  }) : assert(
+         initialPath != null ||
+             initialRunId != null ||
+             initialRequestId != null,
+       );
 
   final PanelScriptDebugManager manager;
   final Future<void> Function(Object error) onUnauthorized;
   final String? initialPath;
   final String? initialRunId;
+  final String? initialRequestId;
   final int routesToClose;
 
   @override
@@ -38,14 +44,48 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
   bool _stopping = false;
   bool _polling = false;
   bool _followLog = true;
+  bool _trusted = false;
+  int _generation = 0;
+
+  bool get _busy => _starting || _stopping;
 
   @override
   void initState() {
     super.initState();
+    _pendingRequestId = widget.initialRequestId;
     _logScroll.addListener(_trackLogPosition);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (widget.initialPath != null) {
+      if (widget.initialPath != null && _pendingRequestId == null) {
+        unawaited(_start());
+      } else {
+        unawaited(_refresh());
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant PanelScriptDebugView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.manager == widget.manager &&
+        oldWidget.initialPath == widget.initialPath &&
+        oldWidget.initialRunId == widget.initialRunId &&
+        oldWidget.initialRequestId == widget.initialRequestId) {
+      return;
+    }
+    _generation++;
+    _stopPolling();
+    _detail = null;
+    _pendingRequestId = widget.initialRequestId;
+    _error = null;
+    _trusted = false;
+    _starting = false;
+    _stopping = false;
+    _polling = false;
+    _loading = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.initialPath != null && _pendingRequestId == null) {
         unawaited(_start());
       } else {
         unawaited(_refresh());
@@ -55,6 +95,7 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
 
   @override
   void dispose() {
+    _generation++;
     _pollTimer?.cancel();
     _logScroll
       ..removeListener(_trackLogPosition)
@@ -70,7 +111,7 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _pollTimer = Timer(const Duration(seconds: 2), () {
       unawaited(_refresh(quiet: true));
     });
   }
@@ -82,7 +123,14 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
 
   Future<void> _start({bool newRun = false}) async {
     final path = widget.initialPath ?? _detail?.run.path;
-    if (path == null || _starting) return;
+    if (path == null || _busy || _polling) return;
+    if (_pendingRequestId != null) {
+      await _refresh();
+      return;
+    }
+    if (newRun && (!_trusted || _detail?.run.isActive == true)) return;
+    _stopPolling();
+    final generation = ++_generation;
     final requestId = newRun
         ? PanelScriptDebugManager.newRequestId()
         : (_pendingRequestId ?? PanelScriptDebugManager.newRequestId());
@@ -91,22 +139,23 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
       _starting = true;
       _loading = true;
       _error = null;
+      _trusted = false;
       if (newRun) _detail = null;
     });
     try {
       final run = await widget.manager.start(path: path, requestId: requestId);
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       _pendingRequestId = null;
       setState(() {
         _detail = PanelScriptDebugDetail(run: run, log: '');
         _loading = false;
+        _starting = false;
       });
-      if (run.isActive) _startPolling();
       await _refresh();
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       if (error is PanelApiException && error.statusCode == 401) {
-        await _handleUnauthorized(error);
+        await _handleUnauthorized(error, generation);
         return;
       }
       setState(() {
@@ -114,28 +163,46 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
         _loading = false;
       });
     } finally {
-      if (mounted) setState(() => _starting = false);
+      if (mounted && generation == _generation) {
+        setState(() => _starting = false);
+      }
     }
   }
 
   Future<void> _refresh({bool quiet = false}) async {
     final runId = _detail?.run.id ?? widget.initialRunId;
-    if (runId == null || _polling) return;
+    final requestId = _pendingRequestId;
+    if ((runId == null && requestId == null) || _polling || _busy) return;
+    _stopPolling();
+    final generation = ++_generation;
     _polling = true;
-    if (!quiet && mounted) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-    }
+    setState(() {
+      _trusted = false;
+      if (!quiet) _loading = true;
+      _error = null;
+    });
     final followLog = _followLog;
     try {
-      final detail = await widget.manager.fetchRun(runId);
-      if (!mounted) return;
+      final original = requestId == null
+          ? null
+          : await widget.manager.fetchRequest(requestId);
+      if (!mounted || generation != _generation) return;
+      final detail = await widget.manager.fetchRun(original?.id ?? runId!);
+      if (!mounted || generation != _generation) return;
+      final expectedPath =
+          widget.initialPath ?? original?.path ?? _detail?.run.path;
+      if ((expectedPath != null && detail.run.path != expectedPath) ||
+          (original != null && detail.run.requestId != original.requestId) ||
+          (_detail?.run.requestId != null &&
+              detail.run.requestId != _detail!.run.requestId)) {
+        throw const FormatException('调试状态与原作业不一致，请重新查询');
+      }
       setState(() {
         _detail = detail;
         _loading = false;
-        if (!quiet) _error = null;
+        _error = null;
+        _trusted = true;
+        _pendingRequestId = null;
       });
       if (detail.run.isActive) {
         if (_pollTimer == null) _startPolling();
@@ -150,25 +217,35 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
         });
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       if (error is PanelApiException && error.statusCode == 401) {
-        await _handleUnauthorized(error);
+        await _handleUnauthorized(error, generation);
         return;
       }
-      if (!quiet) {
-        setState(() {
-          _error = error.toString();
-          _loading = false;
-        });
-      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+        _trusted = false;
+      });
     } finally {
-      _polling = false;
+      if (mounted && generation == _generation) {
+        setState(() => _polling = false);
+      }
     }
   }
 
   Future<void> _stop() async {
     final run = _detail?.run;
-    if (run == null || !run.isActive || _stopping) return;
+    if (run == null ||
+        !run.running ||
+        run.status == 'stopping' ||
+        !_trusted ||
+        _busy ||
+        _polling) {
+      return;
+    }
+    _stopPolling();
+    final generation = ++_generation;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -186,33 +263,56 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (!mounted || generation != _generation) return;
+    if (confirmed != true) {
+      unawaited(_refresh());
+      return;
+    }
     setState(() {
       _stopping = true;
       _error = null;
+      _trusted = false;
     });
     try {
       final stopped = await widget.manager.stop(run.id);
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
+      if (stopped.path != run.path ||
+          (run.requestId != null && stopped.requestId != run.requestId)) {
+        throw const FormatException('停止响应与原调试作业不一致');
+      }
       setState(() {
         _detail = PanelScriptDebugDetail(run: stopped, log: _detail?.log ?? '');
+        _stopping = false;
       });
       if (!stopped.isActive) _stopPolling();
       await _refresh();
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       if (error is PanelApiException && error.statusCode == 401) {
-        await _handleUnauthorized(error);
+        await _handleUnauthorized(error, generation);
         return;
       }
-      setState(() => _error = error.toString());
+      setState(() {
+        _error = error.toString();
+        _stopping = false;
+      });
       await _refresh(quiet: true);
     } finally {
-      if (mounted) setState(() => _stopping = false);
+      if (mounted && generation == _generation) {
+        setState(() => _stopping = false);
+      }
     }
   }
 
   Future<void> _openHistory() async {
+    _generation++;
+    _stopPolling();
+    setState(() {
+      _trusted = false;
+      _polling = false;
+      _starting = false;
+      _stopping = false;
+    });
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => PanelScriptDebugHistoryView(
@@ -222,6 +322,7 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
         ),
       ),
     );
+    if (mounted) await _refresh();
   }
 
   Future<void> _copyLog() async {
@@ -235,9 +336,20 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
     }
   }
 
-  Future<void> _handleUnauthorized(Object error) async {
+  Future<void> _handleUnauthorized(Object error, int generation) async {
+    if (!mounted || generation != _generation) return;
+    final invalidated = ++_generation;
+    _stopPolling();
+    setState(() {
+      _trusted = false;
+      _loading = false;
+      _starting = false;
+      _stopping = false;
+      _polling = false;
+    });
     final navigator = Navigator.of(context);
     await widget.onUnauthorized(error);
+    if (!mounted || invalidated != _generation) return;
     for (
       var index = 0;
       index < widget.routesToClose && navigator.canPop();
@@ -250,6 +362,7 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
   String _statusLabel(String status) => switch (status) {
     'starting' => '启动中',
     'running' => '运行中',
+    'stopping' => '停止中',
     'succeeded' => '成功结束',
     'failed' => '运行失败',
     'stopped' => '已停止',
@@ -258,7 +371,7 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
   };
 
   IconData _statusIcon(String status) => switch (status) {
-    'starting' || 'running' => Icons.sync,
+    'starting' || 'running' || 'stopping' => Icons.sync,
     'succeeded' => Icons.check_circle_outline,
     'failed' => Icons.error_outline,
     'stopped' => Icons.stop_circle_outlined,
@@ -281,13 +394,20 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
           ),
           IconButton(
             tooltip: '刷新状态与日志',
-            onPressed: _polling ? null : () => _refresh(),
+            onPressed: _polling || _busy ? null : () => _refresh(),
             icon: const Icon(Icons.refresh),
           ),
           if (run?.isActive == true)
             IconButton(
               tooltip: '停止调试运行',
-              onPressed: _stopping ? null : _stop,
+              onPressed:
+                  !_trusted ||
+                      _busy ||
+                      _polling ||
+                      !run!.running ||
+                      run.status == 'stopping'
+                  ? null
+                  : _stop,
               icon: _stopping
                   ? const SizedBox.square(
                       dimension: 20,
@@ -306,12 +426,15 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
               content: Text(_error!),
               actions: [
                 TextButton(
-                  onPressed: detail == null
-                      ? (widget.initialPath != null ? () => _start() : _refresh)
-                      : _refresh,
-                  child: const Text('重试'),
+                  onPressed: _busy || _polling ? null : _refresh,
+                  child: const Text('查询原记录'),
                 ),
               ],
+            ),
+          if (_pendingRequestId != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: SelectableText('原提交：$_pendingRequestId'),
             ),
           if (detail == null)
             Expanded(
@@ -326,13 +449,9 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
                         ],
                       )
                     : FilledButton.icon(
-                        onPressed: _starting
-                            ? null
-                            : widget.initialPath != null
-                            ? () => _start()
-                            : _refresh,
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text('重试启动'),
+                        onPressed: _busy || _polling ? null : _refresh,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('查询原记录'),
                       ),
               ),
             )
@@ -359,7 +478,7 @@ class _PanelScriptDebugViewState extends State<PanelScriptDebugView> {
                       ),
                       if (!run.isActive && run.status != 'unknown')
                         TextButton.icon(
-                          onPressed: _starting
+                          onPressed: !_trusted || _busy || _polling
                               ? null
                               : () => _start(newRun: true),
                           icon: const Icon(Icons.replay),
@@ -474,6 +593,7 @@ class _PanelScriptDebugHistoryViewState
   List<PanelScriptDebugRun> _runs = const [];
   String? _error;
   bool _loading = true;
+  int _generation = 0;
 
   @override
   void initState() {
@@ -481,22 +601,38 @@ class _PanelScriptDebugHistoryViewState
     unawaited(_load());
   }
 
+  @override
+  void didUpdateWidget(covariant PanelScriptDebugHistoryView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.manager == widget.manager) return;
+    _generation++;
+    _runs = const [];
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    final generation = ++_generation;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final history = await widget.manager.fetchHistory();
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _runs = history.runs;
         _loading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       if (error is PanelApiException && error.statusCode == 401) {
-        await _handleUnauthorized(error);
+        await _handleUnauthorized(error, generation);
         return;
       }
       setState(() {
@@ -507,6 +643,7 @@ class _PanelScriptDebugHistoryViewState
   }
 
   Future<void> _openRun(PanelScriptDebugRun run) async {
+    _generation++;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => PanelScriptDebugView(
@@ -520,9 +657,62 @@ class _PanelScriptDebugHistoryViewState
     if (mounted) await _load();
   }
 
-  Future<void> _handleUnauthorized(Object error) async {
+  Future<void> _queryRequest() async {
+    final generation = ++_generation;
+    final manager = widget.manager;
+    setState(() => _loading = false);
+    var value = '';
+    final requestId = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('查询原调试提交'),
+          content: TextField(
+            autofocus: true,
+            autocorrect: false,
+            decoration: const InputDecoration(labelText: '提交 ID'),
+            onChanged: (text) => update(() => value = text.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: RegExp(r'^[a-f0-9]{32}$').hasMatch(value)
+                  ? () => Navigator.pop(context, value)
+                  : null,
+              child: const Text('查询'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || generation != _generation) return;
+    if (requestId == null) {
+      await _load();
+      return;
+    }
+    _generation++;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelScriptDebugView(
+          manager: manager,
+          initialRequestId: requestId,
+          onUnauthorized: widget.onUnauthorized,
+          routesToClose: widget.routesToClose + 1,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _handleUnauthorized(Object error, int generation) async {
+    if (!mounted || generation != _generation) return;
+    final invalidated = ++_generation;
     final navigator = Navigator.of(context);
     await widget.onUnauthorized(error);
+    if (!mounted || invalidated != _generation) return;
     for (
       var index = 0;
       index < widget.routesToClose && navigator.canPop();
@@ -535,6 +725,7 @@ class _PanelScriptDebugHistoryViewState
   String _statusLabel(String status) => switch (status) {
     'starting' => '启动中',
     'running' => '运行中',
+    'stopping' => '停止中',
     'succeeded' => '成功结束',
     'failed' => '运行失败',
     'stopped' => '已停止',
@@ -547,6 +738,11 @@ class _PanelScriptDebugHistoryViewState
     appBar: AppBar(
       title: const Text('调试记录'),
       actions: [
+        IconButton(
+          tooltip: '查询原调试提交',
+          onPressed: _queryRequest,
+          icon: const Icon(Icons.manage_search),
+        ),
         IconButton(
           tooltip: '刷新记录',
           onPressed: _loading ? null : _load,

@@ -9,6 +9,8 @@ class PanelScriptDebugRun {
     required this.createdAt,
     required this.updatedAt,
     this.replayed = false,
+    this.requestId,
+    this.active,
   });
 
   final String id;
@@ -20,6 +22,8 @@ class PanelScriptDebugRun {
   final String createdAt;
   final String updatedAt;
   final bool replayed;
+  final String? requestId;
+  final bool? active;
 
   factory PanelScriptDebugRun.fromJson(Object? value, {bool replayed = false}) {
     if (value is! Map<String, dynamic> ||
@@ -29,12 +33,15 @@ class PanelScriptDebugRun {
         !const {
           'starting',
           'running',
+          'stopping',
           'succeeded',
           'failed',
           'stopped',
           'unknown',
         }.contains(value['status']) ||
         value['running'] is! bool ||
+        (value.containsKey('active') && value['active'] is! bool) ||
+        (value.containsKey('request_id') && !_validId(value['request_id'])) ||
         (value['returncode'] != null && value['returncode'] is! int) ||
         value['error'] is! String ||
         value['created_at'] is! String ||
@@ -42,7 +49,7 @@ class PanelScriptDebugRun {
       throw const FormatException('脚本调试作业响应格式无效');
     }
     final status = value['status'] as String;
-    final active = const {'starting', 'running'}.contains(status);
+    final active = const {'starting', 'running', 'stopping'}.contains(status);
     if (value['running'] != active) {
       throw const FormatException('脚本调试作业状态不一致');
     }
@@ -56,10 +63,12 @@ class PanelScriptDebugRun {
       createdAt: value['created_at'] as String,
       updatedAt: value['updated_at'] as String,
       replayed: replayed,
+      requestId: value['request_id'] as String?,
+      active: value['active'] as bool?,
     );
   }
 
-  bool get isActive => running;
+  bool get isActive => running || active == true;
 }
 
 class PanelScriptDebugDetail {
