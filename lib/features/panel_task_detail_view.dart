@@ -27,7 +27,8 @@ class PanelTaskDetailView extends StatefulWidget {
   State<PanelTaskDetailView> createState() => _PanelTaskDetailViewState();
 }
 
-class _PanelTaskDetailViewState extends State<PanelTaskDetailView> {
+class _PanelTaskDetailViewState extends State<PanelTaskDetailView>
+    with WidgetsBindingObserver {
   PanelTaskDetail? _detail;
   final Set<String> _revealedEnvKeys = {};
   String? _error;
@@ -35,40 +36,126 @@ class _PanelTaskDetailViewState extends State<PanelTaskDetailView> {
   String? _logError;
   bool _loading = true;
   bool _logLoading = false;
+  Timer? _poll;
+  int _generation = 0;
+  bool _foreground = true;
+  bool _unauthorized = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_load());
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(covariant PanelTaskDetailView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.manager != widget.manager ||
+        oldWidget.taskId != widget.taskId) {
+      _generation++;
+      _poll?.cancel();
+      _detail = null;
+      _log = null;
+      _logLoading = false;
+      _revealedEnvKeys.clear();
+      _unauthorized = false;
+      unawaited(_load());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) {
+      _generation++;
+      _poll?.cancel();
+      setState(() {
+        _detail = null;
+        _log = null;
+        _revealedEnvKeys.clear();
+        _logLoading = false;
+        _loading = true;
+      });
+    } else if (!_unauthorized) {
+      unawaited(_load());
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    _poll?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  bool _current(int generation) =>
+      mounted && generation == _generation && _foreground && !_unauthorized;
+
+  Future<void> _authExpired(Object error) async {
+    _unauthorized = true;
+    _generation++;
+    _poll?.cancel();
     setState(() {
-      _loading = true;
+      _detail = null;
+      _log = null;
+      _revealedEnvKeys.clear();
+      _loading = false;
+      _logLoading = false;
+      _error = '登录已失效';
+    });
+    await widget.onUnauthorized(error);
+  }
+
+  void _schedulePoll() {
+    _poll?.cancel();
+    if (!_foreground || _unauthorized || _detail?.active != true) return;
+    _poll = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      if (ModalRoute.of(context)?.isCurrent != true) {
+        _schedulePoll();
+        return;
+      }
+      unawaited(_load(quiet: true));
+    });
+  }
+
+  Future<void> _load({bool quiet = false}) async {
+    if (_unauthorized || !_foreground) return;
+    final generation = ++_generation;
+    _poll?.cancel();
+    setState(() {
+      _loading = !quiet;
+      _logLoading = false;
       _error = null;
     });
     try {
       final detail = await widget.manager.fetchTaskDetail(widget.taskId);
-      if (!mounted) return;
+      if (!_current(generation)) return;
       setState(() {
         _detail = detail;
         _loading = false;
       });
-      await _loadLog();
+      await _loadLog(generation: generation);
     } catch (error) {
-      if (!mounted) return;
+      if (!_current(generation)) return;
       if (error is PanelApiException && error.statusCode == 401) {
-        await widget.onUnauthorized(error);
+        await _authExpired(error);
         return;
       }
       setState(() {
         _error = error.toString();
         _loading = false;
       });
+    } finally {
+      if (_current(generation)) _schedulePoll();
     }
   }
 
-  Future<void> _loadLog() async {
+  Future<void> _loadLog({int? generation}) async {
+    final requestGeneration = generation ?? _generation;
+    if (!_current(requestGeneration)) return;
     if (_logLoading) return;
     setState(() {
       _logLoading = true;
@@ -76,15 +163,15 @@ class _PanelTaskDetailViewState extends State<PanelTaskDetailView> {
     });
     try {
       final log = await widget.manager.fetchTaskLog(widget.taskId, lines: 200);
-      if (!mounted) return;
+      if (!_current(requestGeneration)) return;
       setState(() {
         _log = log;
         _logLoading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!_current(requestGeneration)) return;
       if (error is PanelApiException && error.statusCode == 401) {
-        await widget.onUnauthorized(error);
+        await _authExpired(error);
         return;
       }
       setState(() {
@@ -193,10 +280,11 @@ class _PanelTaskDetailViewState extends State<PanelTaskDetailView> {
                       ? Theme.of(context).colorScheme.tertiary
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                title: Text(detail.runtime['running'] == true ? '运行中' : '已停止'),
+                title: Text(detail.executionLabel),
                 subtitle: Text(
                   [
-                    if (detail.runtime['pid'] != null)
+                    if (detail.runtime['pid'] != null &&
+                        detail.runtime['pid'] != '-')
                       'PID ${detail.runtime['pid']}',
                     if (_text(detail.runtime['process_name']).isNotEmpty)
                       _text(detail.runtime['process_name']),

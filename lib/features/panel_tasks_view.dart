@@ -1748,7 +1748,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     final busy = _busyTaskId == task.id || _busyTaskId == '*';
     final selected = _selectedTaskIds.contains(task.id);
     final status = task.running
-        ? '运行中${task.pid == null ? '' : ' · PID ${task.pid}'}'
+        ? '${task.executionLabel}${task.pid == null || task.pid == '-' ? '' : ' · PID ${task.pid}'}'
         : task.enabled
         ? '已启用'
         : '已停用';

@@ -14,6 +14,7 @@ class PanelTaskSummary {
     this.pinned = false,
     this.createdAt = '',
     this.updatedAt = '',
+    this.executionStatus = '',
   });
 
   final String id;
@@ -30,6 +31,15 @@ class PanelTaskSummary {
   final bool pinned;
   final String createdAt;
   final String updatedAt;
+  final String executionStatus;
+
+  String get executionLabel => switch (executionStatus) {
+    'starting' => '启动中',
+    'delaying' => '延迟中',
+    'retry_wait' => '等待重试',
+    'stopping' => '正在停止',
+    _ => running ? '运行中' : '已停止',
+  };
 
   factory PanelTaskSummary.fromJson(Object? value) {
     if (value is! Map<String, dynamic>) {
@@ -55,6 +65,7 @@ class PanelTaskSummary {
       pinned: value['pinned'] == true,
       createdAt: value['created_at']?.toString() ?? '',
       updatedAt: value['updated_at']?.toString() ?? '',
+      executionStatus: value['execution_status']?.toString() ?? '',
     );
   }
 
