@@ -402,6 +402,12 @@ void main() {
         await pumpUntilFound(tester, find.text('demo'));
         await tester.tap(find.text('demo'));
         await pumpUntil(tester, () => unauthorized == 1);
+        await pumpUntil(
+          tester,
+          () =>
+              find.byTooltip('刷新状态').evaluate().isEmpty &&
+              find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        );
         await tester.pumpAndSettle();
         expect(find.byTooltip('刷新状态'), findsNothing);
         expect(find.byTooltip('刷新记录'), findsOneWidget);
@@ -434,4 +440,5 @@ Future<void> openTaskOperation(
   }
   await tester.tap(find.text('demo'));
   await pumpUntilFound(tester, find.text('核对原请求'));
+  await tester.pump(const Duration(milliseconds: 400));
 }
