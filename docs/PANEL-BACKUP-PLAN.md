@@ -18,7 +18,46 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-2026-11-27 最新脚本文件检查点：FLS `70ad27fcfb307bbc225f3a435d307822f4b9f69a` / `20261127.19`（139），在实现提交 `5626ac9` 及换行修正 `da8a4b4` 上追加跨 worker 身份退役互斥。本批先 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`。APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+2026-11-27 最新在线安装检查点：FLS `8156301bf89ab03c525ca93e8c75f6c3db75c012` / `20261127.22`（142），实现提交为 `b8c8b60` / `20261127.20`（140）。本批先 fetch/fast-forward 两仓 `develop`，均返回 `Already up to date.`；APP 代码仍为 `79bbfab` / `0.1.62+76`，本批仅更新方案，不新增版本或 APK。
+
+`routes/online_scripts/install.py` 的安装、启动恢复、重试、停止、任务确认/补导入及调度器恢复，以及 `logs.py` 的安装日志/历史 API 与 Web 入口，从路由进入即持恢复共享锁。恢复占用、待处理目录现场或短 I/O 竞争先返回 503，不进行安装查询、首次回执、文件或命令副作用。`start_install_thread` 复用 `start_directory_job`，在 Thread 构造/start 之前预留独立 lease，覆盖 HTTP 等待/response.close、下载产物、任务导入、终态日志和 finally；网络等待不持配置事务锁。
+
+`run_logged_command` 从直接 Popen 改为既有 `DirectoryProcess` 独立监管，覆盖在线 Git clone/pull 和安装命令；监管状态位于系统临时目录。POSIX 显式停止和 owner 断开先 TERM、1 秒后升级 KILL，Windows 由 Job Object 清理；整棵命令树退出前监管不释放恢复共享锁，停止调用不持生命周期锁等待。正常/非零/停止/超时保留实际退出码，停止失败仍保留活跃进程及回执；监管启动门或结果无法核实时显示 `结果未知 / unknown`，GET 查询不重新执行命令。
+
+新增 `test_online_install_directory_jobs.py` 8 项、18 个子用例，覆盖 18 类路由在真实 Web/原生跨进程恢复、损坏 journal 与短 I/O 竞争下的零副作用拒绝，首次保存/线程交接与失败释放，六个 HTTP/发布/任务/终写阶段，真实正常/非零/shell 命令、整树停止/超时、owner 强制退出，以及结果回执不可读只查询且不重复执行。既有停止失败测试改在监管边界注入，保留活跃、禁止重复启动和恢复断言。
+
+本机扩大回归十文件 200 项、166 个子用例通过（加入最终 unknown 用例前）；实现提交最终四文件（新门禁、生命周期、原请求恢复、发布说明）114 项、61 个子用例通过，线程异常按错误。独立新门禁 7 项、18 个子用例通过的记录在 unknown 用例之前；不将早期测试数冒作最终全量结果。Linux/Windows workflow 已加入新文件及五个在线安装/任务校验回归。
+
+首轮 `b8c8b60` 的 [Native 45916127275](https://github.com/liyw0205/fls/actions/runs/45916127275) 失败：Linux 675 项、644 个子用例通过；Windows 既有全部 step 成功，新增在线安装 step 为 49 项失败、140 项通过、5 项跳过、99 个子用例通过。主要根因为 `_install_log_file` 以解析前后路径字符串不等判断重定向，Windows 临时目录的 8.3 短路径被误拒绝，连带阻断安装状态/任务恢复；另有新测试按系统默认编码读取 UTF-8 日志，以及 Node 管道解码警告。Module `45916127288`、Desktop `45916127243`、EXE `45916127284` 成功且正式 Release 跳过，不能代替 Native 通过。
+
+修复 `bbde77e` / `20261127.21`（141）先检查父目录符号链接/junction、`..` 和文件链接，再核对实际日志目录与安装身份，允许合法短路径。新增普通链接/穿越和 Windows 短路径/junction 两项回归；测试日志和 Node 管道显式用 UTF-8。修复后本机六文件 164 项通过、1 项 Windows 专用跳过、134 个子用例通过；最终新门禁/发布说明 11 项通过、1 项 Windows 专用跳过、20 个子用例通过，线程异常按错误。
+
+第二轮 `bbde77e` 的 [Native 45918589168](https://github.com/liyw0205/fls/actions/runs/45918589168) 仍失败：Linux 676 项通过、1 项 Windows 专用跳过、646 个子用例通过；Windows 所有既有 step 成功，新增在线 step 为 30 项失败、150 项通过、5 项跳过、112 个子用例通过。日志短路径/junction 和命令进程树已通过，剩余失败统一指向 `verify_install_outputs` 仍用未解析的字符串比较产物归属，将合法 8.3 短路径误报为 scripts 越界。Module `45918589161`、Desktop `45918589338`、EXE `45918589174` 成功且正式 Release 跳过，不能代替 Native。
+
+最终修复 `8156301` / `20261127.22`（142）按解析后的父目录校验归属，叶链接仍指纹其自身，不跟随读取目录外内容；新增同名前缀邻目录、父链接逃逸和 Windows 短路径产物回归。该路径修复后的四文件先通过 147 项、1 项 Windows 专用跳过、97 个子用例。随后定向补跑暴露停止竞态：命令线程清理临时 workspace 后，停止请求再次读取结果文件，偶发 500。`DirectoryProcess` 现在在互斥区仅缓存首次验证成功的退出码，结果仍未验证时的缺失/损坏不变成成功；真实并发等待、移除结果后的正常/非零退出及坏回执均有新增回归。
+
+最终本机六文件（监管、新门禁、生命周期、原请求恢复、调度器恢复、发布说明）165 项通过、1 项 Windows 专用跳过、103 个子用例通过，线程异常按错误，`git diff --check` 通过。第三轮 Linux/Windows workflow 沿用原范围并包含上述新增用例。
+
+最终 [Native backup regression 45921202342](https://github.com/liyw0205/fls/actions/runs/45921202342) 成功，Linux/Windows 两个 job 均核对为 `8156301`：
+
+| 回归范围 | 通过 | 跳过 | 子用例通过 |
+| --- | --- | --- | --- |
+| Linux 全部相关回归 | 679 | 1 项 Windows 短路径/junction | 654 |
+| Windows Job Object | 3 | 1 项 POSIX 专用 | - |
+| Windows 独立 lease/回执顺序 | 5 | - | 7 |
+| Windows 共享备份/独占恢复 | 9 | - | 7 |
+| Windows SQLite/认证 | 16 | - | 3 |
+| Windows 脚本作业/监管 | 66 | 1 项 POSIX FD | 182 |
+| Windows 目录提交/启动恢复 | 11 | - | 10 |
+| Windows 在线安装/任务恢复 | 161 | 5 项使用 sh 的既有用例 | 134 |
+
+Linux 和 Windows 脚本 step 各保留 2 条既有 tar 解包弃用警告；跳过项不计通过。[Module 45921202265](https://github.com/liyw0205/fls/actions/runs/45921202265)、[Desktop 45921202353](https://github.com/liyw0205/fls/actions/runs/45921202353)、[EXE 45921202314](https://github.com/liyw0205/fls/actions/runs/45921202314) 全部成功，四项 workflow 均核对完整 SHA，三个正式 Release job 均 skipped。
+
+APP 实际代码/APK 仍为 `79bbfab` / `0.1.62+76`，Android CI `45883212390` 已通过 225 项测试和 arm64 APK，[artifact 15148047738](https://github.com/liyw0205/fls-for-android/actions/runs/45883212390/artifacts/15148047738) 到期于 2026-12-10 19:29:52 UTC。本批 APP 仅方案提交，不制造新 APK；不做 ADB/模拟器，用户手动验收待执行。上述证据只关闭本批在线安装恢复 lease/命令监管及路径/退出竞态验证，不关闭 B3/B4 或总 Goal。
+
+本批尚未实现在线安装跨 worker 存活身份、回执事务、同请求去重与取消协调：`ONLINE_INSTALL_LOCK/RUNNING/STOPPING/RETRYING` 仍为进程内结构，另一 worker 查询可能误判活跃安装。下一批优先处理该缺口，并兼容历史非 UUID 安装 ID；不能据本批整树恢复锁证明多 worker 安装契约完整。安装选择/独立任务导入入口、调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、孤立身份/坏回执维护及 APP 全流程继续推进。监管自身被杀、逃离进程组不在本批证据范围内，B3/B4 和总 Goal 均未完成。
+
+上一脚本文件检查点：FLS `70ad27fcfb307bbc225f3a435d307822f4b9f69a` / `20261127.19`（139），在实现提交 `5626ac9` 及换行修正 `da8a4b4` 上追加跨 worker 身份退役互斥，以下保留其实现和实际失败修复证据。
 
 原生 `native_files.py` 的目录/文件读写、新建、删除、预览、重命名与恢复查询，以及 Web 脚本页、新建/编辑/删除/重命名/恢复、远程拉取和上传导入，均从进入路由到返回/异常清理持有 `directory_job()` 的共享恢复锁。恢复占用、待处理目录现场和短 I/O 冲突在读写前返回 `503 / panel_storage_busy`；沿用 I/O 在模型锁之前的受理顺序，网络/复制等待不持配置事务锁。补齐 Web 和原生重命名中被宽泛 except 吞掉的 busy；重载遇忙时保留 `tasks_saved` 原操作，可按同一 ID 查询和继续恢复。
 
@@ -174,7 +213,16 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 | APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
-下一轮优先在线安装：原生三域受理/清理 lease、Git 克隆/短 HEAD 监管、跨 worker 身份/回执及同步文件/Web 传输已补，以实际平台 CI 为准。`routes/online_scripts/install.py` 在首次回执前受理，`online_scripts/install.py:start_install_thread` 在线程构造/start 前保留独立 lease，并覆盖失败/排队交接、HTTP response.close、产物发布、导入任务、日志终写和 finally 清理。`run_logged_command` 当前仍直接 Popen，需为 Git 和安装命令补 owner 崩溃整树监管，不能只给线程加锁后声称崩溃安全；同时保留停止/超时、原请求、重试和跨 worker 活跃回执语义。随后继续调试、任务配置和日志句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部 storage → session，I/O 冲突不反向等待。逐域检查 except 吞 busy，未验证路径不计已接入。
+下一轮优先在线安装的跨 worker 活跃身份、回执事务、同请求去重与取消：本批 `b8c8b60` 已补受理/线程交接、HTTP 关闭/发布/终写 lease 及 Git/安装命令独立监管，以实际平台 CI 为准，不重复开发这些保护。兼容历史非 UUID 安装 ID，确认其他 worker 查询不把活跃安装写成未知、缓存不覆盖新回执，取消和重试先持久受理再由 owner 执行；增加真实双 worker 竞争、响应丢失、停止失败和 owner 硬退出回归。随后核对安装选择/独立任务导入入口，再继续调试、任务配置和日志句柄。网络等待不能长期拿配置锁，提交与清理须与恢复互斥。核对 shell/PowerShell PID、Windows 常驻实例锁、外部 WAL 和多 worker 启动整理；保留 I/O → 模型 → storage/session 顺序，会话内部 storage → session，I/O 冲突不反向等待。逐域检查 except 吞 busy，未验证路径不计已接入。
+
+在线安装跨 worker 后续实现按以下可验收步骤推进；以下均未实现：
+
+1. 为安装历史建立独立跨进程事务锁，复用 `DirectoryJobLock` 的有界等待、短 I/O 门禁和退役规则。所有首次受理、查询合并、进度/终态、父子重试关联、停止及任务恢复 claim 在同一事务内回读最新磁盘回执；不把 `storage.py` 的进程内 RLock 当作跨进程事务。
+2. 首次回执前取得安装存活身份，经过线程交接保留至所有日志/清理完成；Git/安装监管传入同一 `job_lease_path`。仅确认无人持有身份时才把遗失执行者标为未知。历史安装 ID 继续接受现有 `[A-Za-z0-9_-]{1,80}`，可用带域的稳定摘要映射为锁 ID；不把外部请求 ID 或已存日志身份强改成 UUID。
+3. 每次事务保留本进程 owner 的同一运行字典、process/stop_lock 和未落盘进度；其他 worker 只使用最新持久快照。显式合并停止/重试恢复字段，防止旧进度把停止中覆盖回运行中、旧终态覆盖新的恢复结果；运行句柄不写进 JSON。
+4. 任意 worker 先持久记录原安装的停止请求，owner 在 HTTP 分块、命令轮询和阶段交接消费，再执行实际停止。受理停止与整树退出分别展示；保存失败不发送信号，停止失败继续保持活跃和原 ID 查询，重复停止可恢复，不以取消回执证明文件/任务已回滚。
+5. 同 request ID/同选项只返回原安装，选项变化冲突；同脚本并发安装和父子重试均在跨进程事务内仲裁。保留当前未启动且回执未发布的原请求恢复、force 二次确认、任务补导入/调度器独立恢复及历史容量规则，不因多 worker 改造隐式重装。
+6. 使用两个真实面板进程验证活跃查询、同 ID 竞争、不同作业进度合并、异 worker 停止、停止失败再试、父子重试竞争、owner 硬退出和监管尚在清理的窗口；覆盖坏历史、首次保存、Thread 失败和 HTTP/终写交接。Linux/Windows CI 均通过后记录版本/SHA/结果，再推进下一域；自动化通过仍不替代 APP 用户手动验收。
 
 随后处理 `RESTORE_DEPENDENCY_CLEANUP` 仅在所属 worker 内存中的句柄：其他 worker 不能因只看到持久身份就提前释放原 owner 的 lease，也不能跳过仍在读输出的线程。全部恢复回执损坏时须保留可核验维护入口，查询不执行修复。APP 再覆盖原生备份页嵌套 401/重登、切换面板、旧回包及任务/概览刷新；这些是后续实现任务，当前检查点不证明已支持。
 
@@ -258,7 +306,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 最新 FLS `70ad27f` / `20261127.19` 追加同步文件/Web 拉取导入及流式下载保护、Web Git 监管、busy 透传及跨 worker 身份退役互斥；沿用三域回执、克隆/HEAD 监管、I/O 门禁、持久目录现场及 APP `79bbfab` 原请求确认。实际 CI/APK 见上方。继续在线安装/调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 最新 FLS `8156301` / `20261127.22` 在 `b8c8b60` 的在线安装 lease/命令监管上修正 Windows 日志/产物短路径及停止回执清理竞态，沿用文件/Web 传输、三域跨 worker、I/O 门禁、持久目录现场和 APP `79bbfab` 原请求确认。实际 CI/APK 见上方。继续在线安装跨 worker/独立任务入口、调试、任务/日志、启动器、Windows 实例锁/WAL/断电、多 worker 依赖清理、损坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
