@@ -210,7 +210,7 @@ void main() {
         ),
       ),
     );
-    await pumpUntilFound(tester, find.textContaining('start response lost'));
+    await pumpUntilFound(tester, find.textContaining('面板连接失败'));
     expect(starts, 1);
     await tester.tap(find.byTooltip('刷新状态与日志'));
     await pumpUntilFound(tester, find.text('recovered output'));
@@ -357,14 +357,26 @@ void main() {
     await pumpUntilFound(tester, find.text('succeeded'));
     expect(find.text('重新运行'), findsNothing);
     expect(
-      tester.widget<IconButton>(find.byTooltip('停止调试运行')).onPressed,
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (widget) => widget is IconButton && widget.tooltip == '停止调试运行',
+            ),
+          )
+          .onPressed,
       isNull,
     );
     status = 'stopping';
     await tester.tap(find.byTooltip('刷新状态与日志'));
     await pumpUntilFound(tester, find.text('停止中'));
     expect(
-      tester.widget<IconButton>(find.byTooltip('停止调试运行')).onPressed,
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (widget) => widget is IconButton && widget.tooltip == '停止调试运行',
+            ),
+          )
+          .onPressed,
       isNull,
     );
     await tester.pumpWidget(const SizedBox());
