@@ -2,15 +2,87 @@ import 'dart:math';
 
 import '../models/panel_collection.dart';
 import '../models/panel_task_detail.dart';
+import '../models/panel_task_config.dart';
 import '../models/panel_task_draft.dart';
 import '../models/panel_task_page.dart';
 import '../models/panel_task_summary.dart';
 import 'panel_api_client.dart';
 
 class PanelTasksManager {
-  const PanelTasksManager(this._api);
+  PanelTasksManager(this._api);
 
   final PanelApiClient _api;
+  final Map<String, PanelTaskConfigRecovery> _configRecoveries = {};
+
+  PanelTaskConfigRecovery configRecoveryFor(String taskId) =>
+      _configRecoveries.putIfAbsent(taskId, PanelTaskConfigRecovery.new);
+
+  String _configPath(String taskId) =>
+      '/api/tasks/${Uri.encodeComponent(taskId)}/config-file';
+
+  Future<PanelTaskConfigSnapshot> fetchTaskConfig(String taskId) async {
+    final path = _configPath(taskId);
+    final payload = await _api.getJson(path);
+    try {
+      if (payload is! Map<String, dynamic> || payload['ok'] != true) {
+        throw const FormatException('任务配置响应格式无效');
+      }
+      final file = PanelTaskConfigSnapshot.fromJson(payload['file']);
+      if (file.taskId != taskId) {
+        throw const FormatException('任务配置与当前任务不匹配');
+      }
+      return file;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelTaskConfigSubmission> saveTaskConfig(
+    PanelTaskConfigSnapshot file, {
+    required String content,
+    required String requestId,
+  }) async {
+    final path = _configPath(file.taskId);
+    final payload = await _api.postJson(path, {
+      'request_id': requestId,
+      'path': file.path,
+      'expected_revision': file.revision,
+      'content': content,
+    });
+    final result = _configSubmission(payload, path, file.taskId, requestId);
+    if (result.path != file.path) {
+      throw PanelApiException('提交回执与配置路径不匹配', path: path);
+    }
+    return result;
+  }
+
+  Future<PanelTaskConfigSubmission> fetchTaskConfigRequest(
+    String taskId,
+    String requestId,
+  ) async {
+    if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(requestId)) {
+      throw ArgumentError('配置提交 ID 无效');
+    }
+    final path = '${_configPath(taskId)}/requests/$requestId';
+    return _configSubmission(await _api.getJson(path), path, taskId, requestId);
+  }
+
+  PanelTaskConfigSubmission _configSubmission(
+    Object? payload,
+    String path,
+    String taskId,
+    String requestId,
+  ) {
+    try {
+      final result = PanelTaskConfigSubmission.fromJson(payload);
+      if (result.taskId != taskId || result.requestId != requestId) {
+        throw const FormatException('提交回执与原请求不匹配');
+      }
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
 
   Future<PanelCollectionPage> fetchCollections({
     String query = '',

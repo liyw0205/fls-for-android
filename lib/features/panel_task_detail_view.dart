@@ -7,6 +7,7 @@ import '../models/panel_task_draft.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_tasks_manager.dart';
 import 'panel_task_editor_view.dart';
+import 'panel_task_config_view.dart';
 
 class PanelTaskDetailView extends StatefulWidget {
   const PanelTaskDetailView({
@@ -140,6 +141,29 @@ class _PanelTaskDetailViewState extends State<PanelTaskDetailView> {
     if (saved == true && mounted) await _load();
   }
 
+  Future<void> _editConfig() async {
+    final manager = widget.manager;
+    final taskId = widget.taskId;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PanelTaskConfigView(
+          manager: manager,
+          taskId: taskId,
+          taskName: _detail?.task['name']?.toString() ?? widget.taskName,
+          onUnauthorized: (error) async {
+            if (!mounted ||
+                manager != widget.manager ||
+                taskId != widget.taskId) {
+              return;
+            }
+            await widget.onUnauthorized(error);
+            if (mounted) Navigator.of(context).maybePop();
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildBody(BuildContext context) {
     final detail = _detail;
     if (detail == null) {
@@ -185,6 +209,14 @@ class _PanelTaskDetailViewState extends State<PanelTaskDetailView> {
               _detailRow('备注', detail.task['remark']),
               _detailRow('Cron', detail.task['cron'], emptyText: '手动任务'),
               _detailRow('配置文件', detail.task['config_path']),
+              if (_text(detail.task['config_path']).isNotEmpty)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.description_outlined),
+                  title: const Text('编辑配置内容'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _loading ? null : _editConfig,
+                ),
               _detailRow('合集 ID', detail.task['collection_id']),
               _detailRow('代理 ID', detail.task['proxy_id']),
               _detailRow('运行次数', detail.task['run_count']),

@@ -20,6 +20,22 @@ void main() {
         csrfToken: 'detail-csrf',
       ),
       client: panelMockClient((request) async {
+        if (request.url.path == '/api/tasks/daily/config-file') {
+          return utf8Response(
+            jsonEncode({
+              'ok': true,
+              'file': {
+                'task_id': 'daily',
+                'path': 'conf/app.yml',
+                'revision': 'a' * 64,
+                'exists': true,
+                'content': 'native config',
+                'max_bytes': 1048576,
+              },
+            }),
+            200,
+          );
+        }
         if (request.url.path == '/api/task/daily/log') {
           return utf8Response(
             '{"ok":true,"task_id":"daily","running":false,"lines":200,"log":"log line"}',
@@ -35,6 +51,7 @@ void main() {
               'name': '每日任务',
               'remark': '主账号',
               'command': 'python daily.py',
+              'config_path': 'conf/app.yml',
               'cron': '0 8 * * *',
               'enabled': true,
               'run_count': 2,
@@ -104,6 +121,25 @@ void main() {
     await tester.tap(find.byTooltip('显示变量值'));
     await tester.pump();
     expect(find.text('very-secret'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('编辑配置内容'),
+      -240,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).first,
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.tap(find.text('编辑配置内容'));
+    await pumpUntilFound(tester, find.text('任务配置文件'));
+    await pumpUntil(
+      tester,
+      () =>
+          find.byType(TextField).evaluate().isNotEmpty &&
+          tester.widget<TextField>(find.byType(TextField)).controller!.text ==
+              'native config',
+    );
     expect(tester.takeException(), isNull);
   });
 }
