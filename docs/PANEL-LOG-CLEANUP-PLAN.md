@@ -2,17 +2,49 @@
 
 ## 实现状态与范围
 
-本文件包含已实施的协调基础和待实现的原生契约；所列新 API 尚不存在，不能据本文开放 APP 写操作。最新 FLS `cc1493e` / `20261128.4`（159）已提交推送 `develop`，APP 代码/APK 仍为 `269c16c` / `0.1.73+87`。此前普通任务监管、日志入口恢复门禁及实际 8 MiB 有界下载的证据见 [任务执行规格](PANEL-TASK-EXECUTION-PLAN.md)。原生日志现有列表、搜索、读取及下载；单文件/分组清理未原生迁移。
+本文件包含已实施的协调基础和待实现的原生契约；所列新 API 尚不存在，不能据本文开放 APP 写操作。最新 FLS 实现 `f907e6c5168ea9c7526c3ac089e8779959c94b05` / `20261128.13`（168），推送及新 SHA 验证见下方记录；APP 代码/APK 仍为 `269c16c` / `0.1.73+87`。此前普通任务监管、日志入口恢复门禁及实际 8 MiB 有界下载的证据见 [任务执行规格](PANEL-TASK-EXECUTION-PLAN.md)。原生日志现有列表、搜索、读取及下载；单文件/分组清理未原生迁移。
 
 `cc1493e` 新增 `fls_manager/log_access.py`，在恢复范围外按日志文件名协调跨进程共享读取/写入与独占删除，锁保持至实际句柄关闭；校验目录/文件身份，拒绝链接和特殊文件。已接普通任务、调试、在线安装、依赖/运行时、备份依赖、面板控制及前端事件的 Python 日志入口和读取/下载。普通任务/调试/在线安装的独立命令监管在 owner 强退后继续持日志 lease。Web 单文件、分组及自动清理共用版本核对删除 helper，替代进程内 `LOG_FILES_MUTATION_LOCK`；占用读取返回 503 `log_file_busy`。
 
-覆盖边界：依赖/运行时、旧备份依赖、脱离运行的面板控制子进程和 shell/PowerShell 常驻启动器，尚未全部实现 owner 强退后的日志 lease 交接。自动清理已跳过占用文件，逐结果计数未做。固定目标快照、持久逐项删除意图/回执、容量/TTL、原请求查询/核对及 APP 清理页面均未实现，不能将基础协调视为日志原生清理完成。
+`5e2c762` 补自动清理的 deleted/missing/busy/conflict/failed/unknown 计数。先扫描一次并固定全部文件版本与时间，再处理大小和保留数量；每个过大文件只尝试一次，分组头不可读时保留文件并计失败，避免误分到其他日志。删除前变化返回 conflict，清理期间新建日志留到下一轮。计数目前仅由内部函数返回，尚无原生展示。
+
+`f5aacbd` 新增 `InstallProcess`，在依赖安装、原生卸载、运行时安装和两类重试的五处异步创建点复用 `DirectoryProcess`。启动门之前监管接管恢复/日志 lease；terminate/kill 只关闭 owner 控制通道，不向监管 PID 直接发信号。wait/poll 在整树和继承日志退出、临时目录清理成功后才返回退出码，并发等待共用结果/清理锁。父日志关闭失败不再被轮询/取消终态吞掉：原 process/log_fp 和状态保留，后续查询确认关闭后再完成；不新增取消或重试协议。
+
+`5977c73` 将旧 Web 卸载复用已有卸载受理、包名/库存校验、冲突、回执和监管：每个表单生成请求 ID，重复 Web/原生提交共用同一作业，受理及回执待保存跳转原日志页。错误保留原状态及纯文本，不另建取消/重试模型。新增回放、校验、CSRF、回执故障及真实无害命令测试；本机相关 82 项/36 subtests、旧 Web 页 2 项通过。
+
+`f574248` 将旧恢复依赖接入 `InstallProcess`，保留原命令、日志及 1800 秒等待上限。原主恢复锁保持独占，监管先取得独立 `.backup_restore_command.lock`，面板重新核对原锁文件和独占占用后发送第二次启动确认；确认前断连不执行命令。公共主恢复锁先持有 primary，再探测 guard；占用或故障释放 primary，create=False 不新建文件，避免首次 guard 缺失的竞争。owner 强退/原锁释放后，独立 guard 保留至整树及继承日志关闭；不依赖 Windows 父句柄继承。超时先确认整树停止，再释放归档/日志。该路径不改原生备份 `DependencyProcess` 的清理协议。
+
+`f85b87b` 将控制命令和 shell/PowerShell 常驻输出交给独立管道收集进程。只有收集进程打开 `fls-manager-daemon.log`，最后一个继承输出端关闭后才释放日志 lease；owner 退出不取消控制命令。固定守护日志位于 data/scripts 恢复集之外，只长期持有日志锁，不阻塞恢复；其他日志保留原恢复门禁。启动确认前失败不执行命令，描述符交接失败恢复原输出；Windows 同步 CRT 与系统标准句柄，PowerShell 直接启动 Python。systemd transient unit 的服务端输出仍使用原 journal，客户端输出进入收集管道，未运行真实 systemctl。
+
+覆盖边界：本批常驻日志交接须以新 SHA 的 Windows/Linux CI 验证。原生清理的固定目标快照、持久逐项删除意图/回执、容量/TTL、原请求查询/核对及 APP 清理页面均未实现，不能将基础协调视为日志原生清理完成。启动器的 Windows 实例锁/WAL/断电等边界仍属 B3 剩余工作，不能由日志交接测试代替。
 
 2026-11-28 03:51（UTC+8）验证快照：本机最终日志/删除/任务日志/发布说明 29 项、54 子用例通过；扩展调试/在线安装等 113 项、55 子用例通过、1 项跳过。绑定 `cc1493e` 的 Module `46059064241`、Desktop `46059064327`、EXE `46059064382` 打包成功；[Native `46059064312`](https://github.com/liyw0205/fls/actions/runs/46059064312) 尚在运行，Windows 新增日志步骤已通过，不能提前记录双平台全绿。APP `269c16c` 的 Android CI `46051131340` 已通过 268 项测试与 APK 构建，本批未改 APP 代码。
 
-03:59 后续收取：上述 Native 的 Windows 作业失败，在线安装步骤为 6 failed（含 2 个子用例）、177 passed、5 skipped、132 subtests passed，Linux 仍在运行。失败集中于 `test_online_install_lifecycle.py` 的日志阶段、读取恢复、停止故障和终态回执故障；本机重跑其中三项主测试同样失败（含两个子用例，共 5 failed）。现有安装日志路由允许旧记录位于 BASE_DIR 根目录，新共享层只接受 LOG_DIR，两者冲突会使原先可读的路径返回 500，不能未经兼容性核对直接将全部失败归为夹具错误。本次未修改代码/断言，下一步先修复这一回归，再重新取得确切 SHA 的双平台结果。Windows 日志保存在本机临时目录 `fls-46059064312-windows.log`。
+后续失败与修复证据按实际 SHA 保留：
 
-本批覆盖原生单文件、多文件和分组预检查/删除/查询，旧 Web 单文件/分组删除及自动清理共用同一协调层。所有业务页仍复用面板 session/CSRF 和恢复门禁；不删除任务、脚本、历史或备份。
+- `cc1493e` 的 Native `46059064312` 最终双平台失败：Linux 11 failed/1130 passed/1 skipped/1024 subtests，Windows 在线安装 6 failed（含 2 个子用例）/177 passed/5 skipped/132 subtests。旧安装路由自 `761da4c` 接受 BASE_DIR 根目录日志，新共享层只接受 LOG_DIR，导致旧记录读写失败；本机同样复现，未通过改夹具掩盖兼容回归。
+- `f1fe652` / `20261128.5`（160）以显式 legacy_root 恢复旧根目录 `.log` 读写和安装监管，根目录与 LOG_DIR 同名文件分开选锁，默认删除仍只接受 LOG_DIR，链接/越界拒绝保持。可读性探测也接共享锁。原安装生命周期断言保留，本机 8 文件 176 passed/1 skipped/97 subtests。Native `46062169439` 的 Linux 1140 passed/1 skipped/1031 subtests；Windows 两项任务等待失败，后续安装步骤当时全部 skipped，不能记为已验证。
+- `da93db1` / `20261128.6`（161）加入任务失败现场及持旧回执句柄的确定性双进程回归；Windows 独立步骤失败后继续收集证据，但任一失败仍使 job 失败。Native `46064429360` 最终 Linux 1141 passed/1 skipped/1031 subtests（2 条既有 tar 警告），Windows 仅新增持句柄用例失败：另一个 worker 的 os.replace 报 PermissionError/WinError 5，12 项任务/46 subtests 及后续 12 个独立步骤通过。在线安装本轮 181 passed/5 skipped/134 subtests，补齐了旧日志修复在 Windows 的证据；三个打包工作流成功。
+
+- `5e2c762` 的读取共享修正不足以完成 Windows 原子发布。Native `46066990491` 最终 Linux 1147 passed/1 skipped/1031 subtests（2 条既有 tar 警告），Windows 原持句柄回归与手动替换重试失败（2 failed/13 passed/46 subtests）；后者日志明确重试计划被 os.replace/WinError 5 中断。其余 12 个独立步骤成功，自动清理/日志 31 项/13 subtests 通过，三个打包工作流成功。本机此前日志扩展 124 项/64 subtests、任务/历史/日志 107 项/77 subtests、发布说明/轮询 6 项/3 subtests 均通过，不能代替 Windows 失败结论。
+
+`9aeff36` 修正发布端：CPython 3.12 的 os.replace 使用 MoveFileExW；仅加 FILE_SHARE_DELETE 仍不允许旧接口替换已打开目标。按微软 FILE_RENAME_INFORMATION 契约使用 FileRenameInfoEx 的 REPLACE_IF_EXISTS | POSIX_SEMANTICS，旧句柄继续读取旧对象，新打开读取完整新版本。发布前同步私有临时文件，以 DELETE 权限打开最终源句柄并校验 reparse/常规文件，单次原子发布后关闭 FD；失败仍清理临时文件，不增加任意重试或超时。保留原红测试及 16 KiB/链接边界，并补 Unicode 含双 UTF-16 码元路径和发布失败保留/清理测试。本机 6 文件 97 项/72 subtests、新发布/读取定向 5 项通过。[Native 46071964294](https://github.com/liyw0205/fls/actions/runs/46071964294) 最终完整成功：Linux 1149 passed/1 skipped/1031 subtests（2 条既有 tar 警告），Windows 任务 17 项/46 subtests 及其余 12 步全部通过，在线安装 181 项/134 subtests、5 skipped；三项打包也成功。APP 构建与手动验收状态不变。
+
+`f5aacbd` 本机依赖相关 75 项/30 subtests、日志/监管/旧删除/发布说明相关 58 项/26 subtests 通过。新回归覆盖真实父子进程、owner 强退后的独立 lease、启动失败、并发等待、workspace/父日志关闭失败，以及安装/卸载/运行时与重试原 ID 回放；没有真实 pip/系统安装。父日志关闭红测试在修复前的 poll/cancel 两个子用例均失败，修复后留仓。扩展整个 `test_high_side_effect_workflows.py` 时有 4 项 BackupIsolation 失败，已在未修改 `9aeff36` 的独立 git archive 副本重现相同四项，不能记为本批全 suite 通过。Native `46075102248` 最终完整成功：Linux 1149 passed/1 skipped/2 既有 tar warnings/1031 subtests，Windows 原有全部作业通过；新增 Linux 监管 10 项/10 subtests、旧依赖 65 项/20 subtests，Windows 监管 10 项/7 subtests。三项打包 `46075102329`、`46075102342`、`46075102353` 成功，正式发布全部 skipped。
+
+Web 卸载 `5977c73` 的 Native `46077499732` 完整双平台成功：Linux 1149 项/1031 subtests、1 跳过、2 既有 tar warnings；Windows 任务、日志/备份/在线脚本及双平台依赖监管均通过。三项打包 `46077499922`、`46077499781`、`46077499832` 成功，正式发布全部 skipped。
+
+恢复安装 `f574248` 新测试实施前 4 failed/1 passed，实施后监管/日志/活动等 6 文件 63 项/33 subtests、目录/日志 5 文件 24 项/16 subtests 通过。最终锁顺序修正及新增缺失 guard/拒绝释放/原锁内探测回归后，活动/安装 24 项/20 subtests、扩展 9 文件 213 项/140 subtests 通过，compileall/diff 检查通过。Native `46079372062` 最终 failure：Linux 1150 passed/1 skipped/2 既有 tar warnings/1031 subtests，双平台恢复安装监管和 Windows 任务成功；Windows 在线安装步骤 1 failed/180 passed/5 skipped/134 subtests，其他步骤通过。唯一失败为页面确认用例的临时目录清理，持有的锁名与 `frontend-events.log` 的 SHA-256 完全一致；隔离夹具漏等 `fls-frontend-open` 通知线程。三项打包 `46079371964`、`46079372100`、`46079372093` 成功，正式 Publish 全部 skipped。不能将新增监管成功记为完整回归通过。
+
+常驻日志 `f85b87b` 同时补齐夹具等待上述线程，不忽略异常或删减业务断言。新测试实现前 9 failed（含 2 个子用例）/1 passed；真实控制函数返回后，旧实现会删除仍在输出的日志。实现后最终新文件 11 项/4 subtests、日志/控制/旧删除相关 65 项/31 subtests、实例锁 3 项，以及依赖监管/恢复活动/在线安装恢复/发布说明 59 项/52 subtests 通过。覆盖大于单块输出、owner 正常退出/强退、子进程继承输出、恢复锁持有期间继续写入、启动超时、命令 spawn/描述符故障及真实平台启动脚本。整 `test_fls_startup.py` 的 3 个既有 Termux 进程扫描子用例失败保留，本机无 PowerShell；双平台工作流最终结论见下段。只运行临时目录内无害 Python，不执行真实安装、重启/停止、稳定面板恢复或 ADB。
+
+`f85b87b` 的 Native `46081466141` 最终 failure，新增 Windows daemon 步骤为 1 failed/9 passed/1 skipped/4 subtests，仅真实 PowerShell 启动失败。原安装监管 14 项/10 subtests 成功，Linux 新增监管 job 与 Windows 任务成功；完整 Linux 1150 passed/1 skipped/2 既有 tar warnings/1031 subtests，Windows 原有长回归全部成功，在线安装 181 passed/5 skipped/134 subtests，确认前述夹具等待修正已通过。已捕获管道的 owner 测试通过，但控制台启动的 Python 保留 WindowsConsoleIO，dup2 后仍调用控制台写入，实际报 OSError22/WinError1 `Incorrect function`、`lost sys.stderr`。Module `46081466142` 成功；Desktop `46081466146` 安装后启动复现同错误，EXE `46081466246` 安装后健康检查失败。
+
+`f907e6c` 保留真实平台启动红用例，在 Windows 描述符和系统标准句柄交接后创建普通 UTF-8 文本流；使用独立 duplicate FD，两流均构造成功后再替换 stdout/stderr，失败走原回滚。平台用例同时断言文本、stderr、os.write 和继承子进程输出。本机新测试及发布说明最终 13 项/4 subtests 通过，compileall/diff 检查通过。已在上一完整 Native 终态后推送此提交至 `develop`，没有取消旧证据；新 [Native `46083027529`](https://github.com/liyw0205/fls/actions/runs/46083027529)、Module `46083027619`、Desktop `46083027534` 和 EXE `46083027519` 已启动，尚未取得完整终态。新 SHA 的 Windows 及真实打包验证仍须收取，不以本机成功记为修复闭环。
+
+本次进度核对继续收取 `f907e6c`：Windows 真实平台启动及安装监管 job、Linux 新增监管 job、Windows 任务 job 均成功；Module `46083027619`、Desktop `46083027534`、EXE `46083027519` 三项打包成功。完整 Native `46083027529` 的 Linux 和 Windows 长回归仍在运行，整体结论尚未取得；不取消此 run 或推送另一后端提交替代其终态。全量原生业务、主题和用户验收仍未完成，不能据此合并发布。
+
+计划覆盖原生单文件、多文件和分组预检查/删除/查询，旧 Web 单文件/分组删除及自动清理共用同一协调层。所有业务页仍复用面板 session/CSRF 和恢复门禁；不删除任务、脚本、历史或备份。
 
 ## 后端实施顺序
 
@@ -21,6 +53,20 @@
 3. **逐入口接入。** 普通任务首次打开及 `_append_log`、调试运行及补写、`online_scripts/logs.py` 的短追加和安装、`routes/deps.py`、`routes/runtime.py`、备份后续依赖、`routes/about/helpers.py`、`frontend_events.py` 都要追踪实际打开/关闭与后台交接。日志读取/下载关闭前持共享 lease；Web 与自动清理使用同一独占删除 helper。自动清理遇活跃文件跳过并计数，不能因文件过大截断正在写入的日志。
 4. **实现固定目标快照和持久回执。** 预检查固定文件清单、各版本、分组版本和大小；删除只处理该快照，不在提交时重新扩展分组。回执保存在 data/log 恢复范围之外，先持久化准备/逐项删除意图，再执行 unlink 和保存结果。坏回执/超限/持久化失败保留原文件和未知结果，不能静默覆盖或重建。
 5. **再接 APP。** 服务端契约与 worker/故障测试通过后，新增严格 DTO/manager 和原生预检查/结果页；完成单文件、多选、分组以及原请求恢复，再推送配对版本验证。
+
+### 入口监管与剩余交接
+
+已核对实际创建和关闭路径，下一批沿用现有 `DirectoryProcess` 能力，不重复改造已接入的普通任务、调试和在线安装。
+
+| 入口 | 当前行为与接续要求 |
+| --- | --- |
+| `routes/deps.py` 的异步安装、原生卸载及重试；`routes/runtime.py` 的安装 | `f5aacbd` 已接统一监管适配，在启动门前接管日志/恢复 lease，整树和继承输出退出且临时目录清理成功后返回终态；原请求、取消与重试链语义保留，实际平台证据见上段 |
+| `routes/deps.py` 的取消与结果轮询 | `f5aacbd` 保留原子取消认领，适配器将 terminate/kill 转为关闭 owner 通道；父日志关闭失败保留原状态/句柄。旧自然完成、超时、重试和终态回执失败断言保留 |
+| `routes/deps.py::deps_uninstall` 的 Web 卸载 | `5977c73` 已复用现有卸载作业，完整双平台 CI 通过；表单原 ID、库存/冲突/回执及日志页共用，不再同步 pip_cmd，无平行取消/重试协议 |
+| `routes/backup/_common.py::install_dependencies` | `f574248` 已接监管独立守卫和二次确认，原主锁持有期间交接，所有主锁受理探测 guard；owner 强退后先停整树/关日志再退 guard。该 SHA 双平台新增监管通过，但完整 Native 有上述 Windows 夹具失败；后续新 SHA 重新验证，不用局部成功代替整体 |
+| `routes/about/helpers.py::run_fls_control_later` 与 shell/PowerShell 启动器 | `f85b87b` 已实施独立管道收集，实际 file writer 只在最后一个输出端 EOF 后释放 lease；固定 daemon 文件不持长期恢复锁，systemd transient builder 保留。Windows 真实启动红用例由 `f907e6c` 补普通文本流交接，实际新 SHA CI 待收取；其他实例锁/WAL/断电边界仍未完成 |
+
+`9aeff36` 已将 Windows 普通任务回归拆成独立短作业，与其余 12 个 Windows 检查及完整 Linux 回归并列，13 个原测试命令逐字保持，没有 continue-on-error。这样可在任务 job 终态后立即读取失败现场，不必等待在线安装/任务源全部结束；未通过的候选继续保留原工作流终态，不中途取消后改写证据。
 
 ## 计划 API
 

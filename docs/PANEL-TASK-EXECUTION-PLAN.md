@@ -2,7 +2,11 @@
 
 ## 当前候选
 
-2026-11-28 已按 FLS、APP 顺序同步两个 develop。后端实现 `f84388aa0f4c6d7f5191b319f8fcddd767184b2a`，Windows 回归修正 `4f47e9ef8889fc8f4a7414eddf5d4e6c313a1ccc` / `20261128.3`（158）；APP 实现 `bef2848`，测试等待修正 `269c16cc88683af9e863814016fbf8e6f1c3230f` / `0.1.73+87`。本批实现普通任务执行监管、任务日志恢复门禁及 APP 阶段展示；日志原生清理和 B3/B4 仍未完成。
+2026-11-28 已按 FLS、APP 顺序同步两个 develop。普通任务实现 `f84388aa0f4c6d7f5191b319f8fcddd767184b2a`，早期 Windows 回归修正 `4f47e9ef8889fc8f4a7414eddf5d4e6c313a1ccc` / `20261128.3`（158）；最新后端实现为 `f907e6c5168ea9c7526c3ac089e8779959c94b05` / `20261128.13`（168），恢复安装、常驻日志交接及 Windows 控制台修正见日志清理规格。APP 实现 `bef2848`，测试等待修正 `269c16cc88683af9e863814016fbf8e6f1c3230f` / `0.1.73+87`。本批实现普通任务执行监管、任务日志恢复门禁及 APP 阶段展示；日志原生清理和 B3/B4 仍未完成。
+
+最新修复：`da93db1` 的 Native `46064429360` 在 Windows 稳定复现持旧回执读取句柄期间另一个 worker 的 os.replace 报 WinError 5；该轮 Linux 1141 项/1031 subtests 通过，Windows 12 项任务/46 subtests 及其余独立步骤通过，不能忽略新增用例失败。`5e2c762` 改用允许 READ/WRITE/DELETE 共享并拒绝最终 reparse point 的读取句柄，但 Native `46066990491` 仍失败：Linux 1147 项/1031 subtests 通过，Windows 持句柄及手动替换重试失败（2 failed/13 passed/46 subtests），其余步骤及三项打包通过。现场重试计划明确被 os.replace/WinError 5 中断，读取共享不是完整修复。
+
+`9aeff36` 将发布改为 FileRenameInfoEx 的替换/POSIX 语义：已同步的私有临时文件用 DELETE 权限打开、检查最终源句柄后一次替换，旧句柄继续读取旧对象；保留大小、常规文件、reparse 拒绝与 POSIX NOFOLLOW/NONBLOCK，错误关闭 FD 并清理临时文件。保留原红测试，新 Unicode（含双 UTF-16 码元）路径/旧对象读取和发布失败保留回归本机 5 项通过，相关 6 文件 97 项/72 subtests 通过。Windows 任务拆为独立 job，13 个原命令及 Linux 覆盖不变；Native `46071964294` 最终完整成功，Linux 1149 项/1031 subtests（1 跳过、2 既有 tar 警告），Windows 任务 17 项/46 subtests 及其余 12 步全部通过，三项打包成功。后续 `f5aacbd` 的 Native `46075102248` 和 Web 卸载 `5977c73` 的 Native `46077499732` 也已完整成功；`f574248` 的 Native `46079372062` 在 Windows 夹具清理失败，新增恢复监管及完整 Linux 成功。`f85b87b` 补等待后原长回归通过，但新增真实启动失败；修正 `f907e6c` 已推送，Native `46083027529` 及三项打包验证中，不用局部成功代替整体。完整日志兼容/自动清理及失败历史见 [日志清理规格](PANEL-LOG-CLEANUP-PLAN.md)。
 
 ## 后端执行与恢复
 
@@ -46,4 +50,4 @@ APP DTO 对可选 active/stop_requested 严格校验 bool，兼容旧后端缺�
 
 使用配对 develop APK 和隔离面板：启动带延迟和失败重试的任务，核对列表/详情状态和同次日志；另一 worker 请求停止，观察停止受理到最终清理；切面板、后台返回和重新登录时不显示旧任务/日志。真实强退与恢复冲突只在隔离测试数据上验证。
 
-下一批按 [日志原生清理规格](PANEL-LOG-CLEANUP-PLAN.md) 补单文件/分组预检查、活跃写入协调、版本绑定删除和原操作恢复，包含自动清理与旧 Web。随后继续启动器、逐域 busy、Windows 实例锁/WAL/断电、多 worker 依赖清理、坏回执维护与 APP 备份完整流程，再做 B4 和 M4-M7。监管自身强退、逃离进程组、外部任意文件写入等未验证边界不扩大为已完成。两个 main 及正式更新渠道保持不动。
+下一批按 [日志原生清理规格](PANEL-LOG-CLEANUP-PLAN.md) 补单文件/分组预检查、版本绑定删除和原操作恢复，包含自动清理与旧 Web。常驻输出交接已有新候选，继续核验其平台结果，再推进逐域 busy、Windows 实例锁/WAL/断电、多 worker 依赖清理、坏回执维护与 APP 备份完整流程，最后 B4 和 M4-M7。监管自身强退、逃离进程组、外部任意文件写入等未验证边界不扩大为已完成。两个 main 及正式更新渠道保持不动。
