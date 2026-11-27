@@ -18,7 +18,11 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：脚本调试及任务配置恢复保护
+#### 最新检查点：任务配置原生编辑
+
+2026-11-28 候选为 FLS `5ce38a1` / `20261128.1`（156）和 APP `77902df` / `0.1.71+85`，实现、契约、工作流和剩余边界集中见 [任务配置规格](PANEL-TASK-CONFIG-PLAN.md)。已新增任务绑定的 JSON 读取/保存/原提交查询、外置签名回执、任务路径与交互式文件发布的跨 worker 锁，以及任务详情原生内容编辑/冲突草稿/未知核对。Native `46035359025` 双平台成功：Linux 1027 项/937 子用例、Windows 配置 15 项/29 子用例及全部其他步骤成功；三打包成功，正式发布 skipped。APP CI `46036472144` 格式/分析、263 项测试及 arm64 APK 成功，[artifact 15219670638](https://github.com/liyw0205/fls-for-android/actions/runs/46036472144/artifacts/15219670638) 到期于 2026-12-11 16:54:15 UTC。平台专用跳过与失败修正见任务配置规格，不能拿下方历史 APK 代替本批构建。普通任务运行/日志等下述 B3 剩余继续推进，不计 B3/B4 完成。
+
+#### 上一检查点：脚本调试及任务配置 Web 保护（历史）
 
 2026-11-27 先 fetch/fast-forward 核对两仓 `develop`。最新 FLS 代码候选 `178d23e0d77a677afa62a902283a6feac159bca2` / `20261127.35`（155），调试实现在 `c5bcb2e`，Windows 测试修正为 `722c61b` / `20261127.34`；APP 为 `d6a54e3420dceacce97724a9450d262ad30a0392` / `0.1.69+83`，原实现 `2fc553c`。文档提交不改变实际 APK 构建 SHA；本检查点不计 B3/B4 或全量原生交付。
 
@@ -28,7 +32,7 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 APP 复用原生调试页：启动丢响应只查询原 request ID，历史提供“查询原调试提交”；查询失败禁写，`active` 清理期间不开放新运行，停止丢响应只 GET 原 run。DTO 可兼容旧后端缺少 `request_id/active`，出现时严格校验；切面板/脚本/请求、历史返回和迟到回包按代次隔离，当前 401 只处理一次。原 ID 暂留页面内存，跨 APP 进程自动恢复仍归 M5。
 
-`178d23e` 补任务配置 Web GET/POST 的完整恢复 lease，覆盖任务/路径核对、快照、原子替换和临时清理；`PanelStorageBusy` 不再被普通文件错误吞掉。快照实际读取最多 1 MiB + 1 字节并拒绝超限，UTF-8 草稿按字节限制；保留 revision、权限、精确换行和已有草稿合并。Werkzeug 自身表单限制仍有效；只对已进入编辑器的草稿保证回显。**任务配置的原生 JSON 编辑契约与 APP 页面仍未实现。**
+`178d23e` 补任务配置 Web GET/POST 的完整恢复 lease，覆盖任务/路径核对、快照、原子替换和临时清理；`PanelStorageBusy` 不再被普通文件错误吞掉。快照实际读取最多 1 MiB + 1 字节并拒绝超限，UTF-8 草稿按字节限制；保留 revision、权限、精确换行和已有草稿合并。Werkzeug 自身表单限制仍有效；只对已进入编辑器的草稿保证回显。原生 JSON 编辑契约与 APP 页面已由上方最新检查点接续。
 
 本机验证：调试/旧 UI/发布说明 118 项、65 子用例通过；调试监管定向曾有 38 项、15 子用例通过。任务配置新增 5 项，连同旧配置、脚本目录门禁及发布说明共 32 项、174 子用例通过，覆盖恢复锁/坏现场、读取/发布/清理期间恢复互斥、busy 传播、UTF-8 字节超限及增长文件的有界读取/句柄关闭。此前扩展启动回归的 Termux `test_start_reuses_live_manager_when_pid_file_is_missing_or_stale` 仍有 3 个进程识别子用例失败，不记为本机全量成功。
 
@@ -386,7 +390,7 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 | 外部任务源同步 | `05622bd` / `9b34573` 已补全部 Web/API 恢复门禁、真实身份/回执/独立恢复认领、缓存合并和原刷新恢复回执修复协调；APP 同批补活跃动作禁用和原请求查询 | 本批证据见本节顶部；只合并在线源 task_cron，不写 tasks.json 或重载调度器。手动验收待用户，不重复重做候选 |
 | 在线源刷新/日志及源编辑 | `c2da9c7` 已补全部入口门禁、首次回执前真实身份、线程/HTTP 关闭/日志清理 lease、跨 worker 回执及独立恢复认领；源编辑/任务源/刷新协调发布 | 本批真实平台结论见本节顶部；APP `efa31ba` 已补可信查询、原 child/task-link ID、失败分页及旧回包/401，隔离面板手动验收待用户 |
 | 脚本调试 | `c5bcb2e` 已补全部入口门禁、真实身份/回执、持久停止及独立监管，`722c61b` 完整双平台回归通过 | APP `d6a54e3` 的原请求查询、可信状态/活跃禁写及切面板隔离已由 253 项 CI 验证；手动验收与跨 APP 进程恢复待完成 |
-| 任务配置文件 | `178d23e` 已补 Web GET/POST 全程恢复 lease、busy 传播和 1 MiB 有界快照/草稿，本机新旧回归及该 SHA 双平台 CI 通过 | 原生 JSON 编辑契约、APP 内容编辑/冲突恢复入口尚未实现，不能以任务表单已有 config_path 字段代替；手动验收待用户 |
+| 任务配置文件 | `178d23e` 已补 Web 门禁/有界快照，`5ce38a1` 接续任务绑定 JSON、外置签名回执和跨 worker 发布；当前双平台 CI 通过 | APP `77902df` 原生内容编辑、冲突/未知核对与会话内原 ID 恢复由 263 项 CI 验证；跨 APP 进程恢复归 M5，手动验收待用户，详见任务配置规格 |
 
 实现时纳入现有 import/replay/confirmation/retention、task-link、source-refresh、refresh-log/storage-recovery 及旧 Web 回归，并新增真实独立 worker、HTTP/线程失败释放、恢复竞争和 busy 不被吞的测试。APP 既有入口继续复用；若契约有变化，同批更新 DTO、manager、原生错误与恢复操作，而不以 WebView 代替。完成该批后仍须接续下列 B3 其余范围及 M4-M7。
 
@@ -421,7 +425,7 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 
 #### 任务配置、任务运行与日志下一批
 
-1. **任务配置原生编辑。** `routes/tasks/config_file.py` 已完成 Web 全程恢复门禁和有界快照；继续为任务绑定的 config_path 定义原生 JSON 读取/保存与未知结果核对契约。复用现有原子发布和 revision，冲突保留草稿，重新核对任务路径与重命名现场；GET 不保存、不运行任务。APP 从任务详情进入原生内容编辑，不能只转到路径设置或抓 Web HTML。
+1. **任务配置原生编辑已实现候选。** 见 [任务配置规格](PANEL-TASK-CONFIG-PLAN.md)：任务绑定 JSON 读取/保存/只读回执、外置签名意图与跨 worker 发布、APP 内容编辑/冲突草稿/未知核对；实际 CI 以该规格为准，真实面板验收待用户。跨 APP 进程恢复继续归 M5，不重复实现已有 Web 门禁和本批原生入口。
 2. **普通任务运行。** 追踪 `task_runner.py` 的 `_submit_task_now`、`_start_task_worker`、watch、自动 retry、定时与手动入口。当前首次历史/日志、RUNNING 和裸线程/Popen 仍未完成跨 worker 生命周期保护；随机延迟、调度器回调同样要先取得身份。使用已有独立监管，lease 从首次回执前覆盖延迟、命令树、重试、日志关闭和 finally。停止须持久意图、原运行身份与 owner 消费，不以路由 decorator 代替后台保护，也不凭 PID 在其他 worker 发信号。
 3. **日志读取、下载与清理。** `routes/tasks/logs.py`、`routes/logs/files.py`、`pages.py` 和 `logs.py` 的读取/扫描/删除继续核对恢复门禁；download 当前先全量 read_bytes 再检测 8 MB，应改为实际有界读取并确保关闭句柄。单文件与分组删除的版本检查/清理共用协调，处理并发写入、同名新文件及结果未知；原生清理需结构化预检查和原操作恢复，保留 Web 行为。
 4. **配对验证。** 任务域 API 和 Web/定时行为同时回归，新增真实双 worker/恢复冲突及日志关闭故障；APP 覆盖原生入口、冲突草稿、失联只查原操作、401 与切面板。记录实际提交、双平台 CI 和对应 APK，随后再做启动器/断电等 B3 剩余，不因本子批通过结束总 Goal。
@@ -508,7 +512,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 最新 FLS `178d23e` / `20261127.35`、APP `d6a54e3` / `0.1.69+83`；沿用安装/独立导入/任务源/刷新、文件/Web 传输、I/O 门禁和目录现场，已补调试协调/原请求查询及任务配置 Web 保护。实际 CI/APK 见上方；继续原生任务配置、普通任务运行/日志、启动器、Windows 实例锁/WAL/断电、多 worker 清理、坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 最新 FLS `5ce38a1` / `20261128.1`、APP `77902df` / `0.1.71+85`；沿用安装/独立导入/任务源/刷新、文件/Web 传输、I/O 门禁和目录现场，已补调试协调/原请求查询及 Web/原生任务配置。实际 CI/APK 见上方；继续普通任务运行/日志、启动器、Windows 实例锁/WAL/断电、多 worker 清理、坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
