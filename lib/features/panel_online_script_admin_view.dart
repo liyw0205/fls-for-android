@@ -432,7 +432,7 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('重试脚本源同步？'),
-        content: const Text('将使用服务端原请求绑定的源和缓存状态重试；已完成、已变化或结果未确认的请求会被拒绝。'),
+        content: const Text('服务端将核对原请求绑定的源和缓存状态；此次同步不会撤销已发布的缓存或已有任务。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -636,7 +636,12 @@ class _RefreshJobViewState extends State<_RefreshJobView> {
                   label: const Text('核对结果'),
                 ),
               if (state?['running'] != true &&
-                  const {'失败', '启动失败'}.contains(state?['status']))
+                  const {
+                    '失败',
+                    '启动失败',
+                    '部分完成',
+                    '结果未知',
+                  }.contains(state?['status']))
                 OutlinedButton.icon(
                   onPressed: _canAct && _pendingRetryId == null
                       ? _retryRefresh

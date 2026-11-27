@@ -98,6 +98,51 @@ Finder button(String text) => find.ancestor(
 );
 
 void main() {
+  testWidgets('partial refresh allows an explicit full retry', (tester) async {
+    final api = client(
+      (request) async =>
+          request.url.path == '/api/online-scripts/refresh-status/$requestId'
+          ? response(record(status: '部分完成'))
+          : null,
+    );
+    addTearDown(api.close);
+    await openRefresh(tester, api);
+    expect(
+      tester.widget<ButtonStyleButton>(button('重试同步')).onPressed,
+      isNotNull,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('current unauthorized refresh exits the nested detail', (
+    tester,
+  ) async {
+    var unauthorized = 0;
+    final api = client(
+      (request) async =>
+          request.url.path == '/api/online-scripts/refresh-status/$requestId'
+          ? response({'ok': false, 'msg': 'expired'}, 401)
+          : null,
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PanelOnlineScriptAdminView(
+          manager: PanelOnlineScriptsManager(api),
+          onUnauthorized: (_) async {
+            unauthorized++;
+          },
+        ),
+      ),
+    );
+    await pumpUntilFound(tester, find.text('失败'));
+    await tester.tap(find.text('失败'));
+    await pumpUntil(tester, () => unauthorized == 1);
+    await pumpUntil(tester, () => find.text('脚本源同步状态').evaluate().isEmpty);
+    expect(unauthorized, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('active cleanup disables retry even after terminal receipt', (
     tester,
   ) async {
@@ -255,7 +300,13 @@ void main() {
     expect(find.text('101-101 / 101'), findsOneWidget);
     expect(pageReads, 1);
     expect(
-      tester.widget<IconButton>(find.byTooltip('下一页失败项')).onPressed,
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (widget) => widget is IconButton && widget.tooltip == '下一页失败项',
+            ),
+          )
+          .onPressed,
       isNull,
     );
     await tester.pumpWidget(const SizedBox.shrink());
