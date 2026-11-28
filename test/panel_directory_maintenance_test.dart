@@ -215,6 +215,7 @@ void main() {
           return _json(_capabilities(finalization: true));
         }
         if (request.url.path.endsWith('/directory-maintenance')) {
+          expect(request.url.queryParameters['include_finalized'], '1');
           return _json(_page(_finalizationRow(complete: complete)));
         }
         if (request.method == 'POST') {
@@ -265,6 +266,10 @@ void main() {
         if (request.url.path.endsWith('/capabilities')) {
           return _json(_capabilities());
         }
+        expect(
+          request.url.queryParameters.containsKey('include_finalized'),
+          isFalse,
+        );
         return _json(_page(_finalizationRow()));
       });
       await tester.pumpWidget(_view(manager));

@@ -129,6 +129,7 @@ class _PanelDirectoryMaintenanceViewState
       if (!capabilities.directoryMaintenanceEnabled) return;
       final page = await manager.fetchDirectoryMaintenance(
         offset: offset ?? _page?.offset ?? 0,
+        includeFinalized: _finalizationSupported,
       );
       if (!_isCurrent(generation)) return;
       setState(() => _page = page);

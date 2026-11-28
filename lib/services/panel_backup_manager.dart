@@ -257,6 +257,7 @@ class PanelBackupManager {
   Future<PanelDirectoryMaintenancePage> fetchDirectoryMaintenance({
     int offset = 0,
     int limit = 25,
+    bool includeFinalized = false,
   }) async {
     if (offset < 0 || offset > 100000 || limit < 1 || limit > 100) {
       throw ArgumentError('目录现场分页参数无效');
@@ -264,7 +265,10 @@ class PanelBackupManager {
     const path = '/api/backup/native/directory-maintenance';
     try {
       final result = PanelDirectoryMaintenancePage.fromJson(
-        await _api.getJson('$path?offset=$offset&limit=$limit'),
+        await _api.getJson(
+          '$path?offset=$offset&limit=$limit'
+          '${includeFinalized ? '&include_finalized=1' : ''}',
+        ),
       );
       if (result.offset != offset || result.limit != limit) {
         throw const FormatException('目录现场响应不属于原分页请求');
