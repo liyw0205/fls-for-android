@@ -31,6 +31,7 @@ def main():
     )
     sys.path.insert(0, str(backend))
     sys.dont_write_bytecode = True
+    from apscheduler.schedulers.base import STATE_PAUSED
     from flask import Flask, jsonify, request
     from werkzeug.middleware.dispatcher import DispatcherMiddleware
     from werkzeug.serving import WSGIRequestHandler, make_server
@@ -45,6 +46,9 @@ def main():
         from fls_manager.paths import DATA_DIR, SCRIPT_DIR
         from fls_manager.routes.backup import _common as backup
         from fls_manager.state import scheduler
+
+        # Keep real job registration without executing scheduled fixture work.
+        scheduler.pause()
 
         # Package metadata is deterministic; this fixture never launches pip.
         stack.enter_context(patch.object(backup, "write_dependencies_file",
@@ -94,6 +98,7 @@ def main():
                 if (SCRIPT_DIR / "paired.py").exists() else False,
                 "scheduled_jobs": sorted(job.id for job in scheduler.get_jobs()),
                 "scheduler_running": scheduler.running,
+                "scheduler_paused": scheduler.state == STATE_PAUSED,
                 "backups": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in backup.BACKUP_DIR.glob("*.tar.gz")},
             })

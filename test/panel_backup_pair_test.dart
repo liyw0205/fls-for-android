@@ -177,6 +177,11 @@ void main() {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
 
+      final initial = await evidence();
+      expect(initial['scheduled_jobs'], isEmpty);
+      expect(initial['scheduler_running'], isTrue);
+      expect(initial['scheduler_paused'], isTrue);
+
       var api = client();
       await expectLater(
         api.getJson('/api/backup/native/capabilities'),
@@ -301,7 +306,8 @@ void main() {
           restoredEvidence['scheduled_jobs'],
           index == 1 ? <String>[] : ['log_cleanup'],
         );
-        expect(restoredEvidence['scheduler_running'], isFalse);
+        expect(restoredEvidence['scheduler_running'], isTrue);
+        expect(restoredEvidence['scheduler_paused'], isTrue);
         transport.dropPath =
             '/fls-pair/api/backup/native/restores/$restoreId/scheduler-reload';
         await expectLater(
@@ -320,7 +326,8 @@ void main() {
         expect(followup.scheduler.operationId, childId);
         final scheduled = await evidence();
         expect(scheduled['scheduled_jobs'], ['log_cleanup']);
-        expect(scheduled['scheduler_running'], isFalse);
+        expect(scheduled['scheduler_running'], isTrue);
+        expect(scheduled['scheduler_paused'], isTrue);
         expect(recovery.find(childId, kind: 'scheduler')!.canReview, isTrue);
         final before = await evidence();
         await manager.queryOperation(
