@@ -435,7 +435,14 @@ void main() {
         await pumpUntilFound(tester, find.byTooltip('查看原请求详情'));
         await tester.tap(find.byTooltip('查看原请求详情'));
         await tester.pumpAndSettle();
-        expect(find.text(preflight ? '检查并提交恢复' : '目录已恢复'), findsOneWidget);
+        if (preflight) {
+          expect(find.text('预检查完成，但此面板尚未开放原生恢复提交。'), findsOneWidget);
+          expect(find.text('SHA-256  ${'b' * 64}'), findsOneWidget);
+          expect(find.text('full.zip'), findsOneWidget);
+          expect(find.text('检查并提交恢复'), findsNothing);
+        } else {
+          expect(find.text('目录已恢复'), findsOneWidget);
+        }
         expect(methods.every((method) => method == 'GET'), isTrue);
         expect(tester.takeException(), isNull);
       },
