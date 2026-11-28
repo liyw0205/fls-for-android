@@ -18,15 +18,29 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：实例锁固定于恢复目录之外
+#### 最新检查点：真实 WAL、多 worker 清理与 APP 生命周期
 
-FLS 当前候选 `78c263263f469b3aed5039c6f8825f0699ce2958` / `20261128.17`（172）已推 `develop`，[Native `46090287121`](https://github.com/liyw0205/fls/actions/runs/46090287121) 验证中。实例锁实现 `d4c8d8d` / `20261128.16` 固定于根目录 `.fls-manager.lock`，不随 `data` 提交、回滚或清理搬移；启动仍探测旧 `data/fls-manager.lock`，旧持有者阻止新启动，探测不改写空文件且及时关闭句柄。新进程始终竞争同一根目录锁对象，保持 non-inheritable、最终句柄常规文件/reparse 检查和旧 POSIX flock/Windows 字节锁语义。
+当前配对候选为 FLS `872c44aa504eace0e74e1fe629cb30e9f11771a5` / `20261128.20`（175，产品实现 `f99be69`、后续只增强测试阶段诊断）与 APP `a6a362029eec341074fb998ef19914217f1926db` / `0.1.76+90`，均已推送各自 `develop`。后端 [Native `46094306921`](https://github.com/liyw0205/fls/actions/runs/46094306921) 完整验证中；Module `46094306961`、Desktop `46094306834`、EXE `46094306843` 已成功。APP [Android CI `46093416464`](https://github.com/liyw0205/fls-for-android/actions/runs/46093416464) 已完整 success，格式/分析、290 项测试、arm64 APK 及 artifact 上传均成功，正式发布步骤 skipped。不能借用上一 SHA 的结果。
+
+真实 SQLite WAL 测试由独立进程留下主库、WAL 和 SHM；immutable 读取确认第二条数据仅在 WAL。覆盖提交、终态保存失败回滚、各实际搬移点硬退出及 committed journal 后硬退出，启动恢复后验证 integrity_check、两条数据、原对象/字节及运行态剥离。`3c01430` / `.18` 的 Windows 新 job 失败于夹具短路径与规范长路径不一致，修正夹具三处 resolve，保留业务路径校验和全部断言；该 Native `46091862558` 最终 cancelled，不算完整通过。`2a32f19` / `.19` 的双平台 WAL job 均通过。进程硬退出不等于断电，Windows 目录/文件持久性边界仍需单独处理。
+
+多 worker 清理在持资源的原 owner 内启动一个 watcher，ready 后才允许其他 worker 显式发布绑定 request/operation/nonce 的原子清理意图，受理返回 202；结果保存后再释放 lease。一次意图最多执行一次，失败须显式再试，旧意图不触发新 owner，GET 不发布意图。运行中的安装仍拒绝清理；owner 已死时走既有显式恢复，不重新 pip。恢复回执使用共享读取和原子发布，允许 Windows 持旧读取句柄时更新。新增六项真实 worker/故障用例覆盖跨进程清理、错误身份/replay、GET 零副作用、写盘失败保留占用、活跃安装保护及 owner 强退恢复。本机九文件 78 passed/42 subtests；`.19` 六项新测试双平台通过，但扩大 Windows 旧回归暴露打开文件期间 unlink 的 POSIX 假设（1 failed/48 passed/3 skipped/17 subtests）。旧 Native `46092501372` 最终 cancelled，三项打包成功，不能记为完整全绿。
+
+`.20` 保留 POSIX 替换链接攻击和原字节断言；Windows 验证系统拒绝删除已打开归档、原对象未变且下载原字节，不跳过测试。响应创建/配置异常时关闭已验证归档，新增 OSError/RuntimeError 关闭句柄回归。本机原生备份/跨 worker 清理/文件恢复三文件 53 passed/33 subtests，diff 检查通过。首轮 `f99be69` 的 Native `46093363582` 中 Windows 原下载用例已通过，但新增 OSError 子用例在 send_file 前返回 409，1 failed/50 passed/3 skipped/18 subtests；该 run 最终 cancelled，三打包成功。`872c44a` 只增强测试：明确按文件名取列表版本、验证错误 code，并把真实打开阶段异常直接报告；不吞错误或重试、不改业务。增强后本机两项/两子用例通过，新 Windows 同 job 已 success；原先未进入响应阶段的原因尚未复现，不宣称已定位业务根因，继续保留失败事实。
+
+APP 备份页按 manager 身份销毁旧页面状态，路由捕获稳定 manager；后台、401 或切面板同步作废确认身份并关闭具体 DialogRoute，隐藏正文和输出。导出/上传前复核生命周期，旧恢复响应和旧 401 不影响新面板，补查后不对已销毁状态 setState。新增四项 Widget 用例覆盖切面板确认作废、旧 200/401 回包及后台排队同意作废；本机格式/静态分析及上述完整 Actions 已通过。开发测试包为 [artifact `15241534535`](https://github.com/liyw0205/fls-for-android/actions/runs/46093416464/artifacts/15241534535)，到期于 2026-12-12 01:36:34 UTC；本机 `build/develop-0.1.76+90-a6a3620/app-release.apk`，11,517,901 字节，SHA256 `980af3a21fd2e66857c0ff1a9d2818156492b704129d937d788d91b62598bc7d`。aapt 核对 `top.fls.fls_for_android` / `0.1.76` / `90`；未安装、不做 ADB，真实面板手动验收待用户。
+
+下一步以本候选 CI 为证收取结果，再收尾 Windows 断电持久性、逐域 busy、坏回执维护及 APP 当前会话完整流程，随后 B4。跨 APP 进程统一恢复归 M5；首次设置/维护 M4、全域补缺 M5、全量导航/DeepSeek 主题 M6、配对和用户手动验收 M7 未完成。B3 和总 Goal 均保持未完成，不合并 main、不正式发布、不做 ADB。
+
+#### 上一检查点：实例锁固定于恢复目录之外
+
+FLS 历史候选 `78c263263f469b3aed5039c6f8825f0699ce2958` / `20261128.17`（172）的 [Native `46090287121`](https://github.com/liyw0205/fls/actions/runs/46090287121) 已完整 success：Linux 1151 passed/1 skipped/1031 subtests，2 条既有 tar 警告；Windows 全部步骤成功，实例锁 5 passed/1 skipped/2 subtests，任务 17 passed/46 subtests，任务源/刷新 204 passed/152 subtests。Module `46090287218`、Desktop `46090287328`、EXE `46090287124` 均成功。实例锁实现 `d4c8d8d` / `20261128.16` 固定于根目录 `.fls-manager.lock`，不随 `data` 提交、回滚或清理搬移；启动仍探测旧 `data/fls-manager.lock`，旧持有者阻止新启动，探测不改写空文件且及时关闭句柄。新进程始终竞争同一根目录锁对象，保持 non-inheritable、最终句柄常规文件/reparse 检查和旧 POSIX flock/Windows 字节锁语义。
 
 失败证据保留：`0b6dcaa` / `20261128.15` 的 Native `46089311604` 中 Windows 新 job `140806226002` 失败（1 failed/3 passed/1 skipped/1 subtests），`data -> workspace/previous` 的首个 `os.replace` 报 WinError 5；仅增加 FILE_SHARE_DELETE 无法使包含打开子文件的目录可移动。Linux 同 job 通过。微软 [FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) 的 open files 规则也明确该限制，因此没有把回执文件替换的成功外推到目录重命名。新修正触发后续 CI，旧 run 最终 cancelled，Linux/Windows 长回归被既有 concurrency 策略取消，不能记录为完整通过。
 
 新增真实跨进程竞争回归覆盖恢复提交、终态保存失败后的回滚、清理后仍持锁与释放后可重新取得，核对原锁对象和未导入归档外来锁；故障用例必须确实到达终态保存步骤。另验证运行中的旧实例拒绝新启动、空旧锁不被改写。本机六文件 29 passed/15 subtests，1 项既有 Termux shell 启动用例 deselected；compileall/diff 检查通过。`d4c8d8d` 的 Native `46089767426` 中 Linux 实例 job `140807771896` 为 6 passed/2 subtests，Windows job `140807771926` 为 5 passed/1 skipped/2 subtests（均 1 deselected），证明修正通过两平台新回归；三项打包成功。
 
-同一 `46089767426` 的 Windows 任务 job `140807771839` 有 1 failed/16 passed/46 subtests，断言读到 starting 而非 running。日志诊断随后已保存 running，源代码也在 TaskProcess 启动后才更新运行态/历史；子进程先写 started 标记不能证明 owner 元数据已保存。`78c2632` 改为在原 15 秒期限内查询并等待准确的 running 历史，保留单次受理、运行态、历史、远程停止及子进程退出断言；不改任务业务。修改后本机相关四文件 22 passed/4 subtests、1 deselected，新完整 CI 待收取；上一 run 在推修正后剩余长回归按 concurrency 策略取消，不计全绿。
+同一 `46089767426` 的 Windows 任务 job `140807771839` 有 1 failed/16 passed/46 subtests，断言读到 starting 而非 running。日志诊断随后已保存 running，源代码也在 TaskProcess 启动后才更新运行态/历史；子进程先写 started 标记不能证明 owner 元数据已保存。`78c2632` 改为在原 15 秒期限内查询并等待准确的 running 历史，保留单次受理、运行态、历史、远程停止及子进程退出断言；不改任务业务。修改后本机相关四文件 22 passed/4 subtests、1 deselected，最终完整平台结果见上段；上一 run 在推修正后剩余长回归按 concurrency 策略取消，不计全绿。
 
 APP `99d1c9b` / `0.1.75+89` 的 Android CI `46088657554` 已通过格式/分析、286 项测试和 APK；本批未改 APP 代码，安装包见日志规格。实例锁子批只关闭相应恢复边界；外部 WAL、Windows 断电持久性、多 worker 依赖清理、坏回执维护及 APP 全流程继续，随后 B4、M4-M7。
 
@@ -411,10 +425,10 @@ APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段�
 
 | 收尾项 | 完成条件与证据 |
 | --- | --- |
-| 运行态身份与回滚 | 已剥离归档身份、持久保存搬运清单，启动先恢复目录；Python 入口、同步文件/Web 传输、安装/导入/任务源/刷新/调试/普通任务监管已接入。硬退出及恢复再次中断有测试；仍需日志写删协调、shell/PowerShell 启动器、Windows 实例锁句柄/断电与多 worker 启动边界 |
-| 锁顺序与跨进程互斥 | `5f49679` 统一备份/恢复长作业锁；`7524b05` 接入 JSON、会话/历史 SQLite、验证码和实例锁初始化的短 I/O 门禁，验证连接关闭、线程隔离及真实提交中认证 503。继续其他文件作业、逐域 busy 映射与外部 WAL 状态；本批平台 CI 见上方 |
+| 运行态身份与回滚 | 已剥离归档身份、持久保存搬运清单，启动先恢复目录；Python、同步文件/Web 传输、安装/导入/任务源/刷新/调试/普通任务、日志和 shell/PowerShell 启动器已接入；实例锁完整平台通过，真实 WAL 与硬退出/再次中断有新回归。继续 Windows 断电持久性和坏现场维护，准确证据见顶部 |
+| 锁顺序与跨进程互斥 | 已统一备份/恢复长作业锁，JSON、会话/历史 SQLite、验证码、实例锁初始化与上述文件/长作业有门禁；连接关闭、线程隔离、跨 worker 和提交中认证 503 有回归。继续逐域 busy 错误映射，真实 WAL 的新配对平台结果见顶部 |
 | 证据与原请求保留 | 已从持久恢复回执重建 TTL 保护，unknown/待处理依赖不被清理且计入双暂存容量；读取回执字节和历史扫描有上限。每次后续 operation ID 独立保留（最多 16 次），旧 ID 重放不重新执行；到期/内存引用丢失及旧操作重放测试通过，仍需完整容量/损坏/断电故障覆盖 |
-| 依赖资源清理 | 已加带启动门的监管进程：持久保存执行/工作目录身份后才执行 pip；POSIX 不提前回收会话首进程、确认组内非僵尸进程退出后释放，面板进程死亡通过控制管道触发回收；Windows 使用带 KILL_ON_JOB_CLOSE 的命名 Job Object，真实 Actions 已验证启动门、命令父进程先退出和所有者崩溃回收。显式 cleanup 按原操作清理且 GET 零副作用；失败、写盘失败、重启恢复、目录替换、输出读取失败均有回归。仍需多 worker 中持有内存清理句柄的进程协调、全部回执损坏时的维护恢复 |
+| 依赖资源清理 | 启动门、执行/目录身份、POSIX 崩溃回收及 Windows Job Object 已验证；显式 cleanup 按原操作清理，GET 零副作用。`2a32f19` 增多 worker 意图交给原资源 owner、保存结果后释放 lease；新六项测试双平台通过，完整候选 CI 见顶部。全部回执损坏时的维护恢复仍缺 |
 | APP 完整流程 | 已补严格恢复 DTO 类型/一致性及响应身份校验、历史分页/读取失败保留原页、原请求/后续处理轮询、未知结果禁止再次恢复、依赖确认文案及 401 退出嵌套备份页；返回任务页刷新。新增原操作清理按钮，清理期间禁用安装/调度器，清理响应丢失只查询原请求。manager/widget 测试已由 Actions 执行；继续验证跨会话/面板切换/旧回包、概览刷新和提交丢失全流程 |
 | 配对验证 | 完成下述旧 Web/认证及故障回归，APP manager/widget 测试在 Actions 执行；再递增两仓实际版本、提交推送 develop，记录双方 CI 与对应 APK。隔离面板手动验收由用户执行，全量前不合并 main |
 
@@ -550,7 +564,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 日志配对 FLS `e1c4083` / APP `99d1c9b` 完整通过；实例锁 `d4c8d8d` 双平台新回归通过，任务等待修正 `78c2632` / `20261128.17` 的完整 CI 验证中；继续 WAL/断电、多 worker 清理、坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 实例锁 `78c2632` 完整平台通过；新增真实 WAL、多 worker 清理及 APP 生命周期修正。FLS `872c44a` 完整 CI 验证中，APP `a6a3620` 的 290 项测试及 APK 成功。继续 Windows 断电持久性、逐域 busy、坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
