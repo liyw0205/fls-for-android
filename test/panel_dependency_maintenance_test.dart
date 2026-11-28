@@ -626,7 +626,11 @@ void main() {
       expect(find.text('现场维护').hitTestable(), findsOneWidget);
       await tester.tap(find.text('现场维护').hitTestable());
       await pumpUntilFound(tester, find.text('依赖资源'));
-      await tester.tap(find.text('依赖资源'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('依赖资源'));
+      await tester.pumpAndSettle();
+      expect(find.text('依赖资源').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('依赖资源').hitTestable());
       await _confirm(tester);
       await pumpUntilFound(tester, find.text('依赖资源维护已结束，原始证据保留'));
       expect(tester.takeException(), isNull);
