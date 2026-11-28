@@ -27,6 +27,14 @@ Map<String, dynamic> _row({bool recovered = false}) => {
   'evidence_retained': true,
 };
 
+Map<String, dynamic> _finalizationRow({bool complete = false}) => {
+  ..._row(recovered: true),
+  'version': (complete ? 'f' : 'd') * 64,
+  'state': complete ? 'finalized' : 'rolled_back',
+  'recover_allowed': !complete,
+  'finalize_allowed': !complete,
+};
+
 Map<String, dynamic> _page(Map<String, dynamic> row) => {
   'ok': true,
   'items': [row],
@@ -36,7 +44,10 @@ Map<String, dynamic> _page(Map<String, dynamic> row) => {
   'has_more': false,
 };
 
-Map<String, dynamic> _capabilities({bool supported = true}) => {
+Map<String, dynamic> _capabilities({
+  bool supported = true,
+  bool finalization = false,
+}) => {
   'ok': true,
   'items': ['data', 'scripts'],
   'formats': ['zip'],
@@ -46,6 +57,7 @@ Map<String, dynamic> _capabilities({bool supported = true}) => {
   'preflight_enabled': true,
   'restore_enabled': true,
   if (supported) 'directory_maintenance_enabled': true,
+  if (finalization) 'directory_finalization_enabled': true,
 };
 
 http.Response _json(Object value, [int status = 200]) =>
@@ -89,7 +101,277 @@ Future<void> _confirm(WidgetTester tester) async {
   await tester.tap(find.text('确认恢复现场'));
 }
 
+Future<void> _confirmFinalization(WidgetTester tester) async {
+  final action = find.text('结束现场维护');
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(action);
+  await tester.pumpAndSettle();
+  await tester.tap(action.hitTestable());
+  await pumpUntilFound(tester, find.text('确认结束维护'));
+  await tester.tap(find.text('确认结束维护'));
+}
+
 void main() {
+  test('finalization DTO and optional capability reject unsafe states', () {
+    expect(
+      PanelDirectoryMaintenance.fromJson(_finalizationRow()).finalizeAllowed,
+      isTrue,
+    );
+    expect(
+      PanelDirectoryMaintenance.fromJson(
+        _finalizationRow(complete: true),
+      ).state,
+      'finalized',
+    );
+    expect(
+      PanelBackupCapabilities.fromJson(
+        _capabilities(),
+      ).directoryFinalizationEnabled,
+      isFalse,
+    );
+    expect(
+      () => PanelBackupCapabilities.fromJson({
+        ..._capabilities(),
+        'directory_finalization_enabled': 1,
+      }),
+      throwsFormatException,
+    );
+    for (final change in <Map<String, dynamic>>[
+      {'finalize_allowed': 1},
+      {'state': 'prepared', 'outcome': 'pending'},
+      {'active': true, 'recover_allowed': false},
+      {'receipt_state': 'available', 'recover_allowed': false},
+      {'state': 'finalized'},
+      {'outcome': 'pending'},
+    ]) {
+      expect(
+        () => PanelDirectoryMaintenance.fromJson({
+          ..._finalizationRow(),
+          ...change,
+        }),
+        throwsFormatException,
+        reason: change.toString(),
+      );
+    }
+  });
+
+  test(
+    'finalization binds original ID, scope, outcome and terminal state',
+    () async {
+      final requests = <http.Request>[];
+      Map<String, dynamic> response = _finalizationRow(complete: true);
+      final manager = _manager((request) async {
+        requests.add(request);
+        return _json({'ok': true, 'directory': response});
+      });
+      final original = PanelDirectoryMaintenance.fromJson(_finalizationRow());
+      expect(
+        (await manager.finalizeOrphanDirectory(original)).state,
+        'finalized',
+      );
+      expect(requests.single.url.path, endsWith('/${'a' * 32}/finalize'));
+      expect(requests.single.headers['x-csrf-token'], 'csrf');
+      expect(jsonDecode(requests.single.body), {
+        'confirm': true,
+        'version': 'd' * 64,
+      });
+      for (final change in <Map<String, dynamic>>[
+        {'request_id': 'b' * 32},
+        {
+          'restore_items': ['scripts'],
+        },
+        {'outcome': 'restored'},
+        {'state': 'rolled_back'},
+      ]) {
+        response = {..._finalizationRow(complete: true), ...change};
+        await expectLater(
+          manager.finalizeOrphanDirectory(original),
+          throwsA(isA<PanelApiException>()),
+        );
+      }
+      final count = requests.length;
+      await expectLater(
+        manager.finalizeOrphanDirectory(
+          PanelDirectoryMaintenance.fromJson(_finalizationRow(complete: true)),
+        ),
+        throwsArgumentError,
+      );
+      expect(requests, hasLength(count));
+    },
+  );
+
+  testWidgets(
+    'finalization at narrow large text preserves original result after lost POST',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var posts = 0;
+      var queries = 0;
+      var complete = false;
+      final manager = _manager((request) async {
+        if (request.url.path.endsWith('/capabilities')) {
+          return _json(_capabilities(finalization: true));
+        }
+        if (request.url.path.endsWith('/directory-maintenance')) {
+          return _json(_page(_finalizationRow(complete: complete)));
+        }
+        if (request.method == 'POST') {
+          posts++;
+          expect(request.url.path, endsWith('/finalize'));
+          complete = true;
+          return _json({'ok': false, 'msg': 'response lost'}, 503);
+        }
+        queries++;
+        return _json({
+          'ok': true,
+          'directory': _finalizationRow(complete: complete),
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.5)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: PanelDirectoryMaintenanceView(
+              manager: manager,
+              onUnauthorized: (_) async {},
+            ),
+          ),
+        ),
+      );
+      await pumpUntilFound(tester, find.text('结束现场维护'));
+      await _confirmFinalization(tester);
+      await pumpUntilFound(tester, find.text('本次目录维护已结束；原始证据和目录副本保留。'));
+      expect(posts, 1);
+      expect(queries, 1);
+      expect(find.text('结束现场维护'), findsNothing);
+      expect(find.text('恢复目录现场'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'old capability hides finalization without probing its endpoint',
+    (tester) async {
+      var posts = 0;
+      final manager = _manager((request) async {
+        if (request.method == 'POST') posts++;
+        if (request.url.path.endsWith('/capabilities')) {
+          return _json(_capabilities());
+        }
+        return _json(_page(_finalizationRow()));
+      });
+      await tester.pumpWidget(_view(manager));
+      await pumpUntilFound(tester, find.text('恢复目录现场'));
+      expect(find.text('结束现场维护'), findsNothing);
+      expect(posts, 0);
+    },
+  );
+
+  testWidgets(
+    'lost finalization and mismatched query retain original request until verified',
+    (tester) async {
+      var posts = 0;
+      var wrongOutcome = true;
+      final manager = _manager((request) async {
+        if (request.url.path.endsWith('/capabilities')) {
+          return _json(_capabilities(finalization: true));
+        }
+        if (request.url.path.endsWith('/directory-maintenance')) {
+          return _json(_page(_finalizationRow()));
+        }
+        if (request.method == 'POST') {
+          posts++;
+          return _json({'ok': false}, 503);
+        }
+        return _json({
+          'ok': true,
+          'directory': {
+            ..._finalizationRow(complete: true),
+            if (wrongOutcome) 'outcome': 'restored',
+          },
+        });
+      });
+      await tester.pumpWidget(_view(manager));
+      await pumpUntilFound(tester, find.text('结束现场维护'));
+      await _confirmFinalization(tester);
+      await pumpUntilFound(tester, find.text('操作结果尚未确认；请查询原现场，不能重新提交。'));
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, '结束现场维护'),
+            )
+            .onPressed,
+        isNull,
+      );
+      wrongOutcome = false;
+      await tester.tap(find.text('查询原现场'));
+      await pumpUntilFound(tester, find.text('本次目录维护已结束；原始证据和目录副本保留。'));
+      expect(posts, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'background invalidates finalization confirmation and in-flight result',
+    (tester) async {
+      final response = Completer<http.Response>();
+      var posts = 0;
+      var queries = 0;
+      final manager = _manager((request) async {
+        if (request.url.path.endsWith('/capabilities')) {
+          return _json(_capabilities(finalization: true));
+        }
+        if (request.url.path.endsWith('/directory-maintenance')) {
+          return _json(_page(_finalizationRow()));
+        }
+        if (request.method == 'POST') {
+          posts++;
+          return response.future;
+        }
+        queries++;
+        return _json({
+          'ok': true,
+          'directory': _finalizationRow(complete: true),
+        });
+      });
+      await tester.pumpWidget(_view(manager));
+      await pumpUntilFound(tester, find.text('结束现场维护'));
+      await tester.tap(find.text('结束现场维护'));
+      await pumpUntilFound(tester, find.text('确认结束维护'));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('确认结束维护'), findsNothing);
+      expect(posts, 0);
+      await _confirmFinalization(tester);
+      await pumpUntil(tester, () => posts == 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      response.complete(
+        _json({'ok': true, 'directory': _finalizationRow(complete: true)}),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('本次目录维护已结束；原始证据和目录副本保留。'), findsNothing);
+      expect(find.text('查询原现场'), findsOneWidget);
+      expect(queries, 0);
+      await tester.tap(find.text('查询原现场'));
+      await pumpUntilFound(tester, find.text('本次目录维护已结束；原始证据和目录副本保留。'));
+      expect(posts, 1);
+      expect(queries, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test(
     'strict directory evidence rejects unsafe and inconsistent responses',
     () {

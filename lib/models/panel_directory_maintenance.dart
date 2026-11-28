@@ -8,6 +8,7 @@ class PanelDirectoryMaintenance {
     required this.receiptState,
     required this.active,
     required this.recoverAllowed,
+    this.finalizeAllowed = false,
   });
 
   final String requestId;
@@ -18,6 +19,7 @@ class PanelDirectoryMaintenance {
   final String receiptState;
   final bool active;
   final bool recoverAllowed;
+  final bool finalizeAllowed;
 
   factory PanelDirectoryMaintenance.fromJson(Object? value) {
     if (value is! Map<String, dynamic>) {
@@ -37,6 +39,7 @@ class PanelDirectoryMaintenance {
           'committed',
           'rolled_back',
           'finalizing',
+          'finalized',
           'unavailable',
         }.contains(state) ||
         !const {
@@ -51,6 +54,8 @@ class PanelDirectoryMaintenance {
         items.toSet().length != items.length ||
         value['active'] is! bool ||
         value['recover_allowed'] is! bool ||
+        (value.containsKey('finalize_allowed') &&
+            value['finalize_allowed'] is! bool) ||
         value['evidence_retained'] != true) {
       throw const FormatException('目录现场身份或状态无效');
     }
@@ -59,19 +64,32 @@ class PanelDirectoryMaintenance {
         ? version.isNotEmpty ||
               items.isNotEmpty ||
               outcome != 'unknown' ||
-              value['recover_allowed'] == true
+              value['recover_allowed'] == true ||
+              value['finalize_allowed'] == true
         : !RegExp(r'^[a-f0-9]{64}$').hasMatch(version) ||
               items.isEmpty ||
               (state == 'prepared' && outcome != 'pending') ||
               (state == 'committed' && outcome != 'restored') ||
               (state == 'rolled_back' && outcome != 'not_applied') ||
-              (state == 'finalizing' &&
+              (const {'finalizing', 'finalized'}.contains(state) &&
                   !const {'restored', 'not_applied'}.contains(outcome))) {
       throw const FormatException('目录现场结果不一致');
     }
     if (value['recover_allowed'] == true &&
-        (value['active'] == true || receipt == 'available')) {
+        (value['active'] == true ||
+            receipt == 'available' ||
+            state == 'finalized')) {
       throw const FormatException('目录现场操作权限不一致');
+    }
+    if (value['finalize_allowed'] == true &&
+        (value['active'] == true ||
+            receipt == 'available' ||
+            !const {
+              'committed',
+              'rolled_back',
+              'finalizing',
+            }.contains(state))) {
+      throw const FormatException('目录现场结束权限不一致');
     }
     return PanelDirectoryMaintenance(
       requestId: id,
@@ -82,6 +100,7 @@ class PanelDirectoryMaintenance {
       receiptState: receipt as String,
       active: value['active'] as bool,
       recoverAllowed: value['recover_allowed'] as bool,
+      finalizeAllowed: value['finalize_allowed'] == true,
     );
   }
 }

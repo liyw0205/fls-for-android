@@ -31,6 +31,8 @@ class _PanelDirectoryMaintenanceViewState
   bool _background = false;
   bool _expired = false;
   bool? _supported;
+  bool _finalizationSupported = false;
+  PanelDirectoryMaintenance? _pendingFinalization;
   int _generation = 0;
   Route<bool>? _confirmation;
 
@@ -55,6 +57,8 @@ class _PanelDirectoryMaintenanceViewState
       _page = null;
       _pendingId = null;
       _supported = null;
+      _finalizationSupported = false;
+      _pendingFinalization = null;
       _error = null;
       _expired = false;
       _busy = false;
@@ -118,7 +122,10 @@ class _PanelDirectoryMaintenanceViewState
     try {
       final capabilities = await manager.fetchCapabilities();
       if (!_isCurrent(generation)) return;
-      setState(() => _supported = capabilities.directoryMaintenanceEnabled);
+      setState(() {
+        _supported = capabilities.directoryMaintenanceEnabled;
+        _finalizationSupported = capabilities.directoryFinalizationEnabled;
+      });
       if (!capabilities.directoryMaintenanceEnabled) return;
       final page = await manager.fetchDirectoryMaintenance(
         offset: offset ?? _page?.offset ?? 0,
@@ -161,8 +168,14 @@ class _PanelDirectoryMaintenanceViewState
     try {
       final row = await manager.fetchDirectoryEvidence(requestId);
       if (!_isCurrent(generation)) return;
+      _validatePendingFinalization(row);
       _replace(row);
-      if (_pendingId == requestId) setState(() => _pendingId = null);
+      if (_pendingId == requestId) {
+        setState(() {
+          _pendingId = null;
+          _pendingFinalization = null;
+        });
+      }
     } catch (error) {
       if (await _unauthorized(error, generation)) return;
       if (_isCurrent(generation)) setState(() => _error = _message(error));
@@ -171,19 +184,37 @@ class _PanelDirectoryMaintenanceViewState
     }
   }
 
-  Future<void> _recover(PanelDirectoryMaintenance row) async {
+  void _validatePendingFinalization(PanelDirectoryMaintenance row) {
+    final original = _pendingFinalization;
+    if (original != null &&
+        row.requestId == original.requestId &&
+        (row.outcome != original.outcome ||
+            row.restoreItems.join(',') != original.restoreItems.join(','))) {
+      throw const FormatException('现场查询结果与原结束请求不一致');
+    }
+  }
+
+  Future<void> _maintain(
+    PanelDirectoryMaintenance row, {
+    bool finalize = false,
+  }) async {
     if (!_canInteract || _busy || _pendingId != null || _confirmation != null) {
       return;
     }
+    if (finalize && (!_finalizationSupported || !row.finalizeAllowed)) return;
     final generation = _generation;
     final manager = widget.manager;
     final route = DialogRoute<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('确认恢复目录现场'),
-        content: const Text(
-          '将按原事务清单回滚中断的目录替换，或核对已经提交的目录。'
-          '原恢复回执无法读取，记录和副本将保留，维护完成前继续限制写入。',
+        title: Text(finalize ? '确认结束现场维护' : '确认恢复目录现场'),
+        content: Text(
+          finalize
+              ? '请先核对目录结果。结束后将归档原事务清单和损坏回执，'
+                    '保留目录副本，并解除本次目录写入限制。'
+                    '此次维护不会安装依赖或重新加载调度器。'
+              : '将按原事务清单回滚中断的目录替换，或核对已经提交的目录。'
+                    '原恢复回执无法读取，记录和副本将保留，维护完成前继续限制写入。',
         ),
         actions: [
           TextButton(
@@ -192,7 +223,7 @@ class _PanelDirectoryMaintenanceViewState
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认恢复现场'),
+            child: Text(finalize ? '确认结束维护' : '确认恢复现场'),
           ),
         ],
       ),
@@ -210,27 +241,35 @@ class _PanelDirectoryMaintenanceViewState
     setState(() {
       _busy = true;
       _pendingId = row.requestId;
+      _pendingFinalization = finalize ? row : null;
       _error = null;
     });
     try {
-      final result = await manager.recoverOrphanDirectory(row);
+      final result = finalize
+          ? await manager.finalizeOrphanDirectory(row)
+          : await manager.recoverOrphanDirectory(row);
       if (!_isCurrent(generation)) return;
       _replace(result);
-      setState(() => _pendingId = null);
+      setState(() {
+        _pendingId = null;
+        _pendingFinalization = null;
+      });
     } catch (error) {
       if (await _unauthorized(error, generation)) return;
       try {
         final result = await manager.fetchDirectoryEvidence(row.requestId);
         if (!_isCurrent(generation)) return;
+        _validatePendingFinalization(result);
         _replace(result);
         setState(() {
           _pendingId = null;
-          _error = '恢复响应未能确认，已读取原目录现场；请核对当前结果。';
+          _pendingFinalization = null;
+          _error = '操作响应未能确认，已读取原目录现场；请核对当前结果。';
         });
       } catch (queryError) {
         if (await _unauthorized(queryError, generation)) return;
         if (_isCurrent(generation)) {
-          setState(() => _error = '恢复结果尚未确认；请查询原现场，不能重新提交恢复。');
+          setState(() => _error = '操作结果尚未确认；请查询原现场，不能重新提交。');
         }
       }
     } finally {
@@ -285,7 +324,14 @@ class _PanelDirectoryMaintenanceViewState
               'missing' => '原恢复回执缺失',
               _ => '原恢复回执无法读取',
             }),
-            const Text('事务清单和副本保留；原回执修复前仍限制写入。'),
+            Text(
+              row.state == 'finalized'
+                  ? '本次目录维护已结束；原始证据和目录副本保留。'
+                  : '事务清单和副本保留；结束维护前仍限制写入。',
+            ),
+            if (row.state == 'finalized' && row.outcome == 'restored')
+              const Text('此次维护未执行依赖安装或调度器重载。'),
+            if (row.state == 'finalizing') const Text('证据归档尚未结束，请查询后确认继续。'),
             if (row.active) const Text('恢复或后续处理仍在执行'),
             Wrap(
               spacing: 8,
@@ -294,9 +340,17 @@ class _PanelDirectoryMaintenanceViewState
                   OutlinedButton.icon(
                     onPressed: _busy || _pendingId != null
                         ? null
-                        : () => _recover(row),
+                        : () => _maintain(row),
                     icon: const Icon(Icons.restore),
                     label: const Text('恢复目录现场'),
+                  ),
+                if (_finalizationSupported && row.finalizeAllowed)
+                  OutlinedButton.icon(
+                    onPressed: _busy || _pendingId != null
+                        ? null
+                        : () => _maintain(row, finalize: true),
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    label: const Text('结束现场维护'),
                   ),
                 IconButton(
                   tooltip: '查询目录现场',

@@ -324,6 +324,29 @@ class PanelBackupManager {
     }
   }
 
+  Future<PanelDirectoryMaintenance> finalizeOrphanDirectory(
+    PanelDirectoryMaintenance evidence,
+  ) async {
+    _validateRequestId(evidence.requestId);
+    if (!evidence.finalizeAllowed ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(evidence.version)) {
+      throw ArgumentError('此目录现场不能结束维护');
+    }
+    final path =
+        '/api/backup/native/directory-maintenance/${evidence.requestId}/finalize';
+    final result = _parseDirectoryEvidence(
+      await _api.postJson(path, {'confirm': true, 'version': evidence.version}),
+      evidence.requestId,
+      path,
+    );
+    if (result.state != 'finalized' ||
+        result.outcome != evidence.outcome ||
+        result.restoreItems.join(',') != evidence.restoreItems.join(',')) {
+      throw PanelApiException('现场结束响应尚未确认原目录结果', path: path);
+    }
+    return result;
+  }
+
   Future<PanelBackupMaintenance> acknowledgeRestoreMaintenance(
     String eventId,
   ) async {
