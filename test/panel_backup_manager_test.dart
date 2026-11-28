@@ -369,6 +369,23 @@ void main() {
               200,
             );
           }
+          if (request.url.path.endsWith('/scheduler-reload')) {
+            return utf8Response(
+              jsonEncode({
+                'ok': true,
+                'restore': {
+                  ..._restore(),
+                  'scheduler': {
+                    'state': 'succeeded',
+                    'required': true,
+                    'operation_id': jsonDecode(request.body)['operation_id'],
+                    'error': '',
+                  },
+                },
+              }),
+              200,
+            );
+          }
           return utf8Response(
             jsonEncode({'ok': true, 'restore': _restore()}),
             202,

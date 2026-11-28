@@ -110,6 +110,31 @@ class PanelBackupPreflight {
       throw const FormatException('备份预检查响应格式无效');
     }
     final record = value['preflight'] as Map<String, dynamic>;
+    if (const [
+          'preflight_id',
+          'status',
+          'filename',
+          'format',
+          'archive_sha256',
+          'error_code',
+        ].any((field) => record[field] is! String) ||
+        const [
+          'active',
+          'cancel_allowed',
+        ].any((field) => record[field] is! bool) ||
+        const [
+          'archive_size_bytes',
+          'entry_count',
+          'expanded_bytes',
+          'expires_at',
+        ].any((field) => record[field] is! int || (record[field] as int) < 0) ||
+        const ['items', 'dependency_files', 'warnings'].any(
+          (field) =>
+              record[field] is! List ||
+              (record[field] as List).any((item) => item is! String),
+        )) {
+      throw const FormatException('备份预检查字段类型无效');
+    }
     final id = record['preflight_id']?.toString() ?? '';
     final state = record['status']?.toString() ?? '';
     final digest = record['archive_sha256']?.toString() ?? '';
@@ -148,7 +173,14 @@ class PanelBackupPreflight {
             'data_restore_may_change_panel_access',
             'contains_native_session_store',
           }.contains(item),
-        )) {
+        ) ||
+        (record['active'] == true &&
+            !const {'uploading', 'checking'}.contains(state)) ||
+        (record['cancel_allowed'] == true && record['active'] != true) ||
+        (state == 'ready' &&
+            (digest.isEmpty ||
+                items.isEmpty ||
+                (record['archive_size_bytes'] as int) < 1))) {
       throw const FormatException('备份预检查摘要无效');
     }
     return PanelBackupPreflight(

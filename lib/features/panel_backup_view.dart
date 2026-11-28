@@ -317,7 +317,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   Future<void> _openOriginalRequests() async {
     String? querying;
     final errors = <String, String>{};
-    await _confirm<void>(
+    final details = <String, Object>{};
+    final selected = await _confirm<Object>(
       builder: (_) => StatefulBuilder(
         builder: (dialogContext, update) {
           final operations = widget.manager.recovery.operations;
@@ -337,7 +338,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(operation.kind == 'create' ? '创建备份' : '删除备份'),
+                          Text(_operationLabel(operation.kind)),
                           Text(
                             operation.filename ??
                                 operation.items
@@ -349,11 +350,14 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                             overflow: TextOverflow.ellipsis,
                           ),
                           SelectableText(operation.requestId),
+                          if (operation.rootRequestId != null &&
+                              operation.rootId != operation.requestId)
+                            SelectableText('恢复请求：${operation.rootId}'),
                           if (operation.version != null)
                             SelectableText(operation.version!),
-                          Text(_originalRequestLabel(operation.result)),
-                          if (errors[operation.requestId] != null)
-                            Text(errors[operation.requestId]!),
+                          Text(_originalRequestLabel(operation.status)),
+                          if (errors[operation.key] != null)
+                            Text(errors[operation.key]!),
                           Wrap(
                             children: [
                               IconButton(
@@ -372,19 +376,15 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                                               route,
                                             ) &&
                                             route?.isActive == true;
-                                        update(
-                                          () => querying = operation.requestId,
-                                        );
+                                        update(() => querying = operation.key);
                                         try {
-                                          await widget.manager.requestStatus(
-                                            operation.requestId,
-                                          );
+                                          final result = await widget.manager
+                                              .queryOperation(operation);
                                           if (!canApply()) return;
-                                          update(
-                                            () => errors.remove(
-                                              operation.requestId,
-                                            ),
-                                          );
+                                          update(() {
+                                            errors.remove(operation.key);
+                                            details[operation.key] = result;
+                                          });
                                         } catch (error) {
                                           if (!canApply()) return;
                                           if (await _handleUnauthorized(
@@ -395,7 +395,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                                           }
                                           if (!dialogContext.mounted) return;
                                           update(
-                                            () => errors[operation.requestId] =
+                                            () => errors[operation.key] =
                                                 error is PanelApiException &&
                                                     error.statusCode == 404
                                                 ? '尚未查到原请求，执行结果仍未确认'
@@ -407,7 +407,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                                           }
                                         }
                                       },
-                                icon: querying == operation.requestId
+                                icon: querying == operation.key
                                     ? const SizedBox.square(
                                         dimension: 20,
                                         child: CircularProgressIndicator(
@@ -416,6 +416,21 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                                       )
                                     : const Icon(Icons.refresh),
                               ),
+                              if ((details[operation.key]
+                                          is PanelBackupPreflight ||
+                                      details[operation.key]
+                                          is PanelBackupRestore) &&
+                                  details.containsKey(operation.key))
+                                IconButton(
+                                  tooltip: '查看原请求详情',
+                                  onPressed: querying != null || _busy != null
+                                      ? null
+                                      : () => Navigator.pop(
+                                          dialogContext,
+                                          details[operation.key],
+                                        ),
+                                  icon: const Icon(Icons.open_in_new),
+                                ),
                               if (operation.canReview)
                                 IconButton(
                                   tooltip: '已核对，移除记录',
@@ -446,16 +461,63 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         },
       ),
     );
+    if (!_canInteract || selected == null) return;
+    setState(() {
+      if (selected is PanelBackupPreflight) {
+        _preflight = selected;
+        _preflightRequestId = selected.requestId;
+        _preflightQueryAvailable = true;
+        _preflightError = null;
+        _restoreItems
+          ..clear()
+          ..addAll(selected.items);
+        _restoreDependencies = false;
+        _restore = null;
+        _restoreRequestId = null;
+      } else if (selected is PanelBackupRestore) {
+        _restore = selected;
+        _restoreRequestId = selected.requestId;
+        _preflight = null;
+        _preflightRequestId = null;
+      }
+    });
+    _tabs.animateTo(2);
   }
 
-  String _originalRequestLabel(PanelBackupRequest? request) =>
-      switch (request?.status) {
-        'succeeded' => '已完成',
-        'failed' => '执行失败',
-        'cancelled' => '已取消',
-        'preparing' || 'running' || 'cancelling' => '执行中',
-        _ => '结果待确认',
-      };
+  String _operationLabel(String kind) => switch (kind) {
+    'create' => '创建备份',
+    'delete' => '删除备份',
+    'preflight' => '归档预检查',
+    'preflight-cancel' => '取消预检查',
+    'job-cancel' => '取消备份作业',
+    'restore' => '恢复目录',
+    'scheduler' => '重新加载调度器',
+    'dependencies' => '安装恢复依赖',
+    'dependency-cleanup' => '清理依赖作业',
+    'restore-resolve' => '核对恢复结果',
+    'directory-recovery' => '恢复目录现场',
+    _ => '备份操作',
+  };
+
+  String _originalRequestLabel(String? status) => switch (status) {
+    'succeeded' => '已完成',
+    'restored' => '目录已恢复',
+    'ready' => '预检查已就绪',
+    'expired' => '预检查已过期',
+    'resources_cleaned' => '残留资源已清理，原安装结果需另行核对',
+    'failed' => '执行失败',
+    'cancelled' => '已取消',
+    'preparing' ||
+    'running' ||
+    'cancelling' ||
+    'uploading' ||
+    'checking' ||
+    'accepted' ||
+    'extracting' ||
+    'staging' ||
+    'committing' => '执行中',
+    _ => '结果待确认',
+  };
 
   Future<void> _downloadBackup(PanelBackupFile file) async {
     if (_busy != null) return;
@@ -513,16 +575,20 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   }
 
   Future<void> _cancelJob(PanelBackupJob job) async {
-    if (_busy != null || !job.cancelAllowed) return;
+    if (!_canInteract || _busy != null || !job.cancelAllowed) return;
+    final generation = _foregroundGeneration;
     setState(() => _busy = 'cancel:${job.id}');
     var message = '已请求取消，等待作业终态';
     try {
       final response = await widget.manager.cancel(job.id);
+      if (!_canObserve(generation)) return;
       if (response['accepted'] != true) message = '作业当前不可取消';
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       try {
         final current = await widget.manager.fetchJob(job.id);
+        if (!_canObserve(generation)) return;
         message = switch (current.status) {
           'cancelled' => '备份已取消',
           'succeeded' => '备份已完成，取消未生效',
@@ -530,20 +596,24 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
           _ => '取消状态未知，请查看作业状态',
         };
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
+        if (!_canObserve(generation)) return;
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
         message = '无法确认取消结果，请刷新作业状态';
       }
     } finally {
       if (mounted) setState(() => _busy = null);
     }
-    if (!mounted) return;
+    if (!_canObserve(generation)) return;
     _notice(message);
     await _load(refresh: true);
   }
 
   Future<void> _selectRestoreArchive() async {
     final capabilities = _capabilities;
-    if (capabilities == null ||
+    if (!_canInteract ||
+        capabilities == null ||
         !capabilities.preflightEnabled ||
         _busy != null) {
       return;
@@ -556,7 +626,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       return;
     }
     final picked = await LocalFileBridge.pickScriptImport();
-    if (!mounted || _sessionExpired || _busy != null || picked == null) return;
+    if (!_canInteract || _busy != null || picked == null) return;
+    final generation = _foregroundGeneration;
     final lower = picked.name.toLowerCase();
     if (!const ['.tar.gz', '.tgz', '.tar', '.zip'].any(lower.endsWith)) {
       _notice('仅支持 TAR.GZ、TGZ、TAR 或 ZIP 备份');
@@ -589,7 +660,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       );
       if (!copied) throw const PanelApiException('无法读取所选备份文件');
       final size = await File(temporaryPath).length();
-      if (!_canInteract) return;
+      if (!_canObserve(generation)) return;
       setState(() {
         _stagingArchive = false;
         _uploadTotalBytes = size;
@@ -601,21 +672,21 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         requestId: requestId,
         maxBytes: capabilities.uploadLimitBytes,
         onProgress: (sent, total) {
-          if (!mounted) return;
+          if (!_canObserve(generation)) return;
           setState(() {
             _uploadSentBytes = sent;
             _uploadTotalBytes = total;
           });
         },
       );
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
       setState(() {
         _preflight = result;
       });
       final finalResult = result.active
-          ? await _waitForPreflight(result)
+          ? await _waitForPreflight(result, generation: generation)
           : result;
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
       setState(() {
         _preflight = finalResult;
         _restoreItems
@@ -628,8 +699,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         }
       });
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       if (!_preflightQueryAvailable ||
           (error is PanelApiException &&
               error.statusCode != null &&
@@ -641,8 +712,11 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       }
       try {
         var result = await widget.manager.fetchPreflight(requestId);
-        if (result.active) result = await _waitForPreflight(result);
-        if (!mounted || _sessionExpired) return;
+        if (!_canObserve(generation)) return;
+        if (result.active) {
+          result = await _waitForPreflight(result, generation: generation);
+        }
+        if (!_canObserve(generation)) return;
         setState(() {
           _preflight = result;
           _restoreItems
@@ -655,8 +729,10 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
               : null;
         });
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
-        if (!mounted) return;
+        if (!_canObserve(generation)) return;
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
         setState(() => _preflightError = '无法确认原预检查结果；未重复上传。可查询原请求或重新选择文件。');
       }
     } finally {
@@ -678,15 +754,19 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
 
   Future<void> _queryPreflight() async {
     final requestId = _preflightRequestId;
-    if (requestId == null || _busy != null) return;
+    if (!_canInteract || requestId == null || _busy != null) return;
+    final generation = _foregroundGeneration;
     setState(() {
       _busy = 'preflight-query';
       _preflightError = null;
     });
     try {
       var result = await widget.manager.fetchPreflight(requestId);
-      if (result.active) result = await _waitForPreflight(result);
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
+      if (result.active) {
+        result = await _waitForPreflight(result, generation: generation);
+      }
+      if (!_canObserve(generation)) return;
       setState(() {
         _preflight = result;
         _restoreItems
@@ -698,8 +778,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         }
       });
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       setState(() => _preflightError = '原预检查暂不可查询；没有重新上传。');
     } finally {
       if (mounted) setState(() => _busy = null);
@@ -707,14 +787,19 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   }
 
   Future<PanelBackupPreflight> _waitForPreflight(
-    PanelBackupPreflight initial,
-  ) async {
+    PanelBackupPreflight initial, {
+    required int generation,
+  }) async {
     var result = initial;
-    while (result.active && mounted) {
+    for (
+      var attempt = 0;
+      attempt < 15 && result.active && _canObserve(generation);
+      attempt++
+    ) {
       await Future<void>.delayed(const Duration(seconds: 2));
-      if (!mounted) break;
+      if (!_canObserve(generation)) break;
       result = await widget.manager.fetchPreflight(result.requestId);
-      if (!mounted) break;
+      if (!_canObserve(generation)) break;
       setState(() {
         _preflight = result;
         if (result.status == 'ready') {
@@ -730,17 +815,18 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
 
   Future<void> _cancelPreflight() async {
     final requestId = _preflightRequestId;
-    if (requestId == null) return;
+    if (!_canInteract || requestId == null) return;
+    final generation = _foregroundGeneration;
     try {
       final result = await widget.manager.cancelPreflight(requestId);
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
       setState(() {
         _preflight = result;
         _preflightError = '已请求取消，等待面板确认结果。';
       });
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       setState(() => _preflightError = '无法确认取消请求；请查询原预检查状态。');
     }
   }
@@ -748,7 +834,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   Future<void> _submitRestore() async {
     final preflight = _preflight;
     final selected = _restoreItems.toList(growable: false);
-    if (preflight == null ||
+    if (!_canInteract ||
+        preflight == null ||
         preflight.status != 'ready' ||
         selected.isEmpty ||
         _busy != null ||
@@ -779,7 +866,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         ],
       ),
     );
-    if (!mounted || confirmed != true) return;
+    if (!_canInteract || confirmed != true) return;
+    final generation = _foregroundGeneration;
     final requestId = PanelBackupManager.newRequestId();
     setState(() {
       _busy = 'restore';
@@ -795,17 +883,19 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         restoreDependencies: restoreDependencies,
         confirmDataImpact: selected.contains('data'),
       );
-      result = await _observeRestore(result);
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
+      result = await _observeRestore(result, generation: generation);
+      if (!_canObserve(generation)) return;
       setState(() => _restore = result);
     } catch (error) {
-      if (!mounted || _sessionExpired) return;
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       try {
         final result = await _observeRestore(
           await widget.manager.fetchRestore(requestId),
+          generation: generation,
         );
-        if (!mounted) return;
+        if (!_canObserve(generation)) return;
         setState(() => _restore = result);
         _notice(
           result.restoreOutcomeUnknown
@@ -813,61 +903,87 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
               : '已查询原恢复请求，没有重新提交',
         );
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
-        if (!mounted) return;
+        if (!_canObserve(generation)) return;
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
         _notice('无法确认恢复结果；原请求 $requestId 保留，请稍后查询，不要重复恢复');
       }
     } finally {
       if (mounted) setState(() => _busy = null);
-      unawaited(_loadRestoreHistory());
+      if (_canObserve(generation)) unawaited(_load(refresh: true));
     }
   }
 
-  Future<PanelBackupRestore> _waitForRestore(PanelBackupRestore initial) async {
+  Future<PanelBackupRestore> _waitForRestore(
+    PanelBackupRestore initial, {
+    required int generation,
+  }) async {
     var result = initial;
-    while (result.active && mounted && !_sessionExpired) {
+    for (
+      var attempt = 0;
+      attempt < 15 && result.active && _canObserve(generation);
+      attempt++
+    ) {
       await Future<void>.delayed(const Duration(seconds: 2));
-      if (!mounted || _sessionExpired) break;
+      if (!_canObserve(generation)) break;
       result = await widget.manager.fetchRestore(result.requestId);
-      if (!mounted) break;
+      if (!_canObserve(generation)) break;
       setState(() => _restore = result);
     }
     return result;
   }
 
-  Future<PanelBackupRestore> _observeRestore(PanelBackupRestore initial) async {
+  Future<PanelBackupRestore> _observeRestore(
+    PanelBackupRestore initial, {
+    required int generation,
+  }) async {
     var result = initial;
-    if (result.active) result = await _waitForRestore(result);
-    if (mounted && !_sessionExpired && result.scheduler.state == 'running') {
-      result = await _waitForFollowup(result, dependencies: false);
+    if (result.active && _canObserve(generation)) {
+      result = await _waitForRestore(result, generation: generation);
     }
-    if (mounted && !_sessionExpired && result.dependencies.state == 'running') {
-      result = await _waitForFollowup(result, dependencies: true);
+    if (_canObserve(generation) && result.scheduler.state == 'running') {
+      result = await _waitForFollowup(
+        result,
+        dependencies: false,
+        generation: generation,
+      );
+    }
+    if (_canObserve(generation) && result.dependencies.state == 'running') {
+      result = await _waitForFollowup(
+        result,
+        dependencies: true,
+        generation: generation,
+      );
     }
     return result;
   }
 
   Future<void> _queryRestore() async {
     final requestId = _restoreRequestId;
-    if (requestId == null || _busy != null) return;
+    if (!_canInteract || requestId == null || _busy != null) return;
+    final generation = _foregroundGeneration;
     setState(() => _busy = 'restore-query');
     try {
       final result = await _observeRestore(
         await widget.manager.fetchRestore(requestId),
+        generation: generation,
       );
-      if (!mounted) return;
+      if (!_canObserve(generation)) return;
       setState(() => _restore = result);
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       if (mounted) _notice('原恢复请求暂不可查询；没有重新提交');
     } finally {
       if (mounted) setState(() => _busy = null);
-      unawaited(_loadRestoreHistory());
+      if (_canObserve(generation)) unawaited(_load(refresh: true));
     }
   }
 
   Future<void> _loadRestoreHistory({int? offset}) async {
-    if (!mounted || _sessionExpired) return;
+    if (!_canInteract) return;
+    final generation = _foregroundGeneration;
     final request = ++_restoreHistoryRequest;
     final targetOffset = offset ?? _restoreHistory?.offset ?? 0;
     setState(() {
@@ -879,15 +995,15 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         limit: 25,
         offset: targetOffset,
       );
-      if (!mounted || _sessionExpired || request != _restoreHistoryRequest) {
+      if (!_canObserve(generation) || request != _restoreHistoryRequest) {
         return;
       }
       setState(() => _restoreHistory = result);
     } catch (error) {
-      if (!mounted || _sessionExpired || request != _restoreHistoryRequest) {
+      if (!_canObserve(generation) || request != _restoreHistoryRequest) {
         return;
       }
-      if (await _handleUnauthorized(error)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       if (mounted) setState(() => _restoreHistoryError = '恢复历史暂不可用，请重试');
     } finally {
       if (mounted && request == _restoreHistoryRequest) {
@@ -897,7 +1013,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   }
 
   Future<void> _queryHistoryItem(PanelBackupRestore restore) async {
-    if (_busy != null) return;
+    if (!_canInteract || _busy != null) return;
+    final generation = _foregroundGeneration;
     setState(() {
       _busy = 'restore-query';
       _restoreRequestId = restore.requestId;
@@ -905,10 +1022,12 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     try {
       final result = await _observeRestore(
         await widget.manager.fetchRestore(restore.requestId),
+        generation: generation,
       );
-      if (mounted) setState(() => _restore = result);
+      if (_canObserve(generation)) setState(() => _restore = result);
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       if (mounted) _notice('原恢复请求暂不可查询');
     } finally {
       if (mounted) setState(() => _busy = null);
@@ -919,7 +1038,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     PanelBackupRestore restore, {
     required bool directoriesRestored,
   }) async {
-    if (restore.directoryRecoveryRequired || _sessionExpired || _busy != null) {
+    if (!_canInteract || restore.directoryRecoveryRequired || _busy != null) {
       return;
     }
     final confirmed = await _confirm<bool>(
@@ -942,17 +1061,21 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         ],
       ),
     );
-    if (!mounted || confirmed != true || _busy != null) return;
+    if (!_canInteract || confirmed != true || _busy != null) return;
+    final generation = _foregroundGeneration;
     setState(() => _busy = 'restore-resolve');
     try {
       final result = await widget.manager.resolveRestore(
         requestId: restore.requestId,
         restored: directoriesRestored,
+        expectedRestore: restore,
       );
-      if (mounted) setState(() => _restore = result);
-      unawaited(_loadRestoreHistory());
+      if (!_canObserve(generation)) return;
+      setState(() => _restore = result);
+      unawaited(_load(refresh: true));
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       if (mounted) _notice('人工确认未能保存；请查询原恢复请求');
     } finally {
       if (mounted) setState(() => _busy = null);
@@ -961,7 +1084,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
 
   Future<void> _runFollowup({required bool dependencies}) async {
     final restore = _restore;
-    if (restore == null ||
+    if (!_canInteract ||
+        restore == null ||
         _busy != null ||
         !restore.committed ||
         restore.directoryRecoveryRequired ||
@@ -995,48 +1119,71 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         ],
       ),
     );
-    if (!mounted || confirmed != true) return;
+    if (!_canInteract || confirmed != true) return;
+    final generation = _foregroundGeneration;
+    final operationId = PanelBackupManager.newRequestId();
     setState(() => _busy = dependencies ? 'dependencies' : 'scheduler');
     try {
-      final operationId = PanelBackupManager.newRequestId();
       var result = dependencies
           ? await widget.manager.installRestoreDependencies(
               requestId: restore.requestId,
               operationId: operationId,
               confirmRetry: isRetry,
+              expectedRestore: restore,
             )
           : await widget.manager.reloadScheduler(
               requestId: restore.requestId,
               operationId: operationId,
               confirmRetry: isRetry,
+              expectedRestore: restore,
             );
+      if (!_canObserve(generation)) return;
       if ((dependencies ? result.dependencies : result.scheduler).state ==
           'running') {
-        result = await _waitForFollowup(result, dependencies: dependencies);
+        result = await _waitForFollowup(
+          result,
+          dependencies: dependencies,
+          generation: generation,
+        );
       }
-      if (mounted) setState(() => _restore = result);
+      if (_canObserve(generation)) setState(() => _restore = result);
     } catch (error) {
-      if (!mounted || _sessionExpired) return;
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       try {
-        var result = await widget.manager.fetchRestore(restore.requestId);
+        var result = await widget.manager.fetchRestore(
+          restore.requestId,
+          expectedDependencyOperationId: dependencies ? operationId : null,
+          expectedSchedulerOperationId: dependencies ? null : operationId,
+        );
+        if (!_canObserve(generation)) return;
         if ((dependencies ? result.dependencies : result.scheduler).state ==
             'running') {
-          result = await _waitForFollowup(result, dependencies: dependencies);
+          result = await _waitForFollowup(
+            result,
+            dependencies: dependencies,
+            generation: generation,
+          );
         }
-        if (mounted) setState(() => _restore = result);
+        if (!_canObserve(generation)) return;
+        setState(() => _restore = result);
         _notice('后续操作结果已通过原恢复请求查询');
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
+        if (!_canObserve(generation)) return;
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
         if (mounted) _notice('后续操作结果未知；只查询原恢复请求，不要重复恢复目录');
       }
     } finally {
       if (mounted) setState(() => _busy = null);
+      if (_canObserve(generation)) unawaited(_loadRestoreHistory());
     }
   }
 
   Future<void> _recoverRestoreDirectories(PanelBackupRestore restore) async {
-    if (!restore.directoryRecoveryRequired ||
+    if (!_canInteract ||
+        !restore.directoryRecoveryRequired ||
         _busy != null ||
         _sessionExpired) {
       return;
@@ -1059,25 +1206,27 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         ],
       ),
     );
-    if (!mounted || _sessionExpired || confirmed != true || _busy != null) {
+    if (!_canInteract || confirmed != true || _busy != null) {
       return;
     }
+    final generation = _foregroundGeneration;
     setState(() => _busy = 'directory-recovery');
     try {
       final result = await widget.manager.recoverRestoreDirectories(
         restore.requestId,
+        expectedRestore: restore,
       );
-      if (!mounted || _sessionExpired) return;
+      if (!_canObserve(generation)) return;
       setState(() => _restore = result);
       _notice(
         result.directoryRecoveryRequired ? '目录现场仍需处理，请查询原请求' : '目录现场已核对并恢复',
       );
     } catch (error) {
-      if (!mounted || _sessionExpired) return;
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       try {
         final result = await widget.manager.fetchRestore(restore.requestId);
-        if (!mounted || _sessionExpired) return;
+        if (!_canObserve(generation)) return;
         setState(() => _restore = result);
         _notice(
           result.directoryRecoveryRequired
@@ -1085,18 +1234,22 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
               : '现场恢复结果已通过原请求查询',
         );
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
+        if (!_canObserve(generation)) return;
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
         if (mounted && !_sessionExpired) _notice('现场恢复结果未知，请查询原恢复请求');
       }
     } finally {
       if (mounted) setState(() => _busy = null);
-      unawaited(_loadRestoreHistory());
+      if (_canObserve(generation)) unawaited(_load(refresh: true));
     }
   }
 
   Future<void> _cleanupRestoreDependencies() async {
     final restore = _restore;
-    if (restore == null ||
+    if (!_canInteract ||
+        restore == null ||
         _busy != null ||
         !restore.dependencies.cleanupRequired) {
       return;
@@ -1117,15 +1270,16 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         ],
       ),
     );
-    if (!mounted || _sessionExpired || confirmed != true) return;
+    if (!_canInteract || confirmed != true) return;
     final foregroundGeneration = _foregroundGeneration;
     setState(() => _busy = 'dependency-cleanup');
     try {
       var result = await widget.manager.cleanupRestoreDependencies(
         requestId: restore.requestId,
         operationId: restore.dependencies.operationId,
+        expectedRestore: restore,
       );
-      if (!mounted || _sessionExpired) return;
+      if (!_canObserve(foregroundGeneration)) return;
       setState(() => _restore = result);
       final accepted = result.dependencyCleanupRequested;
       if (accepted && result.dependencies.cleanupRequired) {
@@ -1133,7 +1287,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
           result,
           foregroundGeneration: foregroundGeneration,
         );
-        if (!mounted || _sessionExpired) return;
+        if (!_canObserve(foregroundGeneration)) return;
         setState(() => _restore = result);
       }
       _notice(
@@ -1144,8 +1298,10 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
             : '依赖作业已清理，请核对原安装结果',
       );
     } catch (error) {
-      if (!mounted || _sessionExpired) return;
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(foregroundGeneration)) return;
+      if (await _handleUnauthorized(error, generation: foregroundGeneration)) {
+        return;
+      }
       if (!_canInteract || foregroundGeneration != _foregroundGeneration) {
         return;
       }
@@ -1154,7 +1310,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
           restore.requestId,
           expectedDependencyOperationId: restore.dependencies.operationId,
         );
-        if (!mounted || _sessionExpired) return;
+        if (!_canObserve(foregroundGeneration)) return;
         setState(() => _restore = result);
         _notice(
           result.dependencies.cleanupRequired
@@ -1162,7 +1318,13 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
               : '依赖清理结果已通过原请求查询',
         );
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
+        if (!_canObserve(foregroundGeneration)) return;
+        if (await _handleUnauthorized(
+          queryError,
+          generation: foregroundGeneration,
+        )) {
+          return;
+        }
         if (mounted && !_sessionExpired) _notice('清理结果未知，请查询原恢复请求');
       }
     } finally {
@@ -1198,16 +1360,28 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   Future<PanelBackupRestore> _waitForFollowup(
     PanelBackupRestore initial, {
     required bool dependencies,
+    required int generation,
   }) async {
     var result = initial;
-    while ((dependencies ? result.dependencies : result.scheduler).state ==
-            'running' &&
-        mounted &&
-        !_sessionExpired) {
+    final operationId =
+        (dependencies ? initial.dependencies : initial.scheduler).operationId;
+    for (
+      var attempt = 0;
+      attempt < 15 &&
+          (dependencies ? result.dependencies : result.scheduler).state ==
+              'running' &&
+          _canObserve(generation);
+      attempt++
+    ) {
       await Future<void>.delayed(const Duration(seconds: 2));
-      if (!mounted || _sessionExpired) break;
-      result = await widget.manager.fetchRestore(result.requestId);
-      if (mounted) setState(() => _restore = result);
+      if (!_canObserve(generation)) break;
+      result = await widget.manager.fetchRestore(
+        initial.requestId,
+        expectedDependencyOperationId: dependencies ? operationId : null,
+        expectedSchedulerOperationId: dependencies ? null : operationId,
+      );
+      if (!_canObserve(generation)) break;
+      setState(() => _restore = result);
     }
     return result;
   }
@@ -1486,7 +1660,9 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   }
 
   Widget _restoreTab() {
-    if (_capabilities?.preflightEnabled != true) {
+    if (_capabilities?.preflightEnabled != true &&
+        _preflight == null &&
+        _restore == null) {
       return const Center(child: Text('此面板尚不支持原生归档预检查'));
     }
     final preflight = _preflight;
@@ -1563,8 +1739,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
             const SizedBox(height: 16),
             _restoreResultWidget(_restore!),
           ],
-          if (preflight.status == 'unknown' ||
-              (preflight.status == 'checking' && !preflight.active))
+          if (_busy == null)
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(

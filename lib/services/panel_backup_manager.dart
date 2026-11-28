@@ -64,12 +64,17 @@ class PanelBackupManager {
   Future<PanelBackupJob> fetchJob(String jobId) async {
     _validateId(jobId);
     final path = '/api/backup/native/jobs/${Uri.encodeComponent(jobId)}';
+    final operation = recovery.find(jobId, kind: 'job-cancel');
+    final observation = operation?.beginObservation();
     final value = await _api.getJson(path);
     if (value is! Map<String, dynamic> || value['ok'] != true) {
       throw PanelApiException('备份作业响应格式无效', path: path);
     }
     try {
-      return PanelBackupJob.fromJson(value['job']);
+      final result = PanelBackupJob.fromJson(value['job']);
+      if (result.id != jobId) throw const FormatException('备份作业响应不属于原请求');
+      operation?.acceptJob(result, observation!);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -108,8 +113,10 @@ class PanelBackupManager {
       throw PanelApiException('备份文件超过面板有效上传上限', statusCode: 413);
     }
     const path = '/api/backup/native/preflights';
+    final operation = recovery.admitPreflight(requestId, filename);
+    final observation = operation.beginObservation();
     try {
-      return PanelBackupPreflight.fromJson(
+      final result = _parsePreflight(
         await _api.postMultipartFile(
           path,
           filePath: filePath,
@@ -118,7 +125,10 @@ class PanelBackupManager {
           onProgress: onProgress,
           timeout: const Duration(minutes: 30),
         ),
+        requestId,
       );
+      operation.acceptPreflight(result, observation);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -127,8 +137,13 @@ class PanelBackupManager {
   Future<PanelBackupPreflight> fetchPreflight(String requestId) async {
     _validateRequestId(requestId);
     final path = '/api/backup/native/preflights/$requestId';
+    final observations = _observations(requestId, preflight: true);
     try {
-      return PanelBackupPreflight.fromJson(await _api.getJson(path));
+      final result = _parsePreflight(await _api.getJson(path), requestId);
+      for (final (operation, observation) in observations) {
+        operation.acceptPreflight(result, observation);
+      }
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -137,11 +152,64 @@ class PanelBackupManager {
   Future<PanelBackupPreflight> cancelPreflight(String requestId) async {
     _validateRequestId(requestId);
     final path = '/api/backup/native/preflights/$requestId/cancel';
+    final operation = recovery.admitAction(
+      kind: 'preflight-cancel',
+      rootId: requestId,
+    );
+    final observation = operation.beginObservation();
     try {
-      return PanelBackupPreflight.fromJson(await _api.postJson(path, const {}));
+      final result = _parsePreflight(
+        await _api.postJson(path, const {}),
+        requestId,
+      );
+      operation.acceptPreflight(result, observation);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
+  }
+
+  PanelBackupPreflight _parsePreflight(Object? value, String requestId) {
+    final result = PanelBackupPreflight.fromJson(value);
+    if (result.requestId != requestId) {
+      throw const FormatException('预检查响应与原请求标识不一致');
+    }
+    recovery.find(requestId, kind: 'preflight')?.validatePreflight(result);
+    return result;
+  }
+
+  List<(PanelBackupOperation, int)> _observations(
+    String rootId, {
+    bool preflight = false,
+  }) => [
+    for (final operation in recovery.operations)
+      if (operation.rootId == rootId &&
+          !operation.isFileRequest &&
+          operation.kind != 'job-cancel' &&
+          operation.isPreflight == preflight)
+        (operation, operation.beginObservation()),
+  ];
+
+  Future<Object> queryOperation(PanelBackupOperation operation) async {
+    if (!identical(
+      recovery.find(operation.requestId, kind: operation.kind),
+      operation,
+    )) {
+      throw ArgumentError('原请求记录不属于当前面板');
+    }
+    if (operation.isFileRequest) return requestStatus(operation.requestId);
+    if (operation.kind == 'job-cancel') return fetchJob(operation.rootId);
+    if (operation.isPreflight) return fetchPreflight(operation.rootId);
+    return fetchRestore(
+      operation.rootId,
+      expectedSchedulerOperationId: operation.kind == 'scheduler'
+          ? operation.requestId
+          : null,
+      expectedDependencyOperationId:
+          const {'dependencies', 'dependency-cleanup'}.contains(operation.kind)
+          ? operation.requestId
+          : null,
+    );
   }
 
   Future<PanelBackupRestore> createRestore({
@@ -162,6 +230,13 @@ class PanelBackupManager {
       throw ArgumentError('恢复范围或确认无效');
     }
     const path = '/api/backup/native/restores';
+    final operation = recovery.admitRestore(
+      requestId: requestId,
+      preflight: preflight,
+      items: items,
+      restoreDependencies: restoreDependencies,
+    );
+    final observation = operation.beginObservation();
     try {
       final result = _parseRestore(
         await _api.postJson(path, {
@@ -181,6 +256,7 @@ class PanelBackupManager {
           result.restoreDependencies != restoreDependencies) {
         throw const FormatException('恢复响应与原提交意图不一致');
       }
+      operation.acceptRestore(result, observation);
       return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
@@ -190,17 +266,40 @@ class PanelBackupManager {
   Future<PanelBackupRestore> fetchRestore(
     String requestId, {
     String? expectedDependencyOperationId,
+    String? expectedSchedulerOperationId,
   }) async {
     _validateRequestId(requestId);
     if (expectedDependencyOperationId != null) {
       _validateRequestId(expectedDependencyOperationId);
     }
+    if (expectedSchedulerOperationId != null) {
+      _validateRequestId(expectedSchedulerOperationId);
+    }
     final path = '/api/backup/native/restores/$requestId';
+    final observations = _observations(requestId);
     try {
       final result = _parseRestore(await _api.getJson(path), requestId);
       if (expectedDependencyOperationId != null &&
           result.dependencies.operationId != expectedDependencyOperationId) {
         throw const FormatException('依赖查询响应不属于原操作');
+      }
+      if (expectedSchedulerOperationId != null &&
+          result.scheduler.operationId != expectedSchedulerOperationId) {
+        throw const FormatException('调度器查询响应不属于原操作');
+      }
+      for (final (operation, observation) in observations) {
+        if (operation.kind == 'scheduler' &&
+            result.scheduler.operationId != operation.requestId) {
+          continue;
+        }
+        if (const {
+              'dependencies',
+              'dependency-cleanup',
+            }.contains(operation.kind) &&
+            result.dependencies.operationId != operation.requestId) {
+          continue;
+        }
+        operation.acceptRestore(result, observation);
       }
       return result;
     } on FormatException catch (error) {
@@ -211,30 +310,51 @@ class PanelBackupManager {
   Future<PanelBackupRestore> resolveRestore({
     required String requestId,
     required bool restored,
+    PanelBackupRestore? expectedRestore,
   }) async {
     _validateRequestId(requestId);
     final path = '/api/backup/native/restores/$requestId/resolve';
+    final operation = recovery.admitAction(
+      kind: 'restore-resolve',
+      rootId: requestId,
+      restore: expectedRestore,
+      directoriesRestored: restored,
+    );
+    final observation = operation.beginObservation();
     try {
-      return _parseRestore(
+      final result = _parseRestore(
         await _api.postJson(path, {
           'outcome': restored ? 'restored' : 'not_applied',
           'confirm': true,
         }),
         requestId,
       );
+      operation.acceptRestore(result, observation);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
   }
 
-  Future<PanelBackupRestore> recoverRestoreDirectories(String requestId) async {
+  Future<PanelBackupRestore> recoverRestoreDirectories(
+    String requestId, {
+    PanelBackupRestore? expectedRestore,
+  }) async {
     _validateRequestId(requestId);
     final path = '/api/backup/native/restores/$requestId/recover-directories';
+    final operation = recovery.admitAction(
+      kind: 'directory-recovery',
+      rootId: requestId,
+      restore: expectedRestore,
+    );
+    final observation = operation.beginObservation();
     try {
-      return _parseRestore(
+      final result = _parseRestore(
         await _api.postJson(path, {'confirm': true}),
         requestId,
       );
+      operation.acceptRestore(result, observation);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -460,31 +580,43 @@ class PanelBackupManager {
     required String requestId,
     required String operationId,
     bool confirmRetry = false,
+    PanelBackupRestore? expectedRestore,
   }) => _postRestoreFollowup(
     requestId,
     'scheduler-reload',
     operationId,
     confirmRetry,
+    expectedRestore,
   );
 
   Future<PanelBackupRestore> installRestoreDependencies({
     required String requestId,
     required String operationId,
     bool confirmRetry = false,
+    PanelBackupRestore? expectedRestore,
   }) => _postRestoreFollowup(
     requestId,
     'dependencies',
     operationId,
     confirmRetry,
+    expectedRestore,
   );
 
   Future<PanelBackupRestore> cleanupRestoreDependencies({
     required String requestId,
     required String operationId,
+    PanelBackupRestore? expectedRestore,
   }) async {
     _validateRequestId(requestId);
     _validateRequestId(operationId);
     final path = '/api/backup/native/restores/$requestId/dependencies/cleanup';
+    final operation = recovery.admitAction(
+      kind: 'dependency-cleanup',
+      rootId: requestId,
+      operationId: operationId,
+      restore: expectedRestore,
+    );
+    final observation = operation.beginObservation();
     try {
       final result = _parseRestore(
         await _api.postJson(path, {'operation_id': operationId}),
@@ -493,6 +625,7 @@ class PanelBackupManager {
       if (result.dependencies.operationId != operationId) {
         throw const FormatException('依赖清理响应不属于原操作');
       }
+      operation.acceptRestore(result, observation);
       return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
@@ -504,18 +637,29 @@ class PanelBackupManager {
     String operation,
     String operationId,
     bool confirmRetry,
+    PanelBackupRestore? expectedRestore,
   ) async {
     _validateRequestId(requestId);
     _validateRequestId(operationId);
     final path = '/api/backup/native/restores/$requestId/$operation';
+    final record = recovery.admitAction(
+      kind: operation == 'scheduler-reload' ? 'scheduler' : 'dependencies',
+      rootId: requestId,
+      operationId: operationId,
+      confirmRetry: confirmRetry,
+      restore: expectedRestore,
+    );
+    final observation = record.beginObservation();
     try {
-      return _parseRestore(
+      final result = _parseRestore(
         await _api.postJson(path, {
           'operation_id': operationId,
           'confirm_retry': confirmRetry,
         }),
         requestId,
       );
+      record.acceptRestore(result, observation);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -526,6 +670,7 @@ class PanelBackupManager {
     if (result.requestId != requestId) {
       throw const FormatException('恢复响应与原请求标识不一致');
     }
+    recovery.find(requestId, kind: 'restore')?.validateRestore(result);
     return result;
   }
 
@@ -581,7 +726,23 @@ class PanelBackupManager {
   Future<Map<String, dynamic>> cancel(String jobId) async {
     _validateId(jobId);
     final path = '/api/backup/native/jobs/$jobId/cancel';
-    return _responseMap(await _api.postJson(path, const {}), path);
+    final operation = recovery.admitAction(kind: 'job-cancel', rootId: jobId);
+    final observation = operation.beginObservation();
+    try {
+      final result = _responseMap(await _api.postJson(path, const {}), path);
+      if (result['job_id'] != jobId) {
+        throw const FormatException('取消响应不属于原备份作业');
+      }
+      if (result['job'] != null) {
+        operation.acceptJob(
+          PanelBackupJob.fromJson(result['job']),
+          observation,
+        );
+      }
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
   }
 
   Future<PanelBackupRequest> deleteFile({
