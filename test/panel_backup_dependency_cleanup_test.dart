@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fls_for_android/features/panel_backup_view.dart';
@@ -57,14 +58,38 @@ void main() {
       expect(find.text('Installation output'), findsNothing);
       expect(find.text('cleanup.zip'), findsNothing);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await pumpUntilFound(tester, find.text('清理原依赖作业'));
-      await tester.pumpAndSettle();
+      await _waitForCleanupIdle(tester);
       expect(harness.cleanupQueries, 1);
       expect(harness.posts, hasLength(1));
       expect(find.text('单独安装恢复依赖'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('a foreground return cannot revive an in-flight cleanup poll', (
+    tester,
+  ) async {
+    final queryGate = Completer<void>();
+    addTearDown(() {
+      if (!queryGate.isCompleted) queryGate.complete();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+    final harness = _CleanupHarness('pending', cleanupQueryGate: queryGate);
+    await _submit(tester, harness);
+    await pumpUntil(tester, () => harness.cleanupQueries == 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(find.text('Installation output'), findsNothing);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    queryGate.complete();
+    await _waitForCleanupIdle(tester);
+    await tester.pump(const Duration(seconds: 4));
+    expect(harness.cleanupQueries, 1);
+    expect(harness.posts, hasLength(1));
+    expect(find.text('单独安装恢复依赖'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('accepted cleanup queries its owner until cleanup is confirmed', (
     tester,
@@ -116,6 +141,13 @@ void main() {
   }
 }
 
+Future<void> _waitForCleanupIdle(WidgetTester tester) => pumpUntil(tester, () {
+  final buttons = tester.widgetList<OutlinedButton>(
+    find.widgetWithText(OutlinedButton, '清理原依赖作业'),
+  );
+  return buttons.isNotEmpty && buttons.single.onPressed != null;
+});
+
 Future<void> _submit(WidgetTester tester, _CleanupHarness harness) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -141,7 +173,7 @@ Future<void> _submit(WidgetTester tester, _CleanupHarness harness) async {
 }
 
 class _CleanupHarness {
-  _CleanupHarness(this.outcome) {
+  _CleanupHarness(this.outcome, {this.cleanupQueryGate}) {
     final api = PanelApiClient(
       baseUrl: 'https://fls.example/prefix',
       credentials: const PanelSessionCredentials(
@@ -155,6 +187,7 @@ class _CleanupHarness {
   }
 
   final String outcome;
+  final Completer<void>? cleanupQueryGate;
   late final PanelBackupManager manager;
   final posts = <http.Request>[];
   int cleanupQueries = 0;
@@ -207,6 +240,7 @@ class _CleanupHarness {
     if (path.endsWith('/restores/${'c' * 32}')) {
       if (posts.isNotEmpty) {
         cleanupQueries++;
+        await cleanupQueryGate?.future;
         if (outcome == 'unavailable' || outcome == 'expired') {
           return _json({
             'ok': false,
