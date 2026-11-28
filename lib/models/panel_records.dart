@@ -91,12 +91,16 @@ class PanelLogFile {
     required this.group,
     required this.sizeBytes,
     required this.modifiedAt,
+    this.version,
+    this.busy,
   });
 
   final String filename;
   final String group;
   final int sizeBytes;
   final String modifiedAt;
+  final String? version;
+  final bool? busy;
 
   factory PanelLogFile.fromJson(Object? value) {
     if (value is! Map<String, dynamic>) {
@@ -106,11 +110,21 @@ class PanelLogFile {
     if (filename.isEmpty || filename.contains('/') || filename.contains('\\')) {
       throw const FormatException('日志文件名无效');
     }
+    if ((value.containsKey('version') &&
+            (value['version'] is! String ||
+                !RegExp(
+                  r'^[a-f0-9]{64}$',
+                ).hasMatch(value['version'] as String))) ||
+        (value.containsKey('busy') && value['busy'] is! bool)) {
+      throw const FormatException('日志文件版本或占用状态无效');
+    }
     return PanelLogFile(
       filename: filename,
       group: value['group']?.toString() ?? '',
       sizeBytes: _integer(value['size_bytes']),
       modifiedAt: value['modified_at']?.toString() ?? '',
+      version: value['version'] as String?,
+      busy: value['busy'] as bool?,
     );
   }
 }

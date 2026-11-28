@@ -16,6 +16,7 @@ import '../services/panel_credential_store.dart';
 import '../services/panel_dashboard_manager.dart';
 import '../services/panel_online_scripts_manager.dart';
 import '../services/panel_records_manager.dart';
+import '../services/panel_log_cleanup_manager.dart';
 import '../services/panel_backup_manager.dart';
 import '../services/panel_runtime_deps_manager.dart';
 import '../services/panel_global_env_manager.dart';
@@ -118,6 +119,9 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   PanelApiClient? _api;
   PanelDashboardManager? _dashboardManager;
   PanelTasksManager? _manager;
+  PanelRecordsManager? _recordsManager;
+  PanelLogCleanupManager? _logCleanupManager;
+  final _logCleanupRecoveries = <String, PanelLogCleanupRecovery>{};
   final _configRecovery = PanelConfigRecovery();
   final _proxyRecovery = PanelProxyRecovery();
   final _notifyRecovery = PanelNotifyRecovery();
@@ -196,6 +200,16 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   Future<void> _loadTasksWithApi(PanelApiClient api) async {
     final manager = PanelTasksManager(api);
     final dashboardManager = PanelDashboardManager(api);
+    final recordsManager = PanelRecordsManager(api);
+    final cleanupManager = PanelLogCleanupManager(
+      api,
+      panelId: widget.server.url,
+      panelLabel: widget.server.name,
+      recovery: _logCleanupRecoveries.putIfAbsent(
+        widget.server.url,
+        () => PanelLogCleanupRecovery(widget.server.url),
+      ),
+    );
     setState(() {
       _loading = true;
       _error = null;
@@ -210,6 +224,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       setState(() {
         _api = api;
         _manager = manager;
+        _recordsManager = recordsManager;
+        _logCleanupManager = cleanupManager;
         _dashboardManager = dashboardManager;
         _tasks = tasks;
         _loading = false;
@@ -232,6 +248,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
         _hasCredential = true;
         _api = api;
         _manager = manager;
+        _recordsManager = recordsManager;
+        _logCleanupManager = cleanupManager;
         _dashboardManager = dashboardManager;
         _error = error.toString();
       });
@@ -950,11 +968,21 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     await _performTaskMenu(task, action);
   }
 
-  Future<bool> _expireSession(Object error, {PanelApiClient? candidate}) async {
+  Future<bool> _expireSession(
+    Object error, {
+    PanelApiClient? candidate,
+    PanelApiClient? expectedActive,
+  }) async {
     if (error is! PanelApiException || error.statusCode != 401) return false;
+    if (expectedActive != null && !identical(_api, expectedActive)) {
+      return false;
+    }
     try {
       await widget.credentialStore.delete(widget.server.url);
     } catch (_) {}
+    if (expectedActive != null && !identical(_api, expectedActive)) {
+      return false;
+    }
     final active = _api;
     candidate?.close();
     active?.close();
@@ -963,6 +991,8 @@ class _PanelTasksViewState extends State<PanelTasksView> {
       _api = null;
       _dashboardManager = null;
       _manager = null;
+      _recordsManager = null;
+      _logCleanupManager = null;
       _tasks = const [];
       _taskPage = null;
       _selectedTaskIds.clear();
@@ -1297,12 +1327,16 @@ class _PanelTasksViewState extends State<PanelTasksView> {
     }
     if (_selectedPanelTab == 3) {
       final api = _api;
-      if (api == null) return _buildConnectionError(context);
+      final recordsManager = _recordsManager;
+      if (api == null || recordsManager == null) {
+        return _buildConnectionError(context);
+      }
       return PanelRecordsView(
         key: _recordsKey,
-        manager: PanelRecordsManager(api),
+        manager: recordsManager,
+        cleanupManager: _logCleanupManager,
         onUnauthorized: (error) async {
-          await _expireSession(error);
+          await _expireSession(error, expectedActive: api);
         },
       );
     }
