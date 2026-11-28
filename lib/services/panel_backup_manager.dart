@@ -3,6 +3,7 @@ import 'dart:math';
 
 import '../models/panel_backup.dart';
 import '../models/panel_directory_maintenance.dart';
+import '../models/panel_dependency_maintenance.dart';
 import 'panel_api_client.dart';
 
 class PanelBackupManager {
@@ -249,6 +250,82 @@ class PanelBackupManager {
     const path = '/api/backup/native/restore-maintenance';
     try {
       return PanelBackupMaintenance.fromJson(await _api.getJson(path));
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelDependencyMaintenancePage> fetchDependencyMaintenance({
+    int offset = 0,
+    int limit = 25,
+  }) async {
+    if (offset < 0 || offset > 100000 || limit < 1 || limit > 100) {
+      throw ArgumentError('依赖现场分页参数无效');
+    }
+    const path = '/api/backup/native/dependency-maintenance';
+    try {
+      final page = PanelDependencyMaintenancePage.fromJson(
+        await _api.getJson('$path?offset=$offset&limit=$limit'),
+      );
+      if (page.offset != offset || page.limit != limit) {
+        throw const FormatException('依赖现场响应不属于原分页请求');
+      }
+      return page;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelDependencyMaintenance> fetchDependencyEvidence(
+    String requestId,
+    String operationId,
+  ) async {
+    _validateRequestId(requestId);
+    _validateRequestId(operationId);
+    final path =
+        '/api/backup/native/dependency-maintenance/$requestId/$operationId';
+    return _parseDependencyEvidence(
+      await _api.getJson(path),
+      requestId,
+      operationId,
+      path,
+    );
+  }
+
+  Future<PanelDependencyMaintenance> cleanupOrphanDependency(
+    PanelDependencyMaintenance evidence,
+  ) async {
+    _validateRequestId(evidence.requestId);
+    _validateRequestId(evidence.operationId);
+    if (!evidence.cleanupAllowed ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(evidence.version)) {
+      throw ArgumentError('此依赖现场不能清理');
+    }
+    final path =
+        '/api/backup/native/dependency-maintenance/${evidence.identity}/cleanup';
+    return _parseDependencyEvidence(
+      await _api.postJson(path, {'confirm': true, 'version': evidence.version}),
+      evidence.requestId,
+      evidence.operationId,
+      path,
+    );
+  }
+
+  PanelDependencyMaintenance _parseDependencyEvidence(
+    Object? value,
+    String requestId,
+    String operationId,
+    String path,
+  ) {
+    try {
+      if (value is! Map<String, dynamic> || value['ok'] != true) {
+        throw const FormatException('依赖现场响应无效');
+      }
+      final row = PanelDependencyMaintenance.fromJson(value['dependency']);
+      if (row.requestId != requestId || row.operationId != operationId) {
+        throw const FormatException('依赖现场响应不属于原操作');
+      }
+      return row;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }

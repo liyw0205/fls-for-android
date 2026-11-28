@@ -13,6 +13,7 @@ class PanelBackupCapabilities {
     this.restoreEnabled = false,
     this.directoryMaintenanceEnabled = false,
     this.directoryFinalizationEnabled = false,
+    this.dependencyMaintenanceEnabled = false,
   });
 
   final List<String> items;
@@ -26,6 +27,7 @@ class PanelBackupCapabilities {
   final bool restoreEnabled;
   final bool directoryMaintenanceEnabled;
   final bool directoryFinalizationEnabled;
+  final bool dependencyMaintenanceEnabled;
 
   factory PanelBackupCapabilities.fromJson(Object? value) {
     if (value is! Map<String, dynamic> ||
@@ -42,6 +44,10 @@ class PanelBackupCapabilities {
         value['directory_finalization_enabled'] is! bool) {
       throw const FormatException('目录现场结束能力无效');
     }
+    if (value.containsKey('dependency_maintenance_enabled') &&
+        value['dependency_maintenance_enabled'] is! bool) {
+      throw const FormatException('依赖现场维护能力无效');
+    }
     return PanelBackupCapabilities(
       items: (value['items'] as List).whereType<String>().toList(),
       formats: (value['formats'] as List).whereType<String>().toList(),
@@ -56,6 +62,8 @@ class PanelBackupCapabilities {
           value['directory_maintenance_enabled'] == true,
       directoryFinalizationEnabled:
           value['directory_finalization_enabled'] == true,
+      dependencyMaintenanceEnabled:
+          value['dependency_maintenance_enabled'] == true,
     );
   }
 }

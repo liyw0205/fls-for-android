@@ -10,6 +10,7 @@ import '../services/local_file_bridge.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_backup_manager.dart';
 import 'panel_directory_maintenance_view.dart';
+import 'panel_dependency_maintenance_view.dart';
 
 class PanelBackupView extends StatelessWidget {
   const PanelBackupView({
@@ -1120,12 +1121,37 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                       _filesTab(),
                       _jobsTab(),
                       _restoreTab(),
-                      PanelDirectoryMaintenanceView(
+                      DefaultTabController(
                         key: ObjectKey(widget.manager),
-                        manager: widget.manager,
-                        onUnauthorized: (error) async {
-                          await _handleUnauthorized(error);
-                        },
+                        length: 2,
+                        child: Column(
+                          children: [
+                            const TabBar(
+                              tabs: [
+                                Tab(text: '目录现场'),
+                                Tab(text: '依赖资源'),
+                              ],
+                            ),
+                            Expanded(
+                              child: TabBarView(
+                                children: [
+                                  PanelDirectoryMaintenanceView(
+                                    manager: widget.manager,
+                                    onUnauthorized: (error) async {
+                                      await _handleUnauthorized(error);
+                                    },
+                                  ),
+                                  PanelDependencyMaintenanceView(
+                                    manager: widget.manager,
+                                    onUnauthorized: (error) async {
+                                      await _handleUnauthorized(error);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
