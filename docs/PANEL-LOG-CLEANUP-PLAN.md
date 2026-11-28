@@ -2,7 +2,7 @@
 
 ## 实现状态与范围
 
-本文件包含已实施的协调基础和待实现的原生契约；所列新 API 尚不存在，不能据本文开放 APP 写操作。最新 FLS 实现 `f907e6c5168ea9c7526c3ac089e8779959c94b05` / `20261128.13`（168），推送及新 SHA 验证见下方记录；APP 代码/APK 仍为 `269c16c` / `0.1.73+87`。此前普通任务监管、日志入口恢复门禁及实际 8 MiB 有界下载的证据见 [任务执行规格](PANEL-TASK-EXECUTION-PLAN.md)。原生日志现有列表、搜索、读取及下载；单文件/分组清理未原生迁移。
+最新 FLS 后端 `e1c4083711d21c637b81032b6be3396cba1e8bc2` / `20261128.14`（169）已推送 `develop`，实现本页的原生清理 API；这不表示运行中的面板已经升级。新 [Native `46085389388`](https://github.com/liyw0205/fls/actions/runs/46085389388) 验证中，完整终态待收取。APP 代码/APK 仍为 `269c16c` / `0.1.73+87`，已有列表、搜索、读取及下载，单文件/多选/分组清理页面尚未接入。此前普通任务监管、日志入口恢复门禁及实际 8 MiB 有界下载见 [任务执行规格](PANEL-TASK-EXECUTION-PLAN.md)。
 
 `cc1493e` 新增 `fls_manager/log_access.py`，在恢复范围外按日志文件名协调跨进程共享读取/写入与独占删除，锁保持至实际句柄关闭；校验目录/文件身份，拒绝链接和特殊文件。已接普通任务、调试、在线安装、依赖/运行时、备份依赖、面板控制及前端事件的 Python 日志入口和读取/下载。普通任务/调试/在线安装的独立命令监管在 owner 强退后继续持日志 lease。Web 单文件、分组及自动清理共用版本核对删除 helper，替代进程内 `LOG_FILES_MUTATION_LOCK`；占用读取返回 503 `log_file_busy`。
 
@@ -16,7 +16,7 @@
 
 `f85b87b` 将控制命令和 shell/PowerShell 常驻输出交给独立管道收集进程。只有收集进程打开 `fls-manager-daemon.log`，最后一个继承输出端关闭后才释放日志 lease；owner 退出不取消控制命令。固定守护日志位于 data/scripts 恢复集之外，只长期持有日志锁，不阻塞恢复；其他日志保留原恢复门禁。启动确认前失败不执行命令，描述符交接失败恢复原输出；Windows 同步 CRT 与系统标准句柄，PowerShell 直接启动 Python。systemd transient unit 的服务端输出仍使用原 journal，客户端输出进入收集管道，未运行真实 systemctl。
 
-覆盖边界：本批常驻日志交接须以新 SHA 的 Windows/Linux CI 验证。原生清理的固定目标快照、持久逐项删除意图/回执、容量/TTL、原请求查询/核对及 APP 清理页面均未实现，不能将基础协调视为日志原生清理完成。启动器的 Windows 实例锁/WAL/断电等边界仍属 B3 剩余工作，不能由日志交接测试代替。
+覆盖边界：常驻日志交接的真实 Windows/Linux 启动和三项打包已由 `f907e6c` 验证，但其完整 Native 仍失败，原因见后文。原生清理的固定目标快照、持久逐项删除意图/回执、容量/TTL、原请求查询/核对已由 `e1c4083` 实施并通过本机定向测试，平台 CI 待收取；APP 清理页面未实现。启动器的 Windows 实例锁/WAL/断电等仍属 B3 剩余工作，不能由日志交接测试代替。
 
 2026-11-28 03:51（UTC+8）验证快照：本机最终日志/删除/任务日志/发布说明 29 项、54 子用例通过；扩展调试/在线安装等 113 项、55 子用例通过、1 项跳过。绑定 `cc1493e` 的 Module `46059064241`、Desktop `46059064327`、EXE `46059064382` 打包成功；[Native `46059064312`](https://github.com/liyw0205/fls/actions/runs/46059064312) 尚在运行，Windows 新增日志步骤已通过，不能提前记录双平台全绿。APP `269c16c` 的 Android CI `46051131340` 已通过 268 项测试与 APK 构建，本批未改 APP 代码。
 
@@ -42,7 +42,15 @@ Web 卸载 `5977c73` 的 Native `46077499732` 完整双平台成功：Linux 1149
 
 `f907e6c` 保留真实平台启动红用例，在 Windows 描述符和系统标准句柄交接后创建普通 UTF-8 文本流；使用独立 duplicate FD，两流均构造成功后再替换 stdout/stderr，失败走原回滚。平台用例同时断言文本、stderr、os.write 和继承子进程输出。本机新测试及发布说明最终 13 项/4 subtests 通过，compileall/diff 检查通过。已在上一完整 Native 终态后推送此提交至 `develop`，没有取消旧证据；新 [Native `46083027529`](https://github.com/liyw0205/fls/actions/runs/46083027529)、Module `46083027619`、Desktop `46083027534` 和 EXE `46083027519` 已启动，尚未取得完整终态。新 SHA 的 Windows 及真实打包验证仍须收取，不以本机成功记为修复闭环。
 
-本次进度核对继续收取 `f907e6c`：Windows 真实平台启动及安装监管 job、Linux 新增监管 job、Windows 任务 job 均成功；Module `46083027619`、Desktop `46083027534`、EXE `46083027519` 三项打包成功。完整 Native `46083027529` 的 Linux 和 Windows 长回归仍在运行，整体结论尚未取得；不取消此 run 或推送另一后端提交替代其终态。全量原生业务、主题和用户验收仍未完成，不能据此合并发布。
+`f907e6c` 的 Native `46083027529` 最终 failure：Windows 真实平台启动及安装监管、Linux 新增监管、Windows 任务和完整 Linux job 成功，Windows 原长回归的 `test_cleanup_kills_descendant_after_command_parent_exits` 失败，`DependencyProcess.wait()` 读取 `process-result.json` 报 PermissionError（该步骤 1 failed/2 passed/1 skipped）。Module `46083027619`、Desktop `46083027534`、EXE `46083027519` 成功，正式发布跳过。旧 run 终态后才推送新候选，保留失败证据。
+
+`e1c4083` 将已验证的 Windows 共享读取和 FileRenameInfoEx 原子发布抽至 `receipt_io.py`，任务协调保留原导入别名，旧依赖监管结果读取/发布也复用此实现；不改 `directory_process.py`，不增加忽略错误或重试。新增真实监管进程在旧读取句柄持有期间发布结果的回归。Windows 修正须以本次新 SHA 验证，不能用 Termux 结果闭环。
+
+本批原生清理先写后端契约测试，初次新接口确实返回 404；实现后的最终十文件回归为 90 passed/47 subtests，compileall/diff 检查通过。包括固定分组、同名替换/父目录变化、活跃 writer、逐项结果、200 文件和容量/TTL/实际 body 上限、签名损坏、初/意图/终回执失败、GET 零写入、只观察核对和真实 worker 在持久删除意图后强退。新 workflow 增加 Linux/Windows 独立清理 job，保留全部旧完整回归。
+
+实现回执位于恢复范围外的 `BASE_DIR/.log_cleanup`，预检查最多 32 份、原请求最多 512 份，每份实际读取最多 512 KiB + 1；只退役已过期且签名有效的预检查，未知临时现场/损坏/容量满均拒绝新写。POST 实际 JSON 限制 384 KiB，固定最多 200 文件或 20 组、600 秒 TTL；逐项保存 deleting 后才删除，保存后再次核对原对象，持久化失败停止后续项。GET 对 pending/deleting 返回 unknown，相同 ID 永不再删除；reconcile 仅观察原未知目标。
+
+截至 08:05（UTC+8），新 Native `46085389388` 的 Linux/Windows 清理 job 均成功，各 44 passed/28 subtests；双平台依赖监管和 Windows 任务 job 成功。Windows 长回归中原失败的 Job Object/旧依赖结果步骤已成功，但完整 Linux/Windows 长回归仍运行，不提前记整体全绿。Module `46085389329`、Desktop `46085389356`、EXE `46085389364` 均成功，三个正式发布 job 均 skipped。全量原生业务、主题和用户验收仍未完成，不能据此合并发布。
 
 计划覆盖原生单文件、多文件和分组预检查/删除/查询，旧 Web 单文件/分组删除及自动清理共用同一协调层。所有业务页仍复用面板 session/CSRF 和恢复门禁；不删除任务、脚本、历史或备份。
 
@@ -64,15 +72,15 @@ Web 卸载 `5977c73` 的 Native `46077499732` 完整双平台成功：Linux 1149
 | `routes/deps.py` 的取消与结果轮询 | `f5aacbd` 保留原子取消认领，适配器将 terminate/kill 转为关闭 owner 通道；父日志关闭失败保留原状态/句柄。旧自然完成、超时、重试和终态回执失败断言保留 |
 | `routes/deps.py::deps_uninstall` 的 Web 卸载 | `5977c73` 已复用现有卸载作业，完整双平台 CI 通过；表单原 ID、库存/冲突/回执及日志页共用，不再同步 pip_cmd，无平行取消/重试协议 |
 | `routes/backup/_common.py::install_dependencies` | `f574248` 已接监管独立守卫和二次确认，原主锁持有期间交接，所有主锁受理探测 guard；owner 强退后先停整树/关日志再退 guard。该 SHA 双平台新增监管通过，但完整 Native 有上述 Windows 夹具失败；后续新 SHA 重新验证，不用局部成功代替整体 |
-| `routes/about/helpers.py::run_fls_control_later` 与 shell/PowerShell 启动器 | `f85b87b` 已实施独立管道收集，实际 file writer 只在最后一个输出端 EOF 后释放 lease；固定 daemon 文件不持长期恢复锁，systemd transient builder 保留。Windows 真实启动红用例由 `f907e6c` 补普通文本流交接，实际新 SHA CI 待收取；其他实例锁/WAL/断电边界仍未完成 |
+| `routes/about/helpers.py::run_fls_control_later` 与 shell/PowerShell 启动器 | `f85b87b` 已实施独立管道收集，实际 file writer 只在最后一个输出端 EOF 后释放 lease；固定 daemon 文件不持长期恢复锁，systemd transient builder 保留。Windows 真实启动红用例由 `f907e6c` 补普通文本流交接并经平台/打包验证；其他实例锁/WAL/断电边界仍未完成 |
 
 `9aeff36` 已将 Windows 普通任务回归拆成独立短作业，与其余 12 个 Windows 检查及完整 Linux 回归并列，13 个原测试命令逐字保持，没有 continue-on-error。这样可在任务 job 终态后立即读取失败现场，不必等待在线安装/任务源全部结束；未通过的候选继续保留原工作流终态，不中途取消后改写证据。
 
-## 计划 API
+## 后端 API 与 APP 接续
 
-| 操作 | 计划契约 |
+| 操作 | `e1c4083` 已实现契约 |
 | --- | --- |
-| 能力/列表 | 独立只读能力标记；日志列表增加文件 version 与可验证的活跃提示。旧后端不支持时仅禁用新清理入口，不把普通 401/403/业务 404 当成版本不兼容 |
+| 能力/列表 | `GET /api/logs/cleanup/capabilities` 返回 supported、max_files、max_groups、preview_ttl_seconds；日志列表增加文件 version/busy。APP 仅在独立能力端点明确不支持时降级，不把普通 401/403/业务 404 当成版本不兼容 |
 | `POST /api/logs/cleanup/preview` | 只预检查，不删除。最多 20 个分组或 200 个显式文件，每次快照最多 200 文件；超限必须缩小选择，不静默截断。返回 preview_id、固定清单/版本、数量/字节、busy/冲突、10 分钟有效期 |
 | `POST /api/logs/cleanup` | request_id、preview_id 和快照摘要绑定；确认后重新核对原目标版本/独占 lease，逐项返回 deleted/missing/busy/conflict/failed/unknown。预检查期间新建的同组文件不纳入删除；不同参数复用 ID 拒绝 |
 | `GET /api/logs/cleanup/requests/<request_id>` | 真正只读，返回原请求及逐项状态，不重扫扩展目标、不清理、不写回、不重试。GET 未找到与结果未知分开，不能据此自动再 POST |
