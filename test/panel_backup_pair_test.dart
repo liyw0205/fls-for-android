@@ -446,6 +446,7 @@ Future<void> _exercisePreflightFaults({
   required Future<Map<String, dynamic>> Function() evidence,
 }) async {
   final initial = await evidence();
+  final requestStart = (initial['requests'] as List).length;
   final archives = (fixture['archives'] as List).cast<String>();
   final recovery = manager.recovery;
 
@@ -599,6 +600,7 @@ Future<void> _exercisePreflightFaults({
     'timed_out': false,
   });
   final posts = (finalEvidence['requests'] as List)
+      .skip(requestStart)
       .where(
         (value) =>
             value['method'] == 'POST' &&
