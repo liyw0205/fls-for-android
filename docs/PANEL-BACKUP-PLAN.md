@@ -18,9 +18,17 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：真实 WAL、多 worker 清理与 APP 生命周期
+#### 最新检查点：提交前刷新与 Windows 写穿透
 
-当前配对候选为 FLS `872c44aa504eace0e74e1fe629cb30e9f11771a5` / `20261128.20`（175，产品实现 `f99be69`、后续只增强测试阶段诊断）与 APP `a6a362029eec341074fb998ef19914217f1926db` / `0.1.76+90`，均已推送各自 `develop`。后端 [Native `46094306921`](https://github.com/liyw0205/fls/actions/runs/46094306921) 完整验证中；Module `46094306961`、Desktop `46094306834`、EXE `46094306843` 已成功。APP [Android CI `46093416464`](https://github.com/liyw0205/fls-for-android/actions/runs/46093416464) 已完整 success，格式/分析、290 项测试、arm64 APK 及 artifact 上传均成功，正式发布步骤 skipped。不能借用上一 SHA 的结果。
+FLS `ef4e38f847352d3fec8e1b47bfc862b25fb5b967` / `20261128.21`（176）已推送 `develop`；APP 代码与下节 `a6a3620` / `0.1.76+90` 相同。后端 [Native `46096518024`](https://github.com/liyw0205/fls/actions/runs/46096518024) 已完整 success，13 个 jobs 全部成功：Linux 完整回归 1152 passed、1 Windows 专用 skipped、1033 subtests、2 条既有 tar 警告；Windows 目录恢复 11 passed/10 subtests、调试 42 passed/2 skipped/23 subtests、在线安装 181 passed/5 skipped/134 subtests、独立任务导入 66 passed/76 subtests、任务源/刷新 204 passed/152 subtests，其余步骤全部成功。Module `46096517799`、Desktop `46096517784`、EXE `46096517812` 全部 success，正式 Release jobs 均 skipped，已核对实际 SHA。
+
+恢复提交先刷新 staged、workspace 和原 target 文件树，POSIX 同时刷新目录；Windows 文件以可写句柄 fsync。目录不可读或刷新失败在 live rename 前返回 unchanged，不忽略扫描错误、不修改用户文件权限。Windows 移动目录和发布事务清单使用真实 MoveFileExW 的 REPLACE_EXISTING/WRITE_THROUGH，不设 COPY_ALLOWED，不退回无刷新搬移；拒绝树中 reparse point。强退夹具在新的 `_replace` 边界注入，保留全部真实搬移断点及回滚断言。
+
+新增五项回归覆盖文件/目录刷新先于 prepared journal、刷新失败、不可读子树、真实 Windows junction 和写穿透 API；修正前已在本机复现前三项缺陷。最终九文件 77 passed、2 Windows 专用 skipped、44 subtests；发布说明 2 passed，diff 检查通过。新 CI 的 Windows WAL/目录组合 23 passed/21 subtests、新持久性 step 5 passed，包含真实 junction 与 MoveFileExW；Linux 对应组合 23 passed/21 subtests、新 step 3 passed/2 Windows 专用 skipped。文件刷新和写穿透、独立进程强退均不等同于物理断电验证，不宣称硬件层保证。
+
+#### 已通过检查点：真实 WAL、多 worker 清理与 APP 生命周期
+
+已通过配对检查点为 FLS `872c44aa504eace0e74e1fe629cb30e9f11771a5` / `20261128.20`（175，产品实现 `f99be69`、后续只增强测试阶段诊断）与 APP `a6a362029eec341074fb998ef19914217f1926db` / `0.1.76+90`，均已推送各自 `develop`。后端 [Native `46094306921`](https://github.com/liyw0205/fls/actions/runs/46094306921) 已完整 success：Linux 1152 passed、1 skipped、1033 subtests、2 条既有 tar 警告；Windows 全部步骤成功，跨 worker 清理 50 passed、3 skipped、19 subtests，目录恢复 11 passed、10 subtests，在线安装 181 passed、5 skipped、134 subtests，任务源/刷新 204 passed、152 subtests。Module `46094306961`、Desktop `46094306834`、EXE `46094306843` 全部成功。APP [Android CI `46093416464`](https://github.com/liyw0205/fls-for-android/actions/runs/46093416464) 已完整 success，格式/分析、290 项测试、arm64 APK 及 artifact 上传均成功，正式发布步骤 skipped。该结果不替代 `.21` 新 SHA 的验证。
 
 真实 SQLite WAL 测试由独立进程留下主库、WAL 和 SHM；immutable 读取确认第二条数据仅在 WAL。覆盖提交、终态保存失败回滚、各实际搬移点硬退出及 committed journal 后硬退出，启动恢复后验证 integrity_check、两条数据、原对象/字节及运行态剥离。`3c01430` / `.18` 的 Windows 新 job 失败于夹具短路径与规范长路径不一致，修正夹具三处 resolve，保留业务路径校验和全部断言；该 Native `46091862558` 最终 cancelled，不算完整通过。`2a32f19` / `.19` 的双平台 WAL job 均通过。进程硬退出不等于断电，Windows 目录/文件持久性边界仍需单独处理。
 
@@ -30,7 +38,7 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 APP 备份页按 manager 身份销毁旧页面状态，路由捕获稳定 manager；后台、401 或切面板同步作废确认身份并关闭具体 DialogRoute，隐藏正文和输出。导出/上传前复核生命周期，旧恢复响应和旧 401 不影响新面板，补查后不对已销毁状态 setState。新增四项 Widget 用例覆盖切面板确认作废、旧 200/401 回包及后台排队同意作废；本机格式/静态分析及上述完整 Actions 已通过。开发测试包为 [artifact `15241534535`](https://github.com/liyw0205/fls-for-android/actions/runs/46093416464/artifacts/15241534535)，到期于 2026-12-12 01:36:34 UTC；本机 `build/develop-0.1.76+90-a6a3620/app-release.apk`，11,517,901 字节，SHA256 `980af3a21fd2e66857c0ff1a9d2818156492b704129d937d788d91b62598bc7d`。aapt 核对 `top.fls.fls_for_android` / `0.1.76` / `90`；未安装、不做 ADB，真实面板手动验收待用户。
 
-下一步以本候选 CI 为证收取结果，再收尾 Windows 断电持久性、逐域 busy、坏回执维护及 APP 当前会话完整流程，随后 B4。跨 APP 进程统一恢复归 M5；首次设置/维护 M4、全域补缺 M5、全量导航/DeepSeek 主题 M6、配对和用户手动验收 M7 未完成。B3 和总 Goal 均保持未完成，不合并 main、不正式发布、不做 ADB。
+`.21` 的文件刷新/写穿透及完整回归已通过双平台；保留物理断电未验证边界，不重复开发此子批。下一步收尾逐域 busy、坏回执维护及 APP 当前会话完整流程，随后 B4。跨 APP 进程统一恢复归 M5；首次设置/维护 M4、全域补缺 M5、全量导航/DeepSeek 主题 M6、配对和用户手动验收 M7 未完成。B3 和总 Goal 均保持未完成，不合并 main、不正式发布、不做 ADB。
 
 #### 上一检查点：实例锁固定于恢复目录之外
 
@@ -406,7 +414,7 @@ Python 命令行入口先恢复目录，保留原请求确认入口，再延后�
 
 2026-11-27 接续目录现场恢复检查点：FLS `c8dd0eb` / `20261127.5`（125），APP 修复候选 `79bbfab` / `0.1.62+76`（原实现 `8629fd3` / `0.1.60+74`）。本轮先 fetch/fast-forward 两仓 develop，均已是最新；FLS main 无额外未纳入 develop 的提交，保留原工作区改动继续推进。下面保留旧检查点的通过证据，新检查点工作流结果单独记录，不用旧 CI 证明新代码。
 
-目录事务清单位于 `BASE_DIR/.backup_native_commits/<request_id>.json`，在首次移动业务目录前持久保存 base/workspace/原目录/替换目录及密钥、会话等运行态对象身份。启动在创建 data、读取密钥和打开会话库前拿独占进程锁；prepared 按实际对象位置回滚，committed 保留新业务目录，遇到替换/损坏停止并保留副本。启动恢复后仍保留清单，由显式 `recover-directories` 保存原请求终态再清理；清理中断可重试。POSIX 对文件树和目录执行 fsync，Windows 当前只保证清单文件 fsync，独立进程硬退出测试不等于 Windows 断电持久性验证。
+目录事务清单位于 `BASE_DIR/.backup_native_commits/<request_id>.json`，在首次移动业务目录前持久保存 base/workspace/原目录/替换目录及密钥、会话等运行态对象身份。启动在创建 data、读取密钥和打开会话库前拿独占进程锁；prepared 按实际对象位置回滚，committed 保留新业务目录，遇到替换/损坏停止并保留副本。启动恢复后仍保留清单，由显式 `recover-directories` 保存原请求终态再清理；清理中断可重试。`.21` 在提交前刷新原树和替换树；POSIX 同时 fsync 目录，Windows 文件 fsync、目录搬移及清单发布走 MoveFileExW 写穿透。Windows 平台结果见顶部新 SHA；这些机制和进程硬退出测试均不等于物理断电验证。
 
 APP 新增可选严格 bool `directory_recovery_required`（旧后端缺字段按 false）；有现场待处理时隐藏人工结果确认、禁用调度器/依赖启动，提供“恢复目录现场”确认。恢复响应丢失只 GET 原 request ID，不能重新提交归档。损坏清单时 GET 仍提供待恢复提示，POST 保留证据并报错；全部恢复回执损坏的独立维护入口仍待补。
 
@@ -564,7 +572,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 实例锁 `78c2632` 完整平台通过；新增真实 WAL、多 worker 清理及 APP 生命周期修正。FLS `872c44a` 完整 CI 验证中，APP `a6a3620` 的 290 项测试及 APK 成功。继续 Windows 断电持久性、逐域 busy、坏回执维护及 APP 全流程 | 上述剩余项完成并通过故障/兼容回归；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 实例锁、真实 WAL、多 worker 清理和 APP 生命周期子批完整 CI 通过；FLS `.21` `ef4e38f` 提交前刷新与 Windows 写穿透、完整回归及三打包均成功。APP `a6a3620` 的 290 项测试及 APK 成功；逐域 busy、坏回执维护及 APP 全流程继续 | 上述剩余项完成并通过故障/兼容回归，明确物理断电未验证边界；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
