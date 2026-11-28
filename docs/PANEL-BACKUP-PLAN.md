@@ -18,9 +18,19 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：保留证据的独立目录维护结束
+#### 最新检查点：命令启动前独立依赖监管证据
 
-最新 FLS `89047f162229d6edd4399886c6cfb5b2e6834870` / `20261128.27`（182），APP 保持 `6b8f882b3612ad2c7c96a47a3548a6ada9d6959a` / `0.1.81+95`，均仅推各自 `develop`。2026-11-28 13:41 CST 核对 [Native `46113041435`](https://github.com/liyw0205/fls/actions/runs/46113041435) 仍在运行，12/15 jobs 成功、3 项运行中；Module `46113041455`、Desktop `46113041489`、EXE `46113041467` 成功。不借上一 `.26` 的完整成功证明新 SHA，当前不满足合并发布条件。
+FLS `885da463db015b2a6ae5dc067006c35f107827dc` / `20261128.28`（183）已推 `develop`，APP 仍为 `6b8f882` / `0.1.81+95`。新 [Native `46114419343`](https://github.com/liyw0205/fls/actions/runs/46114419343) 的 Linux/Windows 依赖清理 jobs `140884910579`、`140884910561` 已成功，完整回归仍在运行；Module `46114419315`、Desktop `46114419407`、EXE `46114419284` 成功，不借上一 SHA 的完整成功证明本批。
+
+新增私有 `.backup_native_dependency_evidence` 操作记录，绑定实例、证据目录、临时根目录、workspace、原 request/operation 和真实 supervisor guard，最多 1000 项、单项 8192 字节。状态为 prepared/guarded/start_requested/cleanup_pending/cleaned，递增 revision；命令 start 门前须持久发布真实 guard 与启动意图，失败不启动。资源清理结果先持久发布再释放原 lease；写入后回包不确定仍保留占用，后续明确清理重新核对原资源并持久发布。POSIX 同步工作目录创建/删除的父目录，Windows 证据发布复用 MoveFileExW/WRITE_THROUGH。cleaned 只证明资源结果，不表示原恢复或依赖安装成功。
+
+先用两项真实命令测试复现原 worker 缺少启动证据及写入失败仍启动，再接入实现。新增八项证据/真实命令测试和一项双场景真实 owner 测试，覆盖旧快照、替换 workspace、坏/超限/重复字段、启动发布失败、发布后报错、原回执缺失/损坏和 GET 不清理。最终本机 12 文件 105 passed、2 Windows 专用 skipped、162 subtests，线程异常作为错误；编译及 diff 检查通过。缺工作目录本身不能解除门禁，未完成证据同时阻止目录结束和新的恢复后续操作。
+
+此批只完成独立维护前置证据，旧清理 API 仍要求可读原回执。下一批实现独立列表/原 ID 查询、版本确认清理、真实 owner 消费新意图、坏回执原字节归档和 APP 独立入口；无独立证据的旧现场仍保留，不猜 PID、不重跑 pip、不构造原恢复 DTO。B3/B4 和 M4-M7 继续，未合并 main 或正式发布。
+
+#### 已通过检查点：保留证据的独立目录维护结束
+
+FLS `89047f162229d6edd4399886c6cfb5b2e6834870` / `20261128.27`（182）的 [Native `46113041435`](https://github.com/liyw0205/fls/actions/runs/46113041435) 已完整 success，15/15 jobs 成功：Linux 1169 passed、1 skipped、1155 subtests、2 条既有警告；Windows 目录恢复及结束 26 passed/27 subtests，其余长回归全部成功。Module `46113041455`、Desktop `46113041489`、EXE `46113041467` 成功。APP `6b8f882` / `0.1.81+95` 的完整 CI/APK 见下方。
 
 `.27` 修正独立结束意图的持久发布：原 `receipt_io.publish_receipt` 在 Windows 使用 SetFileInformationByHandle，现在复用 `backup_commit._replace` 的 MoveFileExW/WRITE_THROUGH，然后才归档坏回执和事务清单。新增回归观察 `intent.json → restore.json → journal.json` 顺序，意图发布时原写门禁仍在；在独立 `f417b43` Git 归档运行新测试真实失败，确认原实现未走该发布边界。本机最终九文件 85 passed、2 Windows 专用 skipped、156 subtests，线程异常作为错误；新测试已接 Linux/Windows CI。此证据不等于物理断电验证。
 
@@ -628,7 +638,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 实例锁、真实 WAL、多 worker 清理及 `.21` 持久性、四域 busy、Windows 指纹与 APP 有界查询/后台作废已完整 CI 通过。独立现场恢复、保留证据结束及兼容修正 `.26` / `.81` 完整配对成功；最新 `.27` 补意图写穿透，Native 仍在运行，三打包成功 | 其余域 busy、依赖孤立现场及 APP 当前会话全流程完成并通过故障/兼容回归，明确物理断电未验证边界；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 已有监管、日志、实例锁/WAL、持久性、四域 busy、Windows 指纹、APP 生命周期和独立目录维护 `.27` / `.81` 完整 CI 通过；最新 `.28` 独立依赖证据双平台清理 job 成功、完整 Native 待终态，三打包成功 | 独立依赖维护 API/APP、其余域 busy 和当前会话全流程完成并通过故障/兼容回归；明确物理断电未验证边界，前置证据和 B2 均不代替 B3/B4 完整交付 |
 | B4 配对验证 | 待 B3 剩余项完成后，以最终双方 SHA 聚焦新契约及旧备份恢复回归、双方 CI 和 APK；当前配对检查点不关闭 B4 | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
