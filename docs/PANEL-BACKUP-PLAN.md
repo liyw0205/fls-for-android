@@ -18,7 +18,21 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新 APP 检查点：上传派发边界与真实 HTTP 配对
+#### 最新配对验证：预检查取消、暂存故障与越界包
+
+APP `5d1b09d4865c9906cc5639172788c00fa11d176f` 与固定 FLS `24a85ee06046e1424f4b5ce0324699951cdda550` 接续 B4。只修改测试及临时 HTTP 夹具，产品保持 `0.1.85+99`，后端保持 `.31`。Android [46139979010](https://github.com/liyw0205/fls-for-android/actions/runs/46139979010) 完整 success：格式检查 145 文件无变更、分析无问题、373 项测试（主流程及新故障场景均通过）、arm64 APK 与 develop artifact 上传成功，正式 Release 步骤跳过。
+
+开发包：[artifact `15261672761`](https://github.com/liyw0205/fls-for-android/actions/runs/46139979010/artifacts/15261672761)，到期 `2026-12-12T11:35:19Z`。已下载并核验 `build/develop-0.1.85+99-5d1b09d/app-release.apk`，11,565,485 字节，APK SHA256 `0c3ca6c04daaddc7282369434bbcd23793ea39ab2ac5957e39d3484b58102031`；包名 `top.fls.fls_for_android`、版本 `0.1.85`/`99`，minSDK 24，v2 签名验证成功。未安装、不做 ADB；artifact ZIP 的 11,217,473 字节不作为 APK 大小或摘要。
+
+新场景复用真实原生 cookie/CSRF 认证及实际 APP manager。在真实 TAR 解包完成、工作目录和上传快照均存在时设置最多 15 秒的取消等待点；真实取消 POST 受理后丢响应，重建 manager 共享当前会话记录，仅 GET 原 ID 查到 `cancelled`。另在真实 ZIP 检查后模拟暂存空间故障，得到 `failed`/`insufficient_storage`；真实含 `../` 的 TAR/ZIP 均由实际解析器拒绝为 `unsafe_archive_entry`。控制路由仅在 loopback 临时夹具，不加入产品 API。
+
+逐次核对实际执行槽、取消事件、展开目录和失败快照已清理，保护文件摘要不变、未写出越界文件、原回执仍在；GET 查询前后回执字节摘要不变。同名文件未经终态核对仍由 APP 阻止发送，明确核对后新 ID 成功到 `ready`。服务端按故障场景起点统计，恰好五次上传和一次取消，均受理成功，无重复 POST。
+
+首轮 `0b6eee4` / [46139714427](https://github.com/liyw0205/fls-for-android/actions/runs/46139714427) 为 372 passed/1 failed，无 APK：末尾计数将前置错误 CSRF 的 jobs POST 400 纳入，实际七项而非六项。`5d1b09d` 从场景开始位置统计后续请求，保留 CSRF 反例及每个场景请求必须成功的断言。Termux 后端专用 HTTP 探针通过取消、空间故障、两类越界包和新 ID 受理，夹具退出及临时目录清除成功；不把它替代 Flutter 配对测试。
+
+本子批不关闭 B4：暂存过期/保留、依赖故障/unknown 清理及真实旧后端配对仍按文末三组退出项接续。随后推进 M4-M7；当前会话记录不是跨 APP 进程恢复，不合并 main、不正式发布。
+
+#### 上一 APP 检查点：上传派发边界与真实 HTTP 主流程
 
 APP `be74abea1d78fe28335e455686492027f2d91ebd` / `0.1.85+99` 与 FLS `24a85ee06046e1424f4b5ce0324699951cdda550` / `20261128.31`（186）是本轮固定配对。Android [46137668988](https://github.com/liyw0205/fls-for-android/actions/runs/46137668988) 已完整 success：格式检查 145 文件无变更、分析无问题、372 项测试（含真实 HTTP 配对与两项派发回归）、arm64 APK 构建及 develop artifact 上传成功；正式 Release 步骤跳过。FLS 源码未修改，既有完整 Native 15 jobs 与三打包成功证据见下方。
 
@@ -32,7 +46,7 @@ APP `be74abea1d78fe28335e455686492027f2d91ebd` / `0.1.85+99` 与 FLS `24a85ee060
 
 失败证据保留：`53a6876` / `46134634983` 为 369 passed/1 failed，复现失效后仍派发上传；`f45a64b` / `46135404570` 为 371 passed/1 failed，配对轮询未处理合法 storage busy；`1321c8a` / `46136254846` 为 371 passed/1 failed，错误假定第二次恢复前无 `log_cleanup`；`5fe10b5` / `46137070897` 为 371 passed/1 failed，错误假定导入后调度器停止。本轮明确暂停真实调度器，不 mock 重载，不删除业务断言。上述失败均未生成 APK。
 
-本轮配对不涵盖真实取消、依赖故障/unknown 清理、全部暂存故障或旧后端兼容；这些继续作为 B4 剩余项。Termux 后端探针可执行 TAR/ZIP 恢复及重载，但创建受既有 `os.link` 缺失限制，不伪造本机全绿；创建/下载/删除以 Linux Actions 为准。用户手动验收、物理断电及 M4-M7 未完成；两仓仅用 `develop`，不合并 main、不正式发布。
+上述主流程配对当时未涵盖真实取消和暂存故障，现已由顶部 `5d1b09d` 接续；依赖故障/unknown 清理、暂存保留和旧后端兼容仍待完成。Termux 后端探针可执行 TAR/ZIP 恢复及重载，但创建受既有 `os.link` 缺失限制，不伪造本机全绿；创建/下载/删除以 Linux Actions 为准。用户手动验收、物理断电及 M4-M7 未完成；两仓仅用 `develop`，不合并 main、不正式发布。
 
 #### 上一 APP 检查点：完整当前会话原操作恢复
 
@@ -723,8 +737,14 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 独立维护、`.31` 占用/缓存边界完整平台 CI、当前会话全流程及 `.85` 上传派发回归与真实 HTTP 主流程/372 项测试/APK 通过，准确证据见顶部 | 补 B4 故障/取消/依赖清理和旧版本兼容；明确物理断电未验证边界，当前子批和 B2 不代替完整交付 |
-| B4 配对验证 | 固定 APP `be74abe` / FLS `24a85ee` 的 cookie/CSRF、TAR/ZIP、实际目录恢复/重载、创建/下载/删除及受理后丢响应已通过；CI/APK 见顶部 | 接续取消/依赖及暂存故障/旧版本兼容，记录最终确切配对、终态与 artifact；用户手动验收待执行，不合并 main |
+| B3 恢复及后续处理 | 独立维护、`.31` 占用/缓存边界完整平台 CI、当前会话全流程及 `.85` 上传派发/真实 HTTP 主流程已验证；`5d1b09d` 接续取消故障，373 项测试/APK 通过 | 补暂存保留、依赖清理和真实旧版本三组验证；明确物理断电未验证边界，当前子批和 B2 不代替完整交付 |
+| B4 配对验证 | APP `5d1b09d` / FLS `24a85ee` 接续主流程，新增真实预检查取消、空间故障、TAR/ZIP 越界拒绝、暂存清理及原 ID 恢复；CI/APK 见顶部 | 接续下列暂存保留、依赖清理、真实旧版本三组验证；用户手动验收待执行，不合并 main |
+
+B4 的剩余自动化退出项固定为以下三组，完成后进入 M4；已有平台/多进程回归与 APP HTTP 证据分别记录，不重复实现已通过的主流程：
+
+1. 暂存保留：只在夹具中调整真实预检查回执的时间字段，验证过期 GET 不写回或删除；新上传触发真实写侧过期清理，终态回执保留期届满再删除。未知恢复仍引用的快照不得清除，不修改全局时钟或生产接口。
+2. 依赖故障与清理：独立小归档带依赖清单，实际恢复后显式启动依赖子操作；夹具仅把生成的 pip 命令替换成由真实监管器执行的无网络失败命令。一次资源清理故障产生 `unknown`/`cleanup_required`，APP 明确按原双 ID 清理，丢响应后只读恢复，验证命令只执行一次、资源释放且不误报安装成功。
+3. 真实旧后端：另行 checkout 固定 FLS `ec318d8659fad6c9fd75b97e18fe6978c735e8a1`，验证实际原生认证、能力缺字段和关闭恢复时的 APP 降级；统计请求以证明不探测新维护接口。现有 Widget 契约测试继续验证界面，不把普通 401/403/业务 404 当成旧版识别。
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
 
