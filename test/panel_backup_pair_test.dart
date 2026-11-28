@@ -19,6 +19,10 @@ class _DropAcceptedResponse extends http.BaseClient {
   final _inner = http.Client();
   String? dropPath;
   final dropped = <String>[];
+  final _busyReads = <String>{};
+
+  bool isBusyRead(PanelApiException error) =>
+      error.statusCode == 503 && _busyReads.contains(error.path);
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -26,7 +30,24 @@ class _DropAcceptedResponse extends http.BaseClient {
       request.headers.keys.map((key) => key.toLowerCase()),
       isNot(contains('x-token')),
     );
+    _busyReads.remove(request.url.path);
     final response = await _inner.send(request);
+    if (request.method == 'GET' && response.statusCode == 503) {
+      final bytes = await response.stream.toBytes();
+      final payload = jsonDecode(utf8.decode(bytes));
+      if (payload is Map && payload['code'] == 'panel_storage_busy') {
+        expect(response.headers['retry-after'], '1');
+        expect(response.headers['cache-control'], 'no-store');
+        _busyReads.add(request.url.path);
+      }
+      return http.StreamedResponse(
+        Stream.value(bytes),
+        response.statusCode,
+        headers: response.headers,
+        contentLength: bytes.length,
+        request: request,
+      );
+    }
     if (request.method == 'POST' && request.url.path == dropPath) {
       expect(response.statusCode, inInclusiveRange(200, 299));
       dropPath = null;
@@ -44,11 +65,20 @@ class _DropAcceptedResponse extends http.BaseClient {
   void close() => _inner.close();
 }
 
-Future<T> _wait<T>(Future<T> Function() read, bool Function(T) finished) async {
+Future<T> _wait<T>(
+  Future<T> Function() read,
+  bool Function(T) finished, {
+  required bool Function(PanelApiException) retryRead,
+}) async {
   final clock = Stopwatch()..start();
   while (clock.elapsed < const Duration(seconds: 20)) {
-    final value = await read();
-    if (finished(value)) return value;
+    try {
+      final value = await read();
+      if (finished(value)) return value;
+    } on PanelApiException catch (error) {
+      if (!retryRead(error)) rethrow;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
   throw StateError('Isolated backend operation did not settle');
@@ -220,6 +250,7 @@ void main() {
         final preflight = await _wait(
           () => manager.fetchPreflight(preflightId),
           (PanelBackupPreflight value) => !value.active,
+          retryRead: transport.isBusyRead,
         );
         expect(preflight.status, 'ready');
         expect(
@@ -258,6 +289,7 @@ void main() {
         final restored = await _wait(
           () => manager.fetchRestore(restoreId),
           (PanelBackupRestore value) => !value.active,
+          retryRead: transport.isBusyRead,
         );
         expect(restored.state, 'restored');
         expect(restored.committed, isTrue);
@@ -301,6 +333,7 @@ void main() {
       await _wait(
         () => manager.fetchJob(createId),
         (PanelBackupJob job) => !job.active,
+        retryRead: transport.isBusyRead,
       );
       final file = (await manager.fetchFiles()).items.single;
       final destination = '${fixture['base_dir']}/download.tar.gz';
