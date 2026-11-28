@@ -18,15 +18,31 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：恢复占用、缓存与调度器完整租约
+#### 最新 APP 检查点：创建/删除的当前会话恢复
 
-FLS `24a85ee06046e1424f4b5ce0324699951cdda550` / `20261128.31`（186）已推 `develop`。Native [46123675083](https://github.com/liyw0205/fls/actions/runs/46123675083) 已完整 success，15/15 jobs 成功。Linux/Windows 占用专项各 214 passed/356 subtests；Linux 长回归 1181 passed、1 skipped、1163 subtests、2 条既有 tar 警告；Windows 长回归全部成功，最后任务源/刷新 step 204 passed/152 subtests。双平台依赖维护分别 76 passed/140 subtests 和 73 passed/3 skipped/138 subtests。Module `46123675022`、Desktop `46123675050`、EXE `46123675080` 全部成功，正式 Release jobs 均跳过。APP 无产品变更，版本及 APK 仍为下方 `.82` / `2c01629`；文档变更不算新 APK。
+APP `dec0d5dd54c28c20d06787c8662335126b0023fa` / `0.1.83+97` 已推 `develop`；Android [46128734983](https://github.com/liyw0205/fls-for-android/actions/runs/46128734983) 完整 success：格式/分析、346 项测试、arm64 APK 和 develop artifact 上传成功，正式 Release 步骤跳过。FLS 保持下段 `24a85ee` / `.31`，本子批只接已有 API，不修改后端。上一 `.82` 的 328 项测试和 APK 不作为新实现的验证。
+
+开发手测包：[artifact `15256518266`](https://github.com/liyw0205/fls-for-android/actions/runs/46128734983/artifacts/15256518266)，到期 `2026-12-12T09:11:19Z`。本机 `build/develop-0.1.83+97-dec0d5d/app-release.apk`，11,551,321 字节，APK SHA256 `3df12f42326f459788a79ff8c09ddff5341b16be3b2d1b9692dc118eab05f52f`；aapt 核对包名 `top.fls.fls_for_android`、版本 `0.1.83`/`97`。未安装、不做 ADB；ZIP digest 不当作 APK 摘要。
+
+首轮实现 `0165cb6` 的 Android `46128133460` 已终态 failure：344 tests passed、2 failed，APK 未构建。两个新 POST 后台测试把 `find.byTooltip` 的 `RawTooltip` 强制转换成 `IconButton`，在原断言前失败。`dec0d5d` 只改为按 `IconButton` 类型和 tooltip 查找；保留真实点击、等待条件和全部旧回包/无重发断言，没有放宽超时或删除用例，产品版本不变。
+
+创建/删除在 POST 前记录原 ID、不可变选择或文件名/版本；同一面板父上下文复用记录，支持离页再进和同面板重新认证。每面板最多 32 项，满容量拒绝新受理，未知记录不可移除，同一未核对意图不可新建重复 POST。记录仅保留操作身份、范围/文件版本和有界状态，不包含归档、URI、临时路径、正文、输出或凭据；跨 APP 进程仍不保留。
+
+原请求入口独立于文件/作业/恢复历史成功，提供只读 GET 与明确终态核对。DTO 严格验证 ID、kind、items、typed accepted/active/deleted 和一致终态；manager 对比原范围及删除文件版本，404 只代表未查到，不能证明未执行。乱序回包、后台/短暂 inactive、离页、401 和切面板均作废旧观察，不自动重发 POST；回前台仅人工查询，旧 401 不撤销新会话。
+
+新增 18 项 manager/DTO/Widget 回归覆盖失联/404/重复阻止、错 ID/种类/范围/文件版本、容量、乱序、离页重进/认证重建、列表失败、POST/GET 后台 200/401、切面板及 320dp 的 1.5/2 倍字，随本 SHA 的全量 346 项测试通过；本机 format/analyze 通过。独立 Dart VM 探针直接比较改前备份与当前 DTO：旧实现接受的 7 类无效摘要全部被当前实现拒绝，观察顺序和终态核对通过；不冒充 Flutter Widget Red。
+
+后续直接补预检查、恢复、调度器/依赖后续处理及取消/清理的根/子原操作身份和会话记录；统一这几类的有界前台观察，再推进 B4 和 M4-M7。创建/删除子批不能作为整个当前会话流程、跨 APP 进程恢复、DeepSeek 全量主题或用户手动验收完成的证据。
+
+#### 已通过后端检查点：恢复占用、缓存与调度器完整租约
+
+FLS `24a85ee06046e1424f4b5ce0324699951cdda550` / `20261128.31`（186）已推 `develop`。Native [46123675083](https://github.com/liyw0205/fls/actions/runs/46123675083) 已完整 success，15/15 jobs 成功。Linux/Windows 占用专项各 214 passed/356 subtests；Linux 长回归 1181 passed、1 skipped、1163 subtests、2 条既有 tar 警告；Windows 长回归全部成功，最后任务源/刷新 step 204 passed/152 subtests。双平台依赖维护分别 76 passed/140 subtests 和 73 passed/3 skipped/138 subtests。Module `46123675022`、Desktop `46123675050`、EXE `46123675080` 全部成功，正式 Release jobs 均跳过。该后端子批未修改 APP，当时配对 `.82` / `2c01629`；随后 APP `.83` 的实际提交及 CI 见上段，文档变更不算新 APK。
 
 真实独立恢复进程在原生认证通过后取得独占目录租约，先复现概览/调度器和任务单项/批量/合集加入错误返回 500；任务旧回执、通知历史及热任务缓存还可能绕过门禁返回 200。修正七个 API 异常边界并复用公共 503/code/Retry-After/no-store；任务缓存、通知历史缓存和任务回执在读取前检查共享租约。调度器重载从读任务、构建计划、应用计划直到保存结果全程持租约，防止读取后被目录替换。已有任务保存成功/结果未知的后续恢复语义保留，不把后期故障改成未受理。
 
 新增七项留仓回归，修复前 30 failed/9 passed/40 subtests，修复后专项 11 passed/70 subtests。测试验证原始 JSON 字节与回执不变、无任务启动/停止/重试取消或计划应用、解锁恢复、原回执结果不变、冷/热缓存、无效输入反例，并在构建及应用计划时用独立进程尝试目录替换。正确认证的 Web 对应入口原本已返回 503，因此没有修改 Web 处理器。14 文件相关回归最终 135 passed/223 subtests，线程异常作为错误；发布说明 2 项、编译和 diff 检查通过。独立旧 SHA Git 归档仅加入新测试再次复现同一组 30 个失败，未回退活动工作区。
 
-下一批为 APP 当前面板会话的完整备份流程。源码核对已确认：创建/删除原 ID 只在页面方法内，离页或 401 后没有重查入口；预检查/恢复原 ID 也只在页面状态，原请求 DTO/manager 尚未严格绑定所有 ID/类型/文件版本；预检查、恢复及后续处理的轮询未统一限制次数和前台 generation。这些为已追踪的实现缺口，尚未声称有新 Widget 失败证据。
+后端 `.31` 完成时的源码核对发现创建/删除、预检查/恢复原 ID 仅存页面、身份匹配和轮询边界不足。创建/删除已由上方 `.83` 子批实现，预检查/恢复及后续处理仍继续下列完整流程，不能将该历史问题描述当成新 Widget 失败证据。
 
 1. 在面板上下文保留有界的内存恢复记录，发请求前保存精确 request/operation ID、选择范围或文件版本；离页、同面板重新认证后仍可只读查询。未知记录不因新上传被清空，不保留归档、URI、临时路径、正文或凭据。
 2. 覆盖创建、删除、预检查、恢复及调度器/依赖后续处理；原请求入口不依赖文件/作业/历史列表成功。校验返回的原 ID、种类、范围、文件版本及后续操作 ID，404 不证明未执行；不自动重发 POST 或删除同名新文件。
