@@ -9,6 +9,7 @@ import '../models/panel_backup.dart';
 import '../services/local_file_bridge.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_backup_manager.dart';
+import 'panel_directory_maintenance_view.dart';
 
 class PanelBackupView extends StatelessWidget {
   const PanelBackupView({
@@ -86,7 +87,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _background = lifecycle != null && lifecycle != AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     unawaited(_load());
   }
 
@@ -1093,6 +1094,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
             Tab(text: '文件${_files == null ? '' : ' · ${_files!.total}'}'),
             Tab(text: '作业${_jobs == null ? '' : ' · ${_jobs!.total}'}'),
             const Tab(text: '恢复'),
+            const Tab(text: '现场维护'),
           ],
         ),
       ),
@@ -1114,7 +1116,18 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
                 ? const Center(child: CircularProgressIndicator())
                 : TabBarView(
                     controller: _tabs,
-                    children: [_filesTab(), _jobsTab(), _restoreTab()],
+                    children: [
+                      _filesTab(),
+                      _jobsTab(),
+                      _restoreTab(),
+                      PanelDirectoryMaintenanceView(
+                        key: ObjectKey(widget.manager),
+                        manager: widget.manager,
+                        onUnauthorized: (error) async {
+                          await _handleUnauthorized(error);
+                        },
+                      ),
+                    ],
                   ),
           ),
         ],

@@ -11,6 +11,7 @@ class PanelBackupCapabilities {
     this.preflightLimit = 0,
     this.preflightTtlSeconds = 0,
     this.restoreEnabled = false,
+    this.directoryMaintenanceEnabled = false,
   });
 
   final List<String> items;
@@ -22,6 +23,7 @@ class PanelBackupCapabilities {
   final int preflightLimit;
   final int preflightTtlSeconds;
   final bool restoreEnabled;
+  final bool directoryMaintenanceEnabled;
 
   factory PanelBackupCapabilities.fromJson(Object? value) {
     if (value is! Map<String, dynamic> ||
@@ -29,6 +31,10 @@ class PanelBackupCapabilities {
         value['items'] is! List ||
         value['formats'] is! List) {
       throw const FormatException('备份能力响应格式无效');
+    }
+    if (value.containsKey('directory_maintenance_enabled') &&
+        value['directory_maintenance_enabled'] is! bool) {
+      throw const FormatException('目录现场维护能力无效');
     }
     return PanelBackupCapabilities(
       items: (value['items'] as List).whereType<String>().toList(),
@@ -40,6 +46,8 @@ class PanelBackupCapabilities {
       preflightLimit: _integer(value['preflight_limit']),
       preflightTtlSeconds: _integer(value['preflight_ttl_seconds']),
       restoreEnabled: value['restore_enabled'] == true,
+      directoryMaintenanceEnabled:
+          value['directory_maintenance_enabled'] == true,
     );
   }
 }

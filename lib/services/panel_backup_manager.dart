@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 
 import '../models/panel_backup.dart';
+import '../models/panel_directory_maintenance.dart';
 import 'panel_api_client.dart';
 
 class PanelBackupManager {
@@ -248,6 +249,76 @@ class PanelBackupManager {
     const path = '/api/backup/native/restore-maintenance';
     try {
       return PanelBackupMaintenance.fromJson(await _api.getJson(path));
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelDirectoryMaintenancePage> fetchDirectoryMaintenance({
+    int offset = 0,
+    int limit = 25,
+  }) async {
+    if (offset < 0 || offset > 100000 || limit < 1 || limit > 100) {
+      throw ArgumentError('目录现场分页参数无效');
+    }
+    const path = '/api/backup/native/directory-maintenance';
+    try {
+      final result = PanelDirectoryMaintenancePage.fromJson(
+        await _api.getJson('$path?offset=$offset&limit=$limit'),
+      );
+      if (result.offset != offset || result.limit != limit) {
+        throw const FormatException('目录现场响应不属于原分页请求');
+      }
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
+  }
+
+  Future<PanelDirectoryMaintenance> fetchDirectoryEvidence(
+    String requestId,
+  ) async {
+    _validateRequestId(requestId);
+    final path = '/api/backup/native/directory-maintenance/$requestId';
+    return _parseDirectoryEvidence(await _api.getJson(path), requestId, path);
+  }
+
+  Future<PanelDirectoryMaintenance> recoverOrphanDirectory(
+    PanelDirectoryMaintenance evidence,
+  ) async {
+    _validateRequestId(evidence.requestId);
+    if (!evidence.recoverAllowed ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(evidence.version)) {
+      throw ArgumentError('此目录现场不能恢复');
+    }
+    final path =
+        '/api/backup/native/directory-maintenance/${evidence.requestId}/recover';
+    final result = _parseDirectoryEvidence(
+      await _api.postJson(path, {'confirm': true, 'version': evidence.version}),
+      evidence.requestId,
+      path,
+    );
+    if (!const {'restored', 'not_applied'}.contains(result.outcome) ||
+        result.restoreItems.join(',') != evidence.restoreItems.join(',')) {
+      throw PanelApiException('目录恢复响应尚未确认原现场结果', path: path);
+    }
+    return result;
+  }
+
+  PanelDirectoryMaintenance _parseDirectoryEvidence(
+    Object? value,
+    String requestId,
+    String path,
+  ) {
+    try {
+      if (value is! Map<String, dynamic> || value['ok'] != true) {
+        throw const FormatException('目录现场响应无效');
+      }
+      final result = PanelDirectoryMaintenance.fromJson(value['directory']);
+      if (result.requestId != requestId) {
+        throw const FormatException('目录现场响应不属于原请求');
+      }
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
