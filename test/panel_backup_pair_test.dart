@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 const _backendRevision = '24a85ee06046e1424f4b5ce0324699951cdda550';
+const _legacyRevision = 'ec318d8659fad6c9fd75b97e18fe6978c735e8a1';
 const _token = 'bulk-workflow-token';
 
 String _id(int number) => number.toRadixString(16).padLeft(32, '0');
@@ -86,22 +87,42 @@ Future<T> _wait<T>(
 
 void main() {
   final backend = Platform.environment['FLS_PAIR_ROOT'];
-  _registerPair(backend, faultScenario: false);
-  _registerPair(backend, faultScenario: true);
+  for (final scenario in ['main', 'faults', 'retention', 'dependencies']) {
+    _registerPair(backend, scenario: scenario);
+  }
+  _registerPair(
+    Platform.environment['FLS_PAIR_LEGACY_ROOT'],
+    scenario: 'legacy',
+    revision: _legacyRevision,
+  );
 }
 
-void _registerPair(String? backend, {required bool faultScenario}) {
+void _registerPair(
+  String? backend, {
+  required String scenario,
+  String revision = _backendRevision,
+}) {
+  const names = {
+    'main':
+        'pinned FLS native session transfers and recovers real backup operations',
+    'faults':
+        'pinned FLS preflight cancellation and faults clean real staged files',
+    'retention':
+        'pinned FLS expires snapshots only on writes and retains terminal receipts',
+    'dependencies':
+        'pinned FLS supervised dependency failure retains snapshots and cleans original resources',
+    'legacy':
+        'pinned old FLS supports native preflight without newer maintenance requests',
+  };
   test(
-    faultScenario
-        ? 'pinned FLS preflight cancellation and faults clean real staged files'
-        : 'pinned FLS native session transfers and recovers real backup operations',
+    names[scenario]!,
     () async {
       final process = await Process.start('python3', [
         'tool/panel_backup_fixture.py',
         '--backend',
         backend!,
         '--revision',
-        _backendRevision,
+        revision,
       ]);
       final ready = Completer<Map<String, dynamic>>();
       final diagnostics = <String>[];
@@ -160,7 +181,7 @@ void _registerPair(String? backend, {required bool faultScenario}) {
         }
       });
       fixture = await ready.future.timeout(const Duration(seconds: 20));
-      expect(fixture['revision'], _backendRevision);
+      expect(fixture['revision'], revision);
       final baseUrl = fixture['base_url'] as String;
       final transport = _DropAcceptedResponse();
       addTearDown(transport.close);
@@ -224,10 +245,44 @@ void _registerPair(String? backend, {required bool faultScenario}) {
       );
       var manager = PanelBackupManager(api);
       final capabilities = await manager.fetchCapabilities();
-      expect(capabilities.restoreEnabled, isTrue);
+      expect(capabilities.restoreEnabled, scenario != 'legacy');
       expect(capabilities.preflightEnabled, isTrue);
       final recovery = manager.recovery;
-      if (faultScenario) {
+      if (scenario == 'legacy') {
+        await _exerciseLegacy(
+          fixture: fixture,
+          manager: manager,
+          capabilities: capabilities,
+          transport: transport,
+          evidence: evidence,
+        );
+        return;
+      }
+      if (scenario == 'retention') {
+        await _exerciseRetention(
+          fixture: fixture,
+          manager: manager,
+          transport: transport,
+          uploadLimitBytes: capabilities.uploadLimitBytes,
+          evidence: evidence,
+        );
+        return;
+      }
+      if (scenario == 'dependencies') {
+        await _exerciseDependencies(
+          fixture: fixture,
+          manager: manager,
+          reconnect: () => PanelBackupManager(
+            client(api.sessionCredentials),
+            recovery: recovery,
+          ),
+          transport: transport,
+          uploadLimitBytes: capabilities.uploadLimitBytes,
+          evidence: evidence,
+        );
+        return;
+      }
+      if (scenario == 'faults') {
         await _exercisePreflightFaults(
           fixture: fixture,
           manager: manager,
@@ -431,7 +486,7 @@ void _registerPair(String? backend, {required bool faultScenario}) {
       expect(transport.dropped, hasLength(6));
     },
     skip: backend == null
-        ? 'Set FLS_PAIR_ROOT to the pinned FLS checkout'
+        ? 'Set the FLS_PAIR_ROOT or FLS_PAIR_LEGACY_ROOT pinned checkout'
         : false,
     timeout: const Timeout(Duration(minutes: 2)),
   );
@@ -626,4 +681,363 @@ Future<void> _exercisePreflightFaults({
   expect(transport.dropped, [
     '/fls-pair/api/backup/native/preflights/$cancelId/cancel',
   ]);
+}
+
+Future<void> _agePreflight(
+  http.Client transport,
+  Map<String, dynamic> fixture,
+  String id, {
+  bool terminal = false,
+}) async {
+  final response = await transport
+      .post(
+        Uri.parse(fixture['age_url'] as String),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'request_id': id, 'terminal': terminal}),
+      )
+      .timeout(const Duration(seconds: 5));
+  expect(response.statusCode, 200);
+  expect(jsonDecode(response.body), {'ok': true});
+}
+
+Future<void> _exerciseRetention({
+  required Map<String, dynamic> fixture,
+  required PanelBackupManager manager,
+  required _DropAcceptedResponse transport,
+  required int uploadLimitBytes,
+  required Future<Map<String, dynamic>> Function() evidence,
+}) async {
+  final initial = await evidence();
+  final archives = (fixture['archives'] as List).cast<String>();
+  Future<PanelBackupPreflight> upload(
+    String id,
+    String path,
+    String name,
+  ) async {
+    await manager.createPreflight(
+      filePath: path,
+      filename: name,
+      requestId: id,
+      maxBytes: uploadLimitBytes,
+      onProgress: (_, _) {},
+    );
+    return _wait(
+      () => manager.fetchPreflight(id),
+      (PanelBackupPreflight value) => !value.active,
+      retryRead: transport.isBusyRead,
+    );
+  }
+
+  final first = _id(201);
+  expect(
+    (await upload(first, archives.first, 'original.tar.gz')).status,
+    'ready',
+  );
+  await _agePreflight(transport, fixture, first);
+  final aged = await evidence();
+  expect((await manager.fetchPreflight(first)).status, 'expired');
+  final readOnly = await evidence();
+  expect(readOnly['records'], aged['records']);
+  expect(readOnly['staged_archives'], aged['staged_archives']);
+  expect(readOnly['staged_archives'], contains('$first.archive'));
+
+  final second = _id(202);
+  expect((await upload(second, archives.last, 'second.zip')).status, 'ready');
+  final expired = await evidence();
+  expect(expired['staged_archives'], isNot(contains('$first.archive')));
+  expect(expired['records'], contains('.backup_native_preflights/$first.json'));
+  final expiredRecords = expired['records'] as Map;
+  expect(
+    expiredRecords['.backup_native_preflights/$first.json'],
+    isNot((aged['records'] as Map)['.backup_native_preflights/$first.json']),
+  );
+  expect((await manager.fetchPreflight(first)).status, 'expired');
+  expect((await evidence())['records'], expired['records']);
+
+  await _agePreflight(transport, fixture, first, terminal: true);
+  final retained = await evidence();
+  expect((await manager.fetchPreflight(first)).status, 'expired');
+  expect((await evidence())['records'], retained['records']);
+  expect(
+    (await upload(_id(203), archives.first, 'third.tar.gz')).status,
+    'ready',
+  );
+  final cleaned = await evidence();
+  expect(
+    cleaned['records'],
+    isNot(contains('.backup_native_preflights/$first.json')),
+  );
+  await expectLater(
+    manager.fetchPreflight(first),
+    throwsA(
+      isA<PanelApiException>().having(
+        (value) => value.statusCode,
+        'status',
+        404,
+      ),
+    ),
+  );
+  expect(manager.recovery.find(first, kind: 'preflight')!.status, 'expired');
+  expect(cleaned['staged_archives'], hasLength(2));
+  expect(cleaned['preflight_workspaces'], isEmpty);
+  expect(cleaned['protected_files'], initial['protected_files']);
+  expect((await evidence())['records'], cleaned['records']);
+  final posts = (cleaned['requests'] as List)
+      .skip((initial['requests'] as List).length)
+      .where((value) => value['method'] == 'POST')
+      .toList();
+  expect(posts, hasLength(3));
+  expect(
+    posts.every(
+      (value) =>
+          value['path'] == '/api/backup/native/preflights' &&
+          value['status'] == 202,
+    ),
+    isTrue,
+  );
+}
+
+Future<void> _exerciseDependencies({
+  required Map<String, dynamic> fixture,
+  required PanelBackupManager manager,
+  required PanelBackupManager Function() reconnect,
+  required _DropAcceptedResponse transport,
+  required int uploadLimitBytes,
+  required Future<Map<String, dynamic>> Function() evidence,
+}) async {
+  final initial = await evidence();
+  final preflightId = _id(301), rootId = _id(311), childId = _id(321);
+  await manager.createPreflight(
+    filePath: fixture['dependency_archive'] as String,
+    filename: 'dependencies.zip',
+    requestId: preflightId,
+    maxBytes: uploadLimitBytes,
+    onProgress: (_, _) {},
+  );
+  final preflight = await _wait(
+    () => manager.fetchPreflight(preflightId),
+    (PanelBackupPreflight value) => !value.active,
+    retryRead: transport.isBusyRead,
+  );
+  expect(preflight.status, 'ready');
+  expect(preflight.dependencyFiles, ['requirements.txt']);
+  await manager.createRestore(
+    requestId: rootId,
+    preflight: preflight,
+    items: ['scripts'],
+    restoreDependencies: true,
+    confirmDataImpact: false,
+  );
+  final restored = await _wait(
+    () => manager.fetchRestore(rootId),
+    (PanelBackupRestore value) => !value.active,
+    retryRead: transport.isBusyRead,
+  );
+  expect(restored.state, 'restored');
+  expect(restored.dependencies.state, 'pending');
+  transport.dropPath =
+      '/fls-pair/api/backup/native/restores/$rootId/dependencies';
+  await expectLater(
+    manager.installRestoreDependencies(
+      requestId: rootId,
+      operationId: childId,
+      expectedRestore: restored,
+    ),
+    throwsA(isA<PanelApiException>()),
+  );
+  manager = reconnect();
+  final pending = await _wait(
+    () => manager.fetchRestore(rootId, expectedDependencyOperationId: childId),
+    (PanelBackupRestore value) => value.dependencies.cleanupRequired,
+    retryRead: transport.isBusyRead,
+  );
+  expect(pending.state, 'restored');
+  expect(pending.dependencies.state, 'unknown');
+  expect(
+    manager.recovery.find(childId, kind: 'dependencies')!.canReview,
+    isFalse,
+  );
+  final held = await evidence();
+  expect(held['restore_lease_held'], isTrue);
+  expect(held['dependency_evidence_states'], ['cleanup_pending']);
+  expect((held['dependency_runs'] as List).single['cleanup_attempts'], 1);
+  expect((held['dependency_runs'] as List).single['workspace_exists'], isTrue);
+  expect(held['preflight_workspaces'], hasLength(1));
+  await manager.queryOperation(
+    manager.recovery.find(childId, kind: 'dependencies')!,
+  );
+  expect((await evidence())['records'], held['records']);
+  expect((await evidence())['dependency_runs'], held['dependency_runs']);
+
+  await _agePreflight(transport, fixture, preflightId);
+  final archive = (fixture['archives'] as List).last as String;
+  await manager.createPreflight(
+    filePath: archive,
+    filename: 'second.zip',
+    requestId: _id(302),
+    maxBytes: uploadLimitBytes,
+    onProgress: (_, _) {},
+  );
+  await _wait(
+    () => manager.fetchPreflight(_id(302)),
+    (PanelBackupPreflight value) => !value.active,
+    retryRead: transport.isBusyRead,
+  );
+  final retained = await evidence();
+  expect(
+    (retained['staged_archives'] as Map)['$preflightId.archive'],
+    preflight.archiveSha256,
+  );
+  expect(
+    retained['records'],
+    contains('.backup_native_preflights/$preflightId.json'),
+  );
+  await expectLater(
+    manager.createPreflight(
+      filePath: archive,
+      filename: 'capacity.zip',
+      requestId: _id(303),
+      maxBytes: uploadLimitBytes,
+      onProgress: (_, _) {},
+    ),
+    throwsA(
+      isA<PanelApiException>().having(
+        (value) => value.statusCode,
+        'status',
+        429,
+      ),
+    ),
+  );
+  expect((await evidence())['staged_archives'], retained['staged_archives']);
+
+  transport.dropPath =
+      '/fls-pair/api/backup/native/restores/$rootId/dependencies/cleanup';
+  await expectLater(
+    manager.cleanupRestoreDependencies(
+      requestId: rootId,
+      operationId: childId,
+      expectedRestore: pending,
+    ),
+    throwsA(isA<PanelApiException>()),
+  );
+  manager = reconnect();
+  final cleanup = manager.recovery.find(childId, kind: 'dependency-cleanup')!;
+  final result = await manager.queryOperation(cleanup) as PanelBackupRestore;
+  expect(result.dependencies.operationId, childId);
+  expect(result.dependencies.cleanupRequired, isFalse);
+  expect(result.dependencies.state, 'failed');
+  expect(result.state, 'restored');
+  expect(cleanup.status, 'resources_cleaned');
+  expect(cleanup.canReview, isTrue);
+  expect(
+    manager.recovery.find(childId, kind: 'dependencies')!.status,
+    'failed',
+  );
+  final cleaned = await evidence();
+  expect(cleaned['restore_lease_held'], isFalse);
+  expect(cleaned['dependency_evidence_states'], ['cleaned']);
+  expect(cleaned['preflight_workspaces'], isEmpty);
+  expect(cleaned['dependency_runs'], [
+    {
+      'cleanup_attempts': 2,
+      'process_stopped': true,
+      'stdout_closed': true,
+      'reader_alive': false,
+      'workspace_exists': false,
+    },
+  ]);
+  expect(cleaned['scripts_restored'], isTrue);
+  expect(cleaned['data_restored'], isFalse);
+  await manager.queryOperation(cleanup);
+  expect((await evidence())['records'], cleaned['records']);
+  expect((await evidence())['dependency_runs'], cleaned['dependency_runs']);
+  final posts = (cleaned['requests'] as List)
+      .skip((initial['requests'] as List).length)
+      .where((value) => value['method'] == 'POST')
+      .toList();
+  expect(posts, hasLength(6));
+  expect(
+    posts.where((value) => value['path'] == '/api/backup/native/preflights'),
+    hasLength(3),
+  );
+  expect(posts.where((value) => value['status'] == 429), hasLength(1));
+  for (final path in [
+    'restores',
+    'restores/$rootId/dependencies',
+    'restores/$rootId/dependencies/cleanup',
+  ]) {
+    final operationPosts = posts.where(
+      (value) => value['path'] == '/api/backup/native/$path',
+    );
+    expect(operationPosts, hasLength(1));
+    expect(operationPosts.single['status'], inInclusiveRange(200, 299));
+  }
+  expect(transport.dropped, [
+    '/fls-pair/api/backup/native/restores/$rootId/dependencies',
+    '/fls-pair/api/backup/native/restores/$rootId/dependencies/cleanup',
+  ]);
+}
+
+Future<void> _exerciseLegacy({
+  required Map<String, dynamic> fixture,
+  required PanelBackupManager manager,
+  required PanelBackupCapabilities capabilities,
+  required _DropAcceptedResponse transport,
+  required Future<Map<String, dynamic>> Function() evidence,
+}) async {
+  expect(capabilities.preflightEnabled, isTrue);
+  expect(capabilities.restoreEnabled, isFalse);
+  expect(capabilities.directoryMaintenanceEnabled, isFalse);
+  expect(capabilities.dependencyMaintenanceEnabled, isFalse);
+  final id = _id(401);
+  final path = (fixture['archives'] as List).first as String;
+  await manager.createPreflight(
+    filePath: path,
+    filename: 'legacy.tar.gz',
+    requestId: id,
+    maxBytes: capabilities.uploadLimitBytes,
+    onProgress: (_, _) {},
+  );
+  final result = await _wait(
+    () => manager.fetchPreflight(id),
+    (PanelBackupPreflight value) => !value.active,
+    retryRead: transport.isBusyRead,
+  );
+  expect(result.status, 'ready');
+  expect(result.items, ['data', 'scripts']);
+  expect(
+    result.archiveSha256,
+    sha256.convert(await File(path).readAsBytes()).toString(),
+  );
+  expect((await manager.fetchFiles()).items, isEmpty);
+  expect((await manager.fetchJobs()).items, isEmpty);
+  final before = await evidence();
+  await manager.queryOperation(manager.recovery.find(id, kind: 'preflight')!);
+  final after = await evidence();
+  expect(after['records'], before['records']);
+  expect(after['staged_archives'], before['staged_archives']);
+  final observations = after['requests'] as List;
+  const allowed = {
+    '/api/auth/session',
+    '/api/backup/native/capabilities',
+    '/api/backup/native/jobs',
+    '/api/backup/native/files',
+    '/api/backup/native/preflights',
+  };
+  expect(
+    observations.every(
+      (value) =>
+          allowed.contains(value['path']) ||
+          value['path'] == '/api/backup/native/preflights/$id',
+    ),
+    isTrue,
+  );
+  expect(
+    observations.where(
+      (value) =>
+          value['method'] == 'POST' &&
+          value['path'] == '/api/backup/native/preflights',
+    ),
+    hasLength(1),
+  );
 }

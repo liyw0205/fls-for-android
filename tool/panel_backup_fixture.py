@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import time
 import zipfile
 from unittest.mock import patch
 
@@ -72,6 +73,11 @@ def main():
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for name, content in members.items():
                 archive.writestr(name, content)
+        dependency_path = inputs / "dependencies.zip"
+        with zipfile.ZipFile(dependency_path, "w") as archive:
+            for name, content in members.items():
+                archive.writestr(name, content)
+            archive.writestr("fls/requirements.txt", b"# no external packages in fixture\n")
 
         unsafe_paths = []
         for suffix in ("tar.gz", "zip"):
@@ -114,6 +120,40 @@ def main():
 
         stack.enter_context(patch.object(native, "_inspect_preflight_archive", inspect_with_fault))
 
+        dependency_runs = []
+        if hasattr(native, "DependencyProcess"):
+            real_process = native.DependencyProcess
+            real_cleanup = native._cleanup_dependency_resources
+
+            def failed_dependency_command(command, **options):
+                if command[:4] != [sys.executable, "-m", "pip", "install"]:
+                    raise AssertionError("unexpected dependency command")
+                process = real_process([
+                    sys.executable, "-c",
+                    "import sys; print('paired dependency failure', flush=True); sys.exit(1)",
+                ], **options)
+                with fault_lock:
+                    dependency_runs.append({"process": process, "workspace": options["workspace"],
+                                            "cleanup_attempts": 0, "reader": None})
+                return process
+
+            def fail_first_dependency_cleanup(entry):
+                with fault_lock:
+                    run = next((value for value in dependency_runs
+                                if value["process"] is entry.get("process")), None)
+                    if run is not None:
+                        run["cleanup_attempts"] += 1
+                        run["reader"] = entry.get("reader")
+                        first = run["cleanup_attempts"] == 1
+                    else:
+                        first = False
+                if first:
+                    raise PermissionError("fixture dependency cleanup temporarily unavailable")
+                return real_cleanup(entry)
+
+            stack.enter_context(patch.object(native, "DependencyProcess", failed_dependency_command))
+            stack.enter_context(patch.object(native, "_cleanup_dependency_resources", fail_first_dependency_cleanup))
+
         requests = []
 
         @app.after_request
@@ -123,6 +163,30 @@ def main():
             return response
 
         control = Flask("pair_control")
+
+        @control.post("/age-preflight")
+        def age_preflight():
+            payload = request.get_json(silent=True)
+            if (not isinstance(payload, dict) or set(payload) != {"request_id", "terminal"}
+                or not isinstance(payload["request_id"], str)
+                or not native.PREFLIGHT_ID_RE.fullmatch(payload["request_id"])
+                or type(payload["terminal"]) is not bool):
+                return jsonify({"ok": False}), 400
+            with native.PREFLIGHT_LOCK:
+                request_id = payload["request_id"]
+                record = native._read_preflight_record(request_id)
+                if record is None or request_id in native.PREFLIGHT_ACTIVE:
+                    return jsonify({"ok": False}), 409
+                if payload["terminal"]:
+                    if record["state"] not in ("expired", "cancelled", "failed"):
+                        return jsonify({"ok": False}), 409
+                    record["retention_until"] = int(time.time()) - 1
+                else:
+                    if record["state"] != "ready":
+                        return jsonify({"ok": False}), 409
+                    record["expires_at"] = int(time.time()) - 1
+                native._write_preflight_record(request_id, record)
+            return jsonify({"ok": True})
 
         @control.post("/preflight-fault")
         def arm_preflight_fault():
@@ -153,12 +217,27 @@ def main():
                           for path in native.PREFLIGHT_ARCHIVE_DIR.glob("*.archive")}
             with fault_lock:
                 fault_evidence = {key: dict(value) for key, value in faults.items()}
+                runs = [{"cleanup_attempts": value["cleanup_attempts"],
+                         "process_stopped": value["process"]._stopped,
+                         "stdout_closed": value["process"].stdout.closed,
+                         "reader_alive": value["reader"].is_alive() if value["reader"] else None,
+                         "workspace_exists": value["workspace"].exists()}
+                        for value in dependency_runs]
+            dependency_states = []
+            lease_held = False
+            if hasattr(native, "dependency_evidence"):
+                dependency_states = [native.dependency_evidence.read(base, root, operation)["state"]
+                                     for root, operation in native.dependency_evidence.ids(base)]
+                lease_held = native._process_lease_held(native.RESTORE_PROCESS_LOCK_PATH, shared=True)
             return jsonify({
                 "requests": requests,
                 "records": records,
                 "preflight_active": active,
                 "preflight_cancel_events": cancel_events,
                 "preflight_faults": fault_evidence,
+                "dependency_runs": runs,
+                "dependency_evidence_states": dependency_states,
+                "restore_lease_held": lease_held,
                 "staged_archives": staged,
                 "preflight_workspaces": sorted(path.name for path in native.PREFLIGHT_WORK_DIR.glob("*")),
                 "preflight_work_files": sorted(str(path.relative_to(native.PREFLIGHT_WORK_DIR))
@@ -186,9 +265,11 @@ def main():
             "base_url": f"http://127.0.0.1:{server.server_port}/fls-pair",
             "evidence_url": f"http://127.0.0.1:{server.server_port}/evidence",
             "fault_url": f"http://127.0.0.1:{server.server_port}/preflight-fault",
+            "age_url": f"http://127.0.0.1:{server.server_port}/age-preflight",
             "base_dir": str(base),
             "archives": [str(tar_path), str(zip_path)],
             "unsafe_archives": unsafe_paths,
+            "dependency_archive": str(dependency_path),
             "revision": actual,
         }), flush=True)
         try:
@@ -202,6 +283,11 @@ def main():
             worker.join(5)
             if worker.is_alive():
                 raise RuntimeError("paired HTTP server did not stop")
+            if hasattr(native, "RESTORE_DEPENDENCY_CLEANUP"):
+                with native.RESTORE_LOCK:
+                    pending = list(native.RESTORE_DEPENDENCY_CLEANUP.items())
+                for request_id, entry in pending:
+                    native._complete_dependency_cleanup(request_id, entry)
             for background in threading.enumerate():
                 if background.name.startswith(("backup-", "fls-backup-")):
                     background.join(10)

@@ -30,6 +30,13 @@ jobs:
           ref: 24a85ee06046e1424f4b5ce0324699951cdda550
           path: .fls-pair
           persist-credentials: false
+      - name: Check out exact older FLS for compatibility
+        uses: actions/checkout@v4
+        with:
+          repository: liyw0205/fls
+          ref: ec318d8659fad6c9fd75b97e18fe6978c735e8a1
+          path: .fls-pair-legacy
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -41,6 +48,7 @@ jobs:
       - run: flutter test
         env:
           FLS_PAIR_ROOT: ${{ github.workspace }}/.fls-pair
+          FLS_PAIR_LEGACY_ROOT: ${{ github.workspace }}/.fls-pair-legacy
       - run: flutter build apk --release --target-platform android-arm64
       - name: Upload develop APK for manual testing
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
