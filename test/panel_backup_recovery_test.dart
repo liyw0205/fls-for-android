@@ -515,7 +515,14 @@ void main() {
         await pumpUntil(
           tester,
           () =>
-              tester.widget<IconButton>(find.byTooltip('原请求记录')).onPressed !=
+              tester
+                  .widget<IconButton>(
+                    find.byWidgetPredicate(
+                      (widget) =>
+                          widget is IconButton && widget.tooltip == '原请求记录',
+                    ),
+                  )
+                  .onPressed !=
               null,
         );
         expect(expired, 0);
