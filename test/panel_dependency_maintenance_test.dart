@@ -626,7 +626,15 @@ void main() {
       expect(find.text('现场维护').hitTestable(), findsOneWidget);
       await tester.tap(find.text('现场维护').hitTestable());
       await pumpUntilFound(tester, find.text('依赖资源'));
-      await tester.pumpAndSettle();
+      final parentTabs = tester.widget<TabBar>(
+        find.widgetWithText(TabBar, '现场维护'),
+      );
+      await pumpUntil(
+        tester,
+        () =>
+            !parentTabs.controller!.indexIsChanging &&
+            find.text('依赖资源').hitTestable().evaluate().isNotEmpty,
+      );
       await tester.ensureVisible(find.text('依赖资源'));
       await tester.pumpAndSettle();
       expect(find.text('依赖资源').hitTestable(), findsOneWidget);
