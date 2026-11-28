@@ -18,7 +18,41 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：四域 busy、异步清理查询与 Windows 指纹
+#### 最新检查点：保留证据的独立目录维护结束
+
+FLS `f417b43074f64acea189dea0c74219a52fca64d8` / `20261128.26`（181）与 APP `6b8f882b3612ad2c7c96a47a3548a6ada9d6959a` / `0.1.81+95` 已推各自 `develop`。后端 Native `46111751626` 和 APP Android `46111748278` 待完整终态；Module `46111751569`、Desktop `46111751607`、EXE `46111751611` 成功。不借下节历史成功证明新 SHA，新 APK 待构建。
+
+兼容性复核发现上一 APP `.79` 的严格 DTO 不接受新增 `finalized` 终态，故 `.26` 将归档历史改为 `include_finalized=1` 显式读取；默认列表只包含原待处理事务，不让旧客户端的整页读取失败。新 APP 仅在后端明确提供结束能力时发送该参数，连接旧后端仍使用原参数。新增归档分页、非法/重复选项、旧列表兼容测试，以及新旧能力下的 APP 查询断言；本机最终八文件 81 passed/156 subtests，Dart 格式与分析通过。
+
+新增可选能力 `directory_finalization_enabled`、显式 `POST /api/backup/native/directory-maintenance/<request_id>/finalize`，请求严格为 `confirm: true` 与当前 `version`。先按原清单验证恢复后的终态目录、实例身份和副本工作区，再持久保存独立维护意图，依次将坏回执、事务清单以身份/摘要绑定的同卷搬移归档；清单最后移走，解除本事务目录写入限制。原始字节、目录副本继续保留，不调用会删除副本的 `backup_commit.finish`，不伪造丢失的归档/预检查/依赖元数据，不执行依赖安装或调度器重载。
+
+列表同时包含待处理清单和已归档维护回执，仍最多 1000 项、分页最多 100 项。GET 只核对意图与两处实际对象，显示 `finalizing` 或 `finalized`，不搬移或清理；文件缺失本身不能证明结束。原 POST 失联只查询原现场，明确继续时复用同一意图；已归档 request ID 不允许再受理为新恢复。拒绝未恢复清单、活跃 owner、可读原回执、过期确认、损坏/被替换证据和需独立处理的依赖现场；原确认版本包含坏回执原字节摘要及对象身份。
+
+APP 在独立维护 Tab 增结束确认和结果状态，旧后端缺能力时隐藏此操作。manager 校验原 ID、范围、结果和 `finalized` 终态；POST 失联只 GET，错误范围/结果不能解除 pending。复用后台 generation、切面板和 401 隔离；新增 6 项 DTO/manager/Widget 测试，含 320dp/1.5 倍字体、失联错误查询、后台确认与 POST 结果作废。
+
+后端八文件 80 项/156 子用例通过；新增 7 项真实目录、坏/缺回执、搬移前后中断、持久发布失败、查询/重放零搬移、原 ID 复用、对象替换和 session/CSRF 测试。session 夹具须在恢复写门禁生效前建立，已修正该测试顺序，未放宽门禁；最终版本/私有目录权限调整后定向 9 项/11 子用例通过。APP 137 文件格式无变更、分析无问题，Flutter 测试以新 Actions 为准。依赖孤立现场、其他域 busy、APP 当前会话全流程及 B4/M4-M7 仍未完成；此批不计整体维护或全量交付。
+
+#### 已通过检查点：独立维护结束的首个实现
+
+FLS `71e559b94ecf304d160298b9f24e0fc90bd73ac2` / `.25` 的 Native `46110234725` 完整 success，15 jobs 全部成功；Linux 1167 passed、1 skipped、1155 subtests、2 条既有警告，Windows 目录恢复及结束 24 passed/27 subtests，其余长回归均通过。Module `46110234668`、Desktop `46110234656`、EXE `46110234673` 成功。APP `30a7ba8d522a504e27b7b0bb9cd084a19c86212c` / `0.1.80+94` 的 Android `46110230821` 完整 success：格式/分析、314 项测试、arm64 APK 和 develop artifact 上传成功。
+
+[artifact `15249900123`](https://github.com/liyw0205/fls-for-android/actions/runs/46110230821/artifacts/15249900123) 到期 `2026-12-12T05:07:40Z`；本机 `build/develop-0.1.80+94-30a7ba8/app-release.apk`，11,535,069 字节，SHA256 `661aac00aa2ad8021c169969bf8a8c3fb9b1d8796a5a3a5394ce0afeb16272da`。aapt 确认包名 `top.fls.fls_for_android`、版本 `0.1.80`/`94`，未安装。该配对尚有上节旧客户端列表兼容缺口，由 `.26` / `.81` 接续；不作为最终合并候选。
+
+#### 已通过检查点：独立目录现场维护
+
+FLS `b61d72a7941f441cc115a02a3de92a04617d60cf` / `20261128.24`（179）与 APP `7563f8d7022b4164ea40dd4b8a9e860863d9dbab` / `0.1.79+93` 已推各自 `develop`。后端 Native `46107845042` 完整 success，15 jobs 全部成功；Linux 1160 passed、1 skipped、1144 subtests、2 条既有警告，Windows 目录恢复 17 passed/16 subtests，其余长回归步骤均成功。Module `46107844914`、Desktop `46107844938`、EXE `46107845028` 成功。APP Android `46108411320` 完整 success，格式、分析、Flutter tests、arm64 APK 构建及 develop artifact 上传通过。原实现 `6dba83c` 的首轮 Android `46107899864` 为 307 passed/1 failed：窄屏 Tab 动画期间点击恢复按钮未命中；`7563f8d` 等待切换完成并检查 hitTestable，保留全部窄屏大字及行为断言。
+
+开发包 [artifact `15248473786`](https://github.com/liyw0205/fls-for-android/actions/runs/46108411320/artifacts/15248473786)，到期 `2026-12-12T04:43:17Z`。已下载 `build/develop-0.1.79+93-7563f8d/app-release.apk`，SHA256 `33f98ae3ff2521eeee76f94eaee136e2898182d690abd644ac5d1e3a4fa19122`；aapt 确认 `top.fls.fls_for_android` / `0.1.79` / `93`。未安装，用户手动验收待执行。
+
+新增 `directory_maintenance_enabled` 能力，`GET /api/backup/native/directory-maintenance?limit=&offset=`、`GET /directory-maintenance/<request_id>` 和显式 `POST /directory-maintenance/<request_id>/recover`。列表最多 100 项、总扫描最多 1000 清单；POST 仅接受 `confirm: true` 和当前 `version`。版本绑定原事务清单及回执可读状态，复用恢复进程锁与独占目录门禁；活跃作业、过期确认、被替换目录或不可验证清单拒绝恢复并保留现场。GET 不恢复/写回，响应不暴露路径和运行态对象身份。原回执可读时仍通过原恢复请求处理。
+
+原回执缺失/损坏时依据独立目录事务清单回滚中断替换，或核对已提交结果；不伪造已丢失的归档、预检查和依赖信息。清单、副本与坏回执保留，写入门禁不解除，不执行依赖安装或调度器重载。该子批完成后，仍须证据整理/安全结束、依赖作业孤立现场和其他 B3 收尾；不能把目录结果核对等同于完整维护完成。
+
+APP 增加独立“现场维护”Tab，不依赖文件/作业/恢复历史读取成功；旧后端缺能力字段显示不支持。严格验证 DTO、原 ID、分页、结果范围、确认版本和 CSRF；响应丢失只 GET 原现场，查询失败保留原 ID 并禁重复恢复。后台作废确认与旧回包，重新返回不自动查询/恢复，切面板及旧 401 隔离。新增 8 项 DTO/manager/Widget 测试，包含 320dp 大字、其他读取失败、POST 失联和短暂后台。
+
+后端首轮 5 项/6 子用例通过，连同既有目录恢复、提交、身份与数据保护五文件 30 项/27 子用例通过；新增 session/CSRF 用例按现有 `csrf.py` 的拒绝码 400 修正后，最终七文件 73 项/145 子用例通过，线程异常按错误。APP 137 文件格式无变更、分析无问题；Flutter 测试及最终平台 CI 以上述新 SHA 为准。不做 ADB/模拟器或稳定面板操作。
+
+#### 已通过检查点：四域 busy、异步清理查询与 Windows 指纹
 
 最新 FLS 候选 `04c84e685a80e97a17a38fcc9a304e4106331f87` / `20261128.23`（178），APP 候选 `b87e6362a7e32a73bffcc2086a17e4d3213f626a` / `0.1.78+92`，仅推各自 `develop`。后端 [Native `46104145392`](https://github.com/liyw0205/fls/actions/runs/46104145392) 已完整 success，15 个 jobs 全部成功：Linux 1154 passed、1 Windows 专用 skipped、1138 subtests、2 条既有 tar 警告；Windows 跨 worker 清理/native API job `140852996031` 为 52 passed、3 skipped、124 subtests，真实任务 worker 为 17 passed/46 subtests。Windows 长回归全部步骤成功：目录恢复 11 passed/10 subtests、脚本 66 passed/1 skipped/182 subtests、调试 42 passed/2 skipped/23 subtests、在线安装 181 passed/5 skipped/134 subtests、独立任务导入 66 passed/76 subtests、任务源/刷新 204 passed/152 subtests；平台跳过不计通过。Module `46104145407`、Desktop `46104145484`、EXE `46104145388` 全部 success，已核对相同 SHA，正式 Release jobs 均 skipped。APP [Android CI `46102903017`](https://github.com/liyw0205/fls-for-android/actions/runs/46102903017) 已完整 success：格式/分析、300 项测试、APK 构建和 develop artifact 成功，正式 Release 跳过。
 
@@ -588,7 +622,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 实例锁、真实 WAL、多 worker 清理和 `.21` 文件刷新/写穿透已有完整平台 CI；四域 busy、任务标记及 Windows 指纹修正由最新 FLS `04c84e6` / `.23` 的完整 Native/三打包验证；APP `b87e636` / `0.1.78+92` 的后台作废、有界查询及完整 300 项测试/APK 成功 | 其余域 busy、坏回执维护及 APP 当前会话全流程完成并通过故障/兼容回归，明确物理断电未验证边界；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 实例锁、真实 WAL、多 worker 清理及 `.21` 持久性、四域 busy、Windows 指纹与 APP 有界查询/后台作废已完整 CI 通过。`.24` / `.79` 独立现场恢复配对 CI 成功；最新 `.26` / `.81` 增保留证据的安全结束与原生确认，双方新 CI 待收取 | 其余域 busy、依赖孤立现场及 APP 当前会话全流程完成并通过故障/兼容回归，明确物理断电未验证边界；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
 | B4 配对验证 | 待 B3 剩余项完成后，以最终双方 SHA 聚焦新契约及旧备份恢复回归、双方 CI 和 APK；当前配对检查点不关闭 B4 | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
