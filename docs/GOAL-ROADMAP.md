@@ -16,12 +16,12 @@ APP 与 FLS 后端均在各自 `develop` 分支持续开发；`main` 仅作为�
 
 应用配置、代理配置/诊断、通知 M2a/M2b 及 M3 B1/B2 已有配对自动化候选。历史 B2 基线 FLS `ec318d8` / `20261126.12` 的三个打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 Android CI `45832261224` 通过 214 项测试和 arm64 APK/artifact。最新开发候选见下段；真实面板手动验收和全量合并门槛不变。
 
-M3 B1/B2 已配对自动化验证。2026-11-28 的 B3 最新实现为 FLS `e1c4083` / `20261128.14`（169）与 APP `269c16c` / `0.1.73+87`。普通任务及 APP 阶段/轮询见 [任务执行规格](PANEL-TASK-EXECUTION-PLAN.md)。原生日志清理 API 已实施，本机 90 项/47 subtests 通过，新 Native `46085389388` 验证中；APP 清理未接入。上一 `f907e6c` 的真实启动与打包成功，但完整 Native 因 Windows 旧依赖结果读取 PermissionError 失败，本批复用共享读取/发布修正，证据见 [日志清理规格](PANEL-LOG-CLEANUP-PLAN.md)。继续 APP 清理、Windows 实例锁/WAL/断电、多 worker 清理及 APP 全流程，再做 B4、M4-M7，不计 B3 或全量交付。
+M3 B1/B2 已配对自动化验证。日志子批 FLS `e1c4083` 的完整双平台/三打包成功，APP `99d1c9b` / `0.1.75+89` 的 Android CI `46088657554` 通过格式/分析、286 项测试及 APK/artifact `15240013111`；首轮失败保留于 [日志规格](PANEL-LOG-CLEANUP-PLAN.md)。最新 FLS `78c2632` / `20261128.17` 将实例锁固定于恢复目录之外，新 Native `46090287121` 验证中；上一 Windows 新用例失败及修正见 [备份规格](PANEL-BACKUP-PLAN.md)。继续 WAL/断电、多 worker 清理及 APP 全流程，再做 B4、M4-M7，不计 B3 或全量交付。
 
 | 仓库 | 工作分支 | 基线 | 状态 |
 | --- | --- | --- | --- |
-| APP (`fls-for-android`) | `develop` | B3 候选 `269c16c` / `0.1.73+87` | Android CI `46051131340` 格式/分析、268 项测试及 APK 成功，artifact `15224009353`；手动验收待用户 |
-| FLS (`$HOME/fls`) | `develop` | B3 实现 `e1c4083` / `20261128.14`（169） | 原生清理及旧依赖结果交接候选，Native `46085389388` 完整终态待收取；此前失败证据保留于日志规格 |
+| APP (`fls-for-android`) | `develop` | B3 日志候选 `99d1c9b` / `0.1.75+89` | Android CI `46088657554` 格式/分析、286 项测试及 APK 成功，artifact `15240013111`；手动验收待用户 |
+| FLS (`$HOME/fls`) | `develop` | B3 实例锁 `78c2632` / `20261128.17`（172） | 新 Native `46090287121` 验证中；上一日志基线 `e1c4083` 完整通过，实例锁失败/修正见备份规格 |
 
 两仓本轮先 `fetch origin`、`merge --ff-only origin/develop`，同步时领先/落后均为 `0/0`；保留现有改动后递增版本并提交推送上述检查点。每个工作流只证明其实际构建提交；后续文档提交不改变 APK 对应的代码 SHA。
 

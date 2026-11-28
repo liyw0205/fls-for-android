@@ -2,11 +2,11 @@
 
 ## 当前候选
 
-2026-11-28 已按 FLS、APP 顺序同步两个 develop。普通任务实现 `f84388aa0f4c6d7f5191b319f8fcddd767184b2a`，早期 Windows 修正 `4f47e9ef8889fc8f4a7414eddf5d4e6c313a1ccc` / `20261128.3`（158）；最新后端为 `e1c4083711d21c637b81032b6be3396cba1e8bc2` / `20261128.14`（169），已实施原生清理 API 及旧依赖结果共享交接，本机 90 项/47 subtests 通过，Native `46085389388` 完整验证中，见日志规格。APP 代码/APK `269c16cc88683af9e863814016fbf8e6f1c3230f` / `0.1.73+87`，已有阶段/轮询和日志保护，清理页面尚未接入；B3/B4 未完成。
+2026-11-28 已按 FLS、APP 顺序同步两个 develop。普通任务实现 `f84388aa0f4c6d7f5191b319f8fcddd767184b2a`，早期 Windows 修正 `4f47e9ef8889fc8f4a7414eddf5d4e6c313a1ccc`；日志后端基线 `e1c4083` 的 Native `46085389388` 完整双平台及三项打包成功。APP 最新 APK 为 `99d1c9b` / `0.1.75+89`，Android CI `46088657554` 格式/分析、286 项测试和 APK 成功，新增清理与首轮失败见 [日志规格](PANEL-LOG-CLEANUP-PLAN.md)。最新实例锁后端 `78c2632` / `20261128.17` 由新 CI 验证中，见备份规格。B3/B4 未完成。
 
 最新修复：`da93db1` 的 Native `46064429360` 在 Windows 稳定复现持旧回执读取句柄期间另一个 worker 的 os.replace 报 WinError 5；该轮 Linux 1141 项/1031 subtests 通过，Windows 12 项任务/46 subtests 及其余独立步骤通过，不能忽略新增用例失败。`5e2c762` 改用允许 READ/WRITE/DELETE 共享并拒绝最终 reparse point 的读取句柄，但 Native `46066990491` 仍失败：Linux 1147 项/1031 subtests 通过，Windows 持句柄及手动替换重试失败（2 failed/13 passed/46 subtests），其余步骤及三项打包通过。现场重试计划明确被 os.replace/WinError 5 中断，读取共享不是完整修复。
 
-`9aeff36` 将发布改为 FileRenameInfoEx 的替换/POSIX 语义：已同步的私有临时文件用 DELETE 权限打开、检查最终源句柄后一次替换，旧句柄继续读取旧对象；保留大小、常规文件、reparse 拒绝与 POSIX NOFOLLOW/NONBLOCK，错误关闭 FD 并清理临时文件。保留原红测试，新 Unicode（含双 UTF-16 码元）路径/旧对象读取和发布失败保留回归本机 5 项通过，相关 6 文件 97 项/72 subtests 通过。Windows 任务拆为独立 job，13 个原命令及 Linux 覆盖不变；Native `46071964294` 最终完整成功，Linux 1149 项/1031 subtests（1 跳过、2 既有 tar 警告），Windows 任务 17 项/46 subtests 及其余 12 步全部通过，三项打包成功。异步依赖 `f5aacbd` 与 Web 卸载 `5977c73` 的完整 CI 也成功。后续恢复夹具和真实启动失败/修正见 [日志清理规格](PANEL-LOG-CLEANUP-PLAN.md)：`f907e6c` 的真实启动/打包成功，完整 Native `46083027529` 仍因旧依赖结果读取 PermissionError 失败。`e1c4083` 抽取共同 receipt_io 并修正旧依赖结果交接，新 Native `46085389388` 完整验证中，不能将局部成功代替整体。
+`9aeff36` 将发布改为 FileRenameInfoEx 的替换/POSIX 语义：已同步的私有临时文件用 DELETE 权限打开、检查最终源句柄后一次替换，旧句柄继续读取旧对象；保留大小、常规文件、reparse 拒绝与 POSIX NOFOLLOW/NONBLOCK，错误关闭 FD 并清理临时文件。保留原红测试，新 Unicode（含双 UTF-16 码元）路径/旧对象读取和发布失败保留回归本机 5 项通过，相关 6 文件 97 项/72 subtests 通过。Windows 任务拆为独立 job，13 个原命令及 Linux 覆盖不变；Native `46071964294` 最终完整成功，Linux 1149 项/1031 subtests（1 跳过、2 既有 tar 警告），Windows 任务 17 项/46 subtests 及其余 12 步全部通过，三项打包成功。异步依赖 `f5aacbd` 与 Web 卸载 `5977c73` 的完整 CI 也成功。后续恢复夹具和真实启动失败/修正见 [日志清理规格](PANEL-LOG-CLEANUP-PLAN.md)：`f907e6c` 的真实启动/打包成功，完整 Native `46083027529` 因旧依赖结果读取 PermissionError 失败。`e1c4083` 抽取共同 receipt_io 修正结果交接，完整 Native `46085389388` 最终成功，包含原红回归。
 
 ## 后端执行与恢复
 

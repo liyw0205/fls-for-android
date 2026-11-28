@@ -2,7 +2,7 @@
 
 ## 实现状态与范围
 
-最新 FLS 后端 `e1c4083711d21c637b81032b6be3396cba1e8bc2` / `20261128.14`（169）已推送 `develop`，实现本页的原生清理 API；这不表示运行中的面板已经升级。新 [Native `46085389388`](https://github.com/liyw0205/fls/actions/runs/46085389388) 验证中，完整终态待收取。APP 代码/APK 仍为 `269c16c` / `0.1.73+87`，已有列表、搜索、读取及下载，单文件/多选/分组清理页面尚未接入。此前普通任务监管、日志入口恢复门禁及实际 8 MiB 有界下载见 [任务执行规格](PANEL-TASK-EXECUTION-PLAN.md)。
+日志域已验证后端基线 `e1c4083711d21c637b81032b6be3396cba1e8bc2` / `20261128.14`（169）的 [Native `46085389388`](https://github.com/liyw0205/fls/actions/runs/46085389388) 完整成功，三项打包成功；这不表示运行中的面板已经升级。APP 原生清理修正 `99d1c9b7ee8c8edf0af2f774557df5581a374b69` / `0.1.75+89` 的 [Android CI `46088657554`](https://github.com/liyw0205/fls-for-android/actions/runs/46088657554) 已通过格式/分析、286 项测试及 arm64 APK/artifact `15240013111`，正式发布 skipped。后续后端实例锁 `78c2632` / `20261128.17` 的新 CI 验证中，见备份规格；两个 main 不变。
 
 `cc1493e` 新增 `fls_manager/log_access.py`，在恢复范围外按日志文件名协调跨进程共享读取/写入与独占删除，锁保持至实际句柄关闭；校验目录/文件身份，拒绝链接和特殊文件。已接普通任务、调试、在线安装、依赖/运行时、备份依赖、面板控制及前端事件的 Python 日志入口和读取/下载。普通任务/调试/在线安装的独立命令监管在 owner 强退后继续持日志 lease。Web 单文件、分组及自动清理共用版本核对删除 helper，替代进程内 `LOG_FILES_MUTATION_LOCK`；占用读取返回 503 `log_file_busy`。
 
@@ -16,7 +16,7 @@
 
 `f85b87b` 将控制命令和 shell/PowerShell 常驻输出交给独立管道收集进程。只有收集进程打开 `fls-manager-daemon.log`，最后一个继承输出端关闭后才释放日志 lease；owner 退出不取消控制命令。固定守护日志位于 data/scripts 恢复集之外，只长期持有日志锁，不阻塞恢复；其他日志保留原恢复门禁。启动确认前失败不执行命令，描述符交接失败恢复原输出；Windows 同步 CRT 与系统标准句柄，PowerShell 直接启动 Python。systemd transient unit 的服务端输出仍使用原 journal，客户端输出进入收集管道，未运行真实 systemctl。
 
-覆盖边界：常驻日志交接的真实 Windows/Linux 启动和三项打包已由 `f907e6c` 验证，但其完整 Native 仍失败，原因见后文。原生清理的固定目标快照、持久逐项删除意图/回执、容量/TTL、原请求查询/核对已由 `e1c4083` 实施并通过本机定向测试，平台 CI 待收取；APP 清理页面未实现。启动器的 Windows 实例锁/WAL/断电等仍属 B3 剩余工作，不能由日志交接测试代替。
+覆盖边界：`e1c4083` 已通过新清理及全部配置的 Linux/Windows 回归，上一 Windows 旧依赖结果读取红用例修复通过；失败历史保留于后文。APP `99d1c9b` 的完整 CI/APK 成功，真实面板手动验收待用户，跨 APP 进程恢复仍归 M5。实例锁新候选、WAL/断电、多 worker 依赖清理等仍属 B3 剩余，不能由本批日志测试代替。
 
 2026-11-28 03:51（UTC+8）验证快照：本机最终日志/删除/任务日志/发布说明 29 项、54 子用例通过；扩展调试/在线安装等 113 项、55 子用例通过、1 项跳过。绑定 `cc1493e` 的 Module `46059064241`、Desktop `46059064327`、EXE `46059064382` 打包成功；[Native `46059064312`](https://github.com/liyw0205/fls/actions/runs/46059064312) 尚在运行，Windows 新增日志步骤已通过，不能提前记录双平台全绿。APP `269c16c` 的 Android CI `46051131340` 已通过 268 项测试与 APK 构建，本批未改 APP 代码。
 
@@ -51,6 +51,16 @@ Web 卸载 `5977c73` 的 Native `46077499732` 完整双平台成功：Linux 1149
 实现回执位于恢复范围外的 `BASE_DIR/.log_cleanup`，预检查最多 32 份、原请求最多 512 份，每份实际读取最多 512 KiB + 1；只退役已过期且签名有效的预检查，未知临时现场/损坏/容量满均拒绝新写。POST 实际 JSON 限制 384 KiB，固定最多 200 文件或 20 组、600 秒 TTL；逐项保存 deleting 后才删除，保存后再次核对原对象，持久化失败停止后续项。GET 对 pending/deleting 返回 unknown，相同 ID 永不再删除；reconcile 仅观察原未知目标。
 
 截至 08:05（UTC+8），新 Native `46085389388` 的 Linux/Windows 清理 job 均成功，各 44 passed/28 subtests；双平台依赖监管和 Windows 任务 job 成功。Windows 长回归中原失败的 Job Object/旧依赖结果步骤已成功，但完整 Linux/Windows 长回归仍运行，不提前记整体全绿。Module `46085389329`、Desktop `46085389356`、EXE `46085389364` 均成功，三个正式发布 job 均 skipped。全量原生业务、主题和用户验收仍未完成，不能据此合并发布。
+
+最终 `46085389388` 完整 success：Linux 1151 passed/1 skipped/1031 subtests（2 条既有 tar warnings）；Windows 旧依赖步骤 4 passed/1 skipped，包括原失败用例和新持旧句柄发布测试，任务 job 17 passed/46 subtests。全部其余 Windows 步骤成功：脚本 66 项/182 subtests、1 skipped/2 tar warnings，在线安装 181 项/134 subtests、5 skipped，任务源 204 项/152 subtests；双平台清理各 44 项/28 subtests、监管和真实启动均成功。三项打包和正式发布 skipped 状态保持。
+
+APP `bc1a4c4` 新增严格 DTO/manager 和清理原生页，日志列表跨页选择文件/分组，详情单文件入口；只有独立能力 GET 的明确 404 才判不支持。预检查核对所选目标，结果核对原 request/preview/digest、固定文件版本/分组/字节及逐项计数。POST 前保留身份，每个 operation 最多提交一次，未知/missing/失败均不自动重发；清理记录在当前面板壳中按 URL 保留，重新认证可查原请求，最多 32 份，仅清除已完成记录。后台遮蔽和关闭确认框，旧 manager/401 隔离，同一 operation 的旧结果不能覆盖新查询；跨进程恢复未实施。本机全仓格式、静态分析与 diff 检查通过，新增 manager/Widget 测试正在 Android CI 验证，不做 ADB。
+
+首轮 Android CI `46088032710` 最终 failure：格式和分析成功，282 项测试通过/2 项 Widget 失败，APK 和上传 skipped。第一项直接进入 paused 后停止出帧，原 post-frame 关闭确认仍留在视图；第二项详情正文带行号的 SelectableText.rich 与精确文本 finder 不匹配。`99d1c9b` 改为持有具体 DialogRoute，后台同步作废确认身份并以微任务移除该路由，不依赖出帧，也不会误 pop 其他页；异步确认返回须仍绑定同一路由。补 inactive 遮蔽、无帧快速暂停/恢复、已排队同意作废两项回归；详情使用包含正文的 finder。路由 builder 同时捕获原 manager/回调/文件，避免延后读取替换后的面板上下文。本机全仓格式/分析、diff 检查通过，新 SHA CI 仍待最终核验，保留原失败。
+
+最终 Android CI `46088657554` 已完整 success，新增生命周期及全部既有测试共 286 项通过，APK 构建和 develop 上传成功，三个正式发布步骤 skipped。[artifact `15240013111`](https://github.com/liyw0205/fls-for-android/actions/runs/46088657554/artifacts/15240013111) 归档 11,164,300 字节，到期于 2026-12-12 00:42:07 UTC。已取回 `build/develop-0.1.75+89-99d1c9b/app-release.apk`，本体 11,513,021 字节，SHA-256 `ebd7cf4cb527799bb314c48f8013e0dc974e4391d98921b1094ba04e9500a578`；aapt 核对包名 `top.fls.fls_for_android`、versionName `0.1.75`、versionCode `89`。安装包未自动安装，未做 ADB/模拟器。
+
+手动验收使用隔离 FLS 开发实例及可丢弃日志：从记录页选择单文件/多文件/分组，先核对预检查固定清单，再确认清理并逐项查看结果；从详情页进入单文件清理；确认框打开时切后台再返回，旧确认应取消且不提交；失联后从清理记录查询原请求，unknown/missing 不出现重新删除入口。旧后端只有独立能力 404 才显示不支持，401 仍要求重新连接。手动验收结果尚未收到，不阻塞其他域继续开发，也不满足全量合并门槛。
 
 计划覆盖原生单文件、多文件和分组预检查/删除/查询，旧 Web 单文件/分组删除及自动清理共用同一协调层。所有业务页仍复用面板 session/CSRF 和恢复门禁；不删除任务、脚本、历史或备份。
 
