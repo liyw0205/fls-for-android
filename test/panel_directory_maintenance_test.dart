@@ -80,8 +80,11 @@ Widget _view(
 
 Future<void> _confirm(WidgetTester tester) async {
   final action = find.text('恢复目录现场');
+  await tester.pumpAndSettle();
   await tester.ensureVisible(action);
-  await tester.tap(action);
+  await tester.pumpAndSettle();
+  expect(action.hitTestable(), findsOneWidget);
+  await tester.tap(action.hitTestable());
   await pumpUntilFound(tester, find.text('确认恢复现场'));
   await tester.tap(find.text('确认恢复现场'));
 }
