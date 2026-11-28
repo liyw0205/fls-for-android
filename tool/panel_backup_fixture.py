@@ -1,6 +1,7 @@
 """Run the pinned FLS backend against disposable data for APP HTTP tests."""
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -10,6 +11,7 @@ import sys
 import tarfile
 import threading
 import zipfile
+from unittest.mock import patch
 
 
 def main():
@@ -38,10 +40,16 @@ def main():
         def log(self, kind, message, *values):
             pass
 
-    with isolated_app() as (app, base):
+    with contextlib.ExitStack() as stack:
+        app, base = stack.enter_context(isolated_app())
         from fls_manager.paths import DATA_DIR, SCRIPT_DIR
-        from fls_manager.routes.backup._common import BACKUP_DIR
+        from fls_manager.routes.backup import _common as backup
         from fls_manager.state import scheduler
+
+        # Package metadata is deterministic; this fixture never launches pip.
+        stack.enter_context(patch.object(backup, "write_dependencies_file",
+            side_effect=lambda path, cancel_event=None: Path(path).write_text(
+                "# paired fixture metadata\n", encoding="utf-8")))
 
         members = {
             "fls/data/paired.txt": b"paired data\n",
@@ -84,9 +92,10 @@ def main():
                 if (DATA_DIR / "paired.txt").exists() else False,
                 "scripts_restored": (SCRIPT_DIR / "paired.py").read_bytes() == members["fls/scripts/paired.py"]
                 if (SCRIPT_DIR / "paired.py").exists() else False,
-                "scheduled_jobs": len(scheduler.get_jobs()),
+                "scheduled_jobs": sorted(job.id for job in scheduler.get_jobs()),
+                "scheduler_running": scheduler.running,
                 "backups": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                            for path in BACKUP_DIR.glob("*.tar.gz")},
+                            for path in backup.BACKUP_DIR.glob("*.tar.gz")},
             })
 
         application = DispatcherMiddleware(control, {"/fls-pair": app})

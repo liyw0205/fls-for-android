@@ -297,7 +297,11 @@ void main() {
         final restoredEvidence = await evidence();
         expect(restoredEvidence['data_restored'], isTrue);
         expect(restoredEvidence['scripts_restored'], isTrue);
-        expect(restoredEvidence['scheduled_jobs'], 0);
+        expect(
+          restoredEvidence['scheduled_jobs'],
+          index == 1 ? <String>[] : ['log_cleanup'],
+        );
+        expect(restoredEvidence['scheduler_running'], isFalse);
         transport.dropPath =
             '/fls-pair/api/backup/native/restores/$restoreId/scheduler-reload';
         await expectLater(
@@ -314,6 +318,9 @@ void main() {
         );
         expect(followup.scheduler.state, 'succeeded');
         expect(followup.scheduler.operationId, childId);
+        final scheduled = await evidence();
+        expect(scheduled['scheduled_jobs'], ['log_cleanup']);
+        expect(scheduled['scheduler_running'], isFalse);
         expect(recovery.find(childId, kind: 'scheduler')!.canReview, isTrue);
         final before = await evidence();
         await manager.queryOperation(
@@ -330,11 +337,12 @@ void main() {
 
       final createId = _id(31);
       await manager.create(requestId: createId, items: ['data', 'scripts']);
-      await _wait(
+      final created = await _wait(
         () => manager.fetchJob(createId),
         (PanelBackupJob job) => !job.active,
         retryRead: transport.isBusyRead,
       );
+      expect(created.status, 'succeeded');
       final file = (await manager.fetchFiles()).items.single;
       final destination = '${fixture['base_dir']}/download.tar.gz';
       var downloaded = 0;
