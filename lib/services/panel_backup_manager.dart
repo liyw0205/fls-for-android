@@ -171,11 +171,22 @@ class PanelBackupManager {
     }
   }
 
-  Future<PanelBackupRestore> fetchRestore(String requestId) async {
+  Future<PanelBackupRestore> fetchRestore(
+    String requestId, {
+    String? expectedDependencyOperationId,
+  }) async {
     _validateRequestId(requestId);
+    if (expectedDependencyOperationId != null) {
+      _validateRequestId(expectedDependencyOperationId);
+    }
     final path = '/api/backup/native/restores/$requestId';
     try {
-      return _parseRestore(await _api.getJson(path), requestId);
+      final result = _parseRestore(await _api.getJson(path), requestId);
+      if (expectedDependencyOperationId != null &&
+          result.dependencies.operationId != expectedDependencyOperationId) {
+        throw const FormatException('依赖查询响应不属于原操作');
+      }
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }

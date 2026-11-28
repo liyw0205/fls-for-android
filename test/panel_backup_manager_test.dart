@@ -481,6 +481,95 @@ void main() {
   );
 
   test(
+    'validates accepted cleanup metadata and original query operation',
+    () async {
+      var metadata = <String, dynamic>{'cleanup_requested': true};
+      var operation = 'e' * 32;
+      var cleanup = true;
+      final requests = <http.Request>[];
+      final api = PanelApiClient(
+        baseUrl: 'https://panel.example/prefix',
+        credentials: const PanelSessionCredentials(
+          cookie: 'fls_native_session=backup-session',
+          csrfToken: 'backup-csrf',
+        ),
+        client: MockClient((request) async {
+          requests.add(request);
+          return utf8Response(
+            jsonEncode({
+              'ok': true,
+              ...metadata,
+              'restore': {
+                ..._restore(),
+                'restore_dependencies': true,
+                'dependencies': {
+                  'state': 'unknown',
+                  'operation_id': operation,
+                  'error': '',
+                  'output': '',
+                  'cleanup_required': cleanup,
+                },
+              },
+            }),
+            request.method == 'POST' ? 202 : 200,
+          );
+        }),
+      );
+      addTearDown(api.close);
+      final manager = PanelBackupManager(api);
+      final accepted = await manager.cleanupRestoreDependencies(
+        requestId: 'f' * 32,
+        operationId: 'e' * 32,
+      );
+      expect(accepted.dependencyCleanupRequested, isTrue);
+      expect(accepted.dependencies.cleanupRequired, isTrue);
+      final queried = await manager.fetchRestore(
+        'f' * 32,
+        expectedDependencyOperationId: 'e' * 32,
+      );
+      expect(queried.dependencies.operationId, 'e' * 32);
+      operation = 'd' * 32;
+      await expectLater(
+        manager.fetchRestore('f' * 32, expectedDependencyOperationId: 'e' * 32),
+        throwsA(isA<PanelApiException>()),
+      );
+      operation = 'e' * 32;
+      for (final invalid in <Object?>[null, 'true', 1]) {
+        metadata = {'cleanup_requested': invalid};
+        await expectLater(
+          manager.cleanupRestoreDependencies(
+            requestId: 'f' * 32,
+            operationId: 'e' * 32,
+          ),
+          throwsA(isA<PanelApiException>()),
+        );
+      }
+      metadata = {};
+      final synchronous = await manager.cleanupRestoreDependencies(
+        requestId: 'f' * 32,
+        operationId: 'e' * 32,
+      );
+      expect(synchronous.dependencyCleanupRequested, isFalse);
+      metadata = {'cleanup_requested': true};
+      cleanup = false;
+      final alreadyFinished = await manager.cleanupRestoreDependencies(
+        requestId: 'f' * 32,
+        operationId: 'e' * 32,
+      );
+      expect(alreadyFinished.dependencies.cleanupRequired, isFalse);
+      final beforeInvalidId = requests.length;
+      await expectLater(
+        manager.fetchRestore(
+          'f' * 32,
+          expectedDependencyOperationId: 'invalid',
+        ),
+        throwsArgumentError,
+      );
+      expect(requests, hasLength(beforeInvalidId));
+    },
+  );
+
+  test(
     'recovers directories using the original request and rejects another identity',
     () async {
       final requests = <http.Request>[];

@@ -236,6 +236,7 @@ class PanelBackupRestore {
     required this.scheduler,
     required this.dependencies,
     this.directoryRecoveryRequired = false,
+    this.dependencyCleanupRequested = false,
   });
 
   final String requestId;
@@ -257,11 +258,14 @@ class PanelBackupRestore {
   final PanelBackupFollowup scheduler;
   final PanelBackupFollowup dependencies;
   final bool directoryRecoveryRequired;
+  final bool dependencyCleanupRequested;
 
   factory PanelBackupRestore.fromJson(Object? value) {
     if (value is! Map<String, dynamic> ||
         value['ok'] != true ||
-        value['restore'] is! Map<String, dynamic>) {
+        value['restore'] is! Map<String, dynamic> ||
+        (value.containsKey('cleanup_requested') &&
+            value['cleanup_requested'] is! bool)) {
       throw const FormatException('备份恢复响应格式无效');
     }
     final record = value['restore'] as Map<String, dynamic>;
@@ -340,6 +344,7 @@ class PanelBackupRestore {
     final scheduler = PanelBackupFollowup.fromJson(record['scheduler']);
     final dependencies = PanelBackupFollowup.fromJson(record['dependencies']);
     final restoreDependencies = record['restore_dependencies'] as bool;
+    final cleanupRequested = value['cleanup_requested'] == true;
     if ((record['archive_size_bytes'] as int) < 1 ||
         (record['created_at'] as int) < 0 ||
         (record['updated_at'] as int) < (record['created_at'] as int) ||
@@ -358,6 +363,8 @@ class PanelBackupRestore {
             scheduler.state == 'not_required' &&
             state != 'failed') ||
         dependencies.state == 'not_required' ||
+        (cleanupRequested &&
+            (!restoreDependencies || dependencies.operationId.isEmpty)) ||
         (!restoreDependencies && dependencies.state != 'not_requested') ||
         (restoreDependencies &&
             dependencies.state == 'not_requested' &&
@@ -384,6 +391,7 @@ class PanelBackupRestore {
       scheduler: scheduler,
       dependencies: dependencies,
       directoryRecoveryRequired: directoryRecoveryRequired,
+      dependencyCleanupRequested: cleanupRequested,
     );
   }
 }

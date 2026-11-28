@@ -947,22 +947,33 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     if (!mounted || _sessionExpired || confirmed != true) return;
     setState(() => _busy = 'dependency-cleanup');
     try {
-      final result = await widget.manager.cleanupRestoreDependencies(
+      var result = await widget.manager.cleanupRestoreDependencies(
         requestId: restore.requestId,
         operationId: restore.dependencies.operationId,
       );
       if (!mounted || _sessionExpired) return;
       setState(() => _restore = result);
+      final accepted = result.dependencyCleanupRequested;
+      if (accepted && result.dependencies.cleanupRequired) {
+        result = await _waitForDependencyCleanup(result);
+        if (!mounted || _sessionExpired) return;
+        setState(() => _restore = result);
+      }
       _notice(
         result.dependencies.cleanupRequired
-            ? '清理尚未确认，请查询原作业'
+            ? accepted
+                  ? '清理已受理，仍在等待面板确认；可查询原作业'
+                  : '清理尚未确认，请查询原作业'
             : '依赖作业已清理，请核对原安装结果',
       );
     } catch (error) {
       if (!mounted || _sessionExpired) return;
       if (await _handleUnauthorized(error)) return;
       try {
-        final result = await widget.manager.fetchRestore(restore.requestId);
+        final result = await widget.manager.fetchRestore(
+          restore.requestId,
+          expectedDependencyOperationId: restore.dependencies.operationId,
+        );
         if (!mounted || _sessionExpired) return;
         setState(() => _restore = result);
         _notice(
@@ -977,6 +988,28 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     } finally {
       if (mounted) setState(() => _busy = null);
     }
+  }
+
+  Future<PanelBackupRestore> _waitForDependencyCleanup(
+    PanelBackupRestore initial,
+  ) async {
+    var result = initial;
+    for (
+      var attempt = 0;
+      attempt < 15 && result.dependencies.cleanupRequired && _canInteract;
+      attempt++
+    ) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!_canInteract) break;
+      final next = await widget.manager.fetchRestore(
+        initial.requestId,
+        expectedDependencyOperationId: initial.dependencies.operationId,
+      );
+      if (!_canInteract) break;
+      result = next;
+      setState(() => _restore = result);
+    }
+    return result;
   }
 
   Future<PanelBackupRestore> _waitForFollowup(
@@ -1499,6 +1532,11 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       if (restore.committed && restore.restoreDependencies) ...[
         const SizedBox(height: 8),
         Text('依赖安装：${_followupLabel(restore.dependencies.state)}'),
+        if (_busy == 'dependency-cleanup' &&
+            restore.dependencies.cleanupRequired) ...[
+          const LinearProgressIndicator(),
+          const Text('正在清理原依赖作业…'),
+        ],
         if (restore.dependencies.error.isNotEmpty)
           Text(restore.dependencies.error),
         if (restore.dependencies.output.isNotEmpty) ...[

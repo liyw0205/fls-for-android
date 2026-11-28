@@ -12,6 +12,60 @@ import 'package:http/testing.dart';
 import 'panel_test_http.dart';
 
 void main() {
+  testWidgets('pending cleanup yields to an explicit original-request query', (
+    tester,
+  ) async {
+    final harness = _CleanupHarness('pending');
+    await _submit(tester, harness);
+    for (
+      var attempt = 0;
+      attempt < 20 && harness.cleanupQueries < 15;
+      attempt++
+    ) {
+      await tester.pump(const Duration(seconds: 2));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    await pumpUntil(tester, () {
+      final button = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '清理原依赖作业'),
+      );
+      return button.onPressed != null;
+    });
+    expect(harness.cleanupQueries, 15);
+    expect(harness.posts, hasLength(1));
+    expect(find.text('单独安装恢复依赖'), findsNothing);
+    expect(find.text('清理已受理，仍在等待面板确认；可查询原作业'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'background stops accepted cleanup polling without resubmitting',
+    (tester) async {
+      addTearDown(
+        () => tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        ),
+      );
+      final harness = _CleanupHarness('pending');
+      await _submit(tester, harness);
+      await pumpUntil(tester, () => harness.cleanupQueries == 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.text('Installation output'), findsNothing);
+      expect(find.text('cleanup.zip'), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await pumpUntilFound(tester, find.text('清理原依赖作业'));
+      await tester.pumpAndSettle();
+      expect(harness.cleanupQueries, 1);
+      expect(harness.posts, hasLength(1));
+      expect(find.text('单独安装恢复依赖'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('accepted cleanup queries its owner until cleanup is confirmed', (
     tester,
   ) async {
@@ -163,7 +217,10 @@ class _CleanupHarness {
       final changed = posts.isNotEmpty && outcome == 'changed';
       return _json({
         'ok': true,
-        'restore': _restore(cleanup: cleanupQueries < 2, changed: changed),
+        'restore': _restore(
+          cleanup: outcome == 'pending' || cleanupQueries < 2,
+          changed: changed,
+        ),
       });
     }
     return _json({'ok': true, 'items': [], 'page': 1, 'pages': 1, 'total': 0});
