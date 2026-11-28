@@ -86,8 +86,15 @@ Future<T> _wait<T>(
 
 void main() {
   final backend = Platform.environment['FLS_PAIR_ROOT'];
+  _registerPair(backend, faultScenario: false);
+  _registerPair(backend, faultScenario: true);
+}
+
+void _registerPair(String? backend, {required bool faultScenario}) {
   test(
-    'pinned FLS native session transfers and recovers real backup operations',
+    faultScenario
+        ? 'pinned FLS preflight cancellation and faults clean real staged files'
+        : 'pinned FLS native session transfers and recovers real backup operations',
     () async {
       final process = await Process.start('python3', [
         'tool/panel_backup_fixture.py',
@@ -170,9 +177,9 @@ void main() {
       }
 
       Future<Map<String, dynamic>> evidence() async {
-        final response = await transport.get(
-          Uri.parse(fixture!['evidence_url'] as String),
-        );
+        final response = await transport
+            .get(Uri.parse(fixture!['evidence_url'] as String))
+            .timeout(const Duration(seconds: 5));
         expect(response.statusCode, 200);
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
@@ -220,6 +227,20 @@ void main() {
       expect(capabilities.restoreEnabled, isTrue);
       expect(capabilities.preflightEnabled, isTrue);
       final recovery = manager.recovery;
+      if (faultScenario) {
+        await _exercisePreflightFaults(
+          fixture: fixture,
+          manager: manager,
+          reconnect: () => PanelBackupManager(
+            client(api.sessionCredentials),
+            recovery: recovery,
+          ),
+          transport: transport,
+          uploadLimitBytes: capabilities.uploadLimitBytes,
+          evidence: evidence,
+        );
+        return;
+      }
       final rootIds = <String>[];
       var index = 0;
       for (final path in (fixture['archives'] as List).cast<String>()) {
@@ -414,4 +435,193 @@ void main() {
         : false,
     timeout: const Timeout(Duration(minutes: 2)),
   );
+}
+
+Future<void> _exercisePreflightFaults({
+  required Map<String, dynamic> fixture,
+  required PanelBackupManager manager,
+  required PanelBackupManager Function() reconnect,
+  required _DropAcceptedResponse transport,
+  required int uploadLimitBytes,
+  required Future<Map<String, dynamic>> Function() evidence,
+}) async {
+  final initial = await evidence();
+  final archives = (fixture['archives'] as List).cast<String>();
+  final recovery = manager.recovery;
+
+  Future<void> arm(String id, String mode) async {
+    final response = await transport
+        .post(
+          Uri.parse(fixture['fault_url'] as String),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'request_id': id, 'mode': mode}),
+        )
+        .timeout(const Duration(seconds: 5));
+    expect(response.statusCode, 200);
+    expect(jsonDecode(response.body), {'ok': true});
+  }
+
+  Future<PanelBackupPreflight> upload(String path, String id) =>
+      manager.createPreflight(
+        filePath: path,
+        filename: path.split(Platform.pathSeparator).last,
+        requestId: id,
+        maxBytes: uploadLimitBytes,
+        onProgress: (_, _) {},
+      );
+
+  Future<void> expectClean(String id, String status, String error) async {
+    final result = await _wait(
+      () => manager.fetchPreflight(id),
+      (PanelBackupPreflight value) => !value.active,
+      retryRead: transport.isBusyRead,
+    );
+    expect(result.status, status);
+    expect(result.errorCode, error);
+    expect(result.cancelAllowed, isFalse);
+    final operation = recovery.find(id, kind: 'preflight')!;
+    expect(operation.status, status);
+    expect(operation.canReview, isTrue);
+    final before = await _wait(
+      evidence,
+      (Map<String, dynamic> value) =>
+          (value['preflight_active'] as List).isEmpty,
+      retryRead: transport.isBusyRead,
+    );
+    expect(before['preflight_cancel_events'], isEmpty);
+    expect(before['staged_archives'], isEmpty);
+    expect(before['preflight_workspaces'], isEmpty);
+    expect(before['preflight_work_files'], isEmpty);
+    expect(before['escaped_files'], isEmpty);
+    expect(before['protected_files'], initial['protected_files']);
+    expect(before['data_restored'], isFalse);
+    expect(before['scripts_restored'], isFalse);
+    expect(before['records'], contains('.backup_native_preflights/$id.json'));
+    await manager.queryOperation(operation);
+    final after = await evidence();
+    expect(after['records'], before['records']);
+    expect(after['staged_archives'], before['staged_archives']);
+    expect(after['preflight_workspaces'], before['preflight_workspaces']);
+  }
+
+  final cancelId = _id(101);
+  await arm(cancelId, 'cancel');
+  final checking = await upload(archives.first, cancelId);
+  expect(checking.status, 'checking');
+  expect(checking.cancelAllowed, isTrue);
+  final held = await _wait(
+    evidence,
+    (Map<String, dynamic> value) =>
+        (value['preflight_faults'] as Map)[cancelId]['entered'] == true,
+    retryRead: transport.isBusyRead,
+  );
+  expect(held['preflight_active'], [cancelId]);
+  expect(held['preflight_cancel_events'], [cancelId]);
+  expect(held['staged_archives'], {
+    '$cancelId.archive': sha256
+        .convert(await File(archives.first).readAsBytes())
+        .toString(),
+  });
+  expect(held['preflight_workspaces'], hasLength(1));
+  expect(
+    (held['preflight_work_files'] as List).where(
+      (value) => (value as String).endsWith('/extracted/fls/data/paired.txt'),
+    ),
+    hasLength(1),
+  );
+  expect(held['protected_files'], initial['protected_files']);
+  transport.dropPath =
+      '/fls-pair/api/backup/native/preflights/$cancelId/cancel';
+  await expectLater(
+    manager.cancelPreflight(cancelId),
+    throwsA(isA<PanelApiException>()),
+  );
+  final cancelOperation = recovery.operations.singleWhere(
+    (value) => value.kind == 'preflight-cancel' && value.rootId == cancelId,
+  );
+  expect(cancelOperation.status, isNull);
+  manager = reconnect();
+  await _wait(
+    () => manager.queryOperation(cancelOperation),
+    (Object value) => value is PanelBackupPreflight && !value.active,
+    retryRead: transport.isBusyRead,
+  );
+  await expectClean(cancelId, 'cancelled', 'preflight_cancelled');
+  expect(cancelOperation.status, 'cancelled');
+  expect(cancelOperation.canReview, isTrue);
+
+  final failedId = _id(102);
+  await arm(failedId, 'storage');
+  await upload(archives.last, failedId);
+  await expectClean(failedId, 'failed', 'insufficient_storage');
+
+  final unsafe = (fixture['unsafe_archives'] as List).cast<String>();
+  for (var index = 0; index < unsafe.length; index++) {
+    final id = _id(103 + index);
+    await upload(unsafe[index], id);
+    await expectClean(id, 'failed', 'unsafe_archive_entry');
+  }
+
+  // A fresh successful request proves that all failed workers released admission.
+  final readyId = _id(105);
+  await expectLater(upload(archives.last, readyId), throwsStateError);
+  recovery.review(recovery.find(failedId, kind: 'preflight')!);
+  await upload(archives.last, readyId);
+  final ready = await _wait(
+    () => manager.fetchPreflight(readyId),
+    (PanelBackupPreflight value) => !value.active,
+    retryRead: transport.isBusyRead,
+  );
+  expect(ready.status, 'ready');
+  expect(ready.items, ['data', 'scripts']);
+  expect(
+    ready.archiveSha256,
+    sha256.convert(await File(archives.last).readAsBytes()).toString(),
+  );
+  final finalEvidence = await evidence();
+  expect(finalEvidence['preflight_active'], isEmpty);
+  expect(finalEvidence['preflight_cancel_events'], isEmpty);
+  expect(finalEvidence['preflight_workspaces'], isEmpty);
+  expect(finalEvidence['preflight_work_files'], isEmpty);
+  expect(finalEvidence['staged_archives'], {
+    '$readyId.archive': ready.archiveSha256,
+  });
+  expect(finalEvidence['protected_files'], initial['protected_files']);
+  expect(finalEvidence['escaped_files'], isEmpty);
+  expect((finalEvidence['preflight_faults'] as Map)[cancelId], {
+    'mode': 'cancel',
+    'entered': true,
+    'timed_out': false,
+  });
+  expect((finalEvidence['preflight_faults'] as Map)[failedId], {
+    'mode': 'storage',
+    'entered': true,
+    'timed_out': false,
+  });
+  final posts = (finalEvidence['requests'] as List)
+      .where(
+        (value) =>
+            value['method'] == 'POST' &&
+            (value['path'] as String).startsWith('/api/backup/native/'),
+      )
+      .toList();
+  expect(posts, hasLength(6));
+  expect(
+    posts.where((value) => value['path'] == '/api/backup/native/preflights'),
+    hasLength(5),
+  );
+  expect(
+    posts.where(
+      (value) =>
+          value['path'] == '/api/backup/native/preflights/$cancelId/cancel',
+    ),
+    hasLength(1),
+  );
+  expect(
+    posts.every((value) => value['status'] >= 200 && value['status'] < 300),
+    isTrue,
+  );
+  expect(transport.dropped, [
+    '/fls-pair/api/backup/native/preflights/$cancelId/cancel',
+  ]);
 }
