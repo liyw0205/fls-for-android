@@ -107,14 +107,15 @@ class PanelBackupManager {
     _validateRequestId(requestId);
     _validateArchiveFilename(filename);
     if (maxBytes < 1) throw ArgumentError.value(maxBytes, 'maxBytes');
+    final generation = recovery.generation;
     final file = File(filePath);
     final size = await file.length();
     if (size < 1 || size > maxBytes) {
       throw PanelApiException('备份文件超过面板有效上传上限', statusCode: 413);
     }
     const path = '/api/backup/native/preflights';
-    final operation = recovery.admitPreflight(requestId, filename);
-    final observation = operation.beginObservation();
+    late PanelBackupOperation operation;
+    late int observation;
     try {
       final result = _parsePreflight(
         await _api.postMultipartFile(
@@ -124,6 +125,14 @@ class PanelBackupManager {
           fields: {'preflight_id': requestId},
           onProgress: onProgress,
           timeout: const Duration(minutes: 30),
+          beforeSend: () {
+            if (generation != recovery.generation) {
+              throw const PanelApiException('备份页面状态已改变，请重新选择文件');
+            }
+            // File preparation can outlive the page that requested the upload.
+            operation = recovery.admitPreflight(requestId, filename);
+            observation = operation.beginObservation();
+          },
         ),
         requestId,
       );

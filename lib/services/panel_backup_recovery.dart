@@ -131,6 +131,9 @@ class PanelBackupRecovery {
   static const maxOperations = 32;
   final String panelId;
   final _operations = <String, PanelBackupOperation>{};
+  int _generation = 0;
+
+  int get generation => _generation;
 
   List<PanelBackupOperation> get operations =>
       List.unmodifiable(_operations.values.toList().reversed);
@@ -144,6 +147,7 @@ class PanelBackupRecovery {
   }
 
   void invalidateObservations() {
+    _generation++;
     for (final operation in _operations.values) {
       operation.beginObservation();
     }

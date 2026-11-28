@@ -316,6 +316,7 @@ class PanelApiClient {
     required Map<String, String> fields,
     required void Function(int sentBytes, int totalBytes) onProgress,
     Duration? timeout,
+    void Function()? beforeSend,
   }) async {
     final uri = _apiUri(path);
     final multipart = http.MultipartRequest('POST', uri)
@@ -323,6 +324,7 @@ class PanelApiClient {
       ..files.add(
         await http.MultipartFile.fromPath('file', filePath, filename: filename),
       );
+    beforeSend?.call();
     final cookie = _sessionCookie;
     final csrf = _csrfToken;
     final headers = <String, String>{
