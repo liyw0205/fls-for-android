@@ -214,14 +214,17 @@ class PanelRecordsViewState extends State<PanelRecordsView>
 
   Future<void> _openLog(PanelLogFile file) async {
     final manager = widget.manager;
+    final cleanupManager = widget.cleanupManager;
+    final onUnauthorized = widget.onUnauthorized;
+    final saveFile = widget.saveFile;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => PanelLogFileView(
-          manager: widget.manager,
+          manager: manager,
           file: file,
-          onUnauthorized: widget.onUnauthorized,
-          saveFile: widget.saveFile,
-          cleanupManager: widget.cleanupManager,
+          onUnauthorized: onUnauthorized,
+          saveFile: saveFile,
+          cleanupManager: cleanupManager,
         ),
       ),
     );
@@ -294,6 +297,7 @@ class PanelRecordsViewState extends State<PanelRecordsView>
   Future<void> _openCleanup({PanelLogCleanupOperation? operation}) async {
     final manager = widget.cleanupManager;
     if (manager == null || _background) return;
+    final onUnauthorized = widget.onUnauthorized;
     final files = List<PanelLogFile>.unmodifiable(_selectedFiles.values);
     final groups = List<String>.unmodifiable(_selectedGroups);
     await Navigator.of(context).push<void>(
@@ -303,7 +307,7 @@ class PanelRecordsViewState extends State<PanelRecordsView>
           files: files,
           groups: groups,
           operation: operation,
-          onUnauthorized: widget.onUnauthorized,
+          onUnauthorized: onUnauthorized,
         ),
       ),
     );
@@ -861,12 +865,14 @@ class _PanelLogFileViewState extends State<PanelLogFileView>
   Future<void> _cleanupFile() async {
     final manager = widget.cleanupManager;
     if (manager == null || _background) return;
+    final onUnauthorized = widget.onUnauthorized;
+    final file = widget.file;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => PanelLogCleanupView(
           manager: manager,
-          files: [widget.file],
-          onUnauthorized: widget.onUnauthorized,
+          files: [file],
+          onUnauthorized: onUnauthorized,
         ),
       ),
     );

@@ -38,7 +38,7 @@ class _PanelLogCleanupViewState extends State<PanelLogCleanupView>
   bool _background = false;
   bool _unsupported = false;
   bool _confirming = false;
-  BuildContext? _dialogContext;
+  DialogRoute<bool>? _confirmationRoute;
   int _generation = 0;
 
   bool get _canAct =>
@@ -105,12 +105,15 @@ class _PanelLogCleanupViewState extends State<PanelLogCleanupView>
       mounted && _authorized && generation == _generation;
 
   void _closeDialog() {
-    final dialog = _dialogContext;
-    _dialogContext = null;
-    if (dialog == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (dialog.mounted && ModalRoute.of(dialog)?.isCurrent == true) {
-        Navigator.of(dialog).pop();
+    final route = _confirmationRoute;
+    _confirmationRoute = null;
+    _confirming = false;
+    final navigator = route?.navigator;
+    if (route == null || navigator == null) return;
+    // Paused apps do not produce frames. Invalidate consent before removing it.
+    scheduleMicrotask(() {
+      if (navigator.mounted && route.isActive) {
+        navigator.removeRoute(route);
       }
     });
   }
@@ -176,10 +179,11 @@ class _PanelLogCleanupViewState extends State<PanelLogCleanupView>
     final generation = _generation;
     final manager = widget.manager;
     setState(() => _confirming = true);
-    final confirmed = await showDialog<bool>(
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<bool>(
       context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
       builder: (context) {
-        _dialogContext = context;
         return AlertDialog(
           scrollable: true,
           title: const Text('确认清理日志'),
@@ -200,7 +204,10 @@ class _PanelLogCleanupViewState extends State<PanelLogCleanupView>
         );
       },
     );
-    _dialogContext = null;
+    _confirmationRoute = route;
+    final confirmed = await navigator.push<bool>(route);
+    if (!identical(_confirmationRoute, route)) return;
+    _confirmationRoute = null;
     if (!_current(generation)) return;
     setState(() => _confirming = false);
     if (confirmed != true || !_canAct) return;

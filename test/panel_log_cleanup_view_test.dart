@@ -166,6 +166,8 @@ void main() {
       await pumpUntilFound(tester, find.text('确认清理'));
       await tester.tap(find.text('确认清理'));
       await tester.pumpAndSettle();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pumpAndSettle();
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       await tester.pumpAndSettle();
       expect(find.text('确认删除'), findsNothing);
@@ -178,6 +180,49 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final confirmBeforeBackground in [false, true]) {
+    testWidgets(
+      'background invalidates ${confirmBeforeBackground ? 'queued acceptance' : 'an open confirmation'} without a frame',
+      (tester) async {
+        var submits = 0;
+        final manager = makeManager((request) async {
+          if (request.url.path.endsWith('/capabilities')) {
+            return cleanupJson(cleanupCapabilities());
+          }
+          if (request.url.path.endsWith('/preview')) {
+            return cleanupJson(cleanupPreview());
+          }
+          submits++;
+          return cleanupJson({'msg': 'unexpected'}, 500);
+        });
+        await tester.pumpWidget(cleanupScreen(manager));
+        await pumpUntilFound(tester, find.text('确认清理'));
+        await tester.tap(find.text('确认清理'));
+        await tester.pumpAndSettle();
+        if (confirmBeforeBackground) {
+          tester
+              .widget<FilledButton>(find.widgetWithText(FilledButton, '确认删除'))
+              .onPressed!();
+        }
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('确认删除'), findsNothing);
+        expect(submits, 0);
+        expect(manager.recovery.operations, isEmpty);
+        await tester.tap(find.text('确认清理'));
+        await tester.pumpAndSettle();
+        expect(find.text('确认删除'), findsOneWidget);
+        await tester.tap(find.text('取消'));
+        await tester.pumpAndSettle();
+        expect(submits, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'late old preview 401 cannot expire a replacement manager; current 401 hides content once',
@@ -329,7 +374,7 @@ void main() {
       await pumpUntilFound(tester, find.text('worker0.log'));
       if (mode == 'detail') {
         await tester.tap(find.text('worker0.log'));
-        await pumpUntilFound(tester, find.text('log text'));
+        await pumpUntilFound(tester, find.textContaining('log text'));
         await tester.tap(find.byTooltip('删除日志文件'));
       } else {
         await tester.tap(find.byTooltip('选择清理日志'));
