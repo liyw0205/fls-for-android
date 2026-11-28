@@ -620,8 +620,11 @@ void main() {
           home: PanelBackupView(manager: manager, onUnauthorized: (_) async {}),
         ),
       );
-      await pumpUntilFound(tester, find.text('现场维护'));
-      await tester.tap(find.text('现场维护'));
+      await pumpUntilFound(tester, find.text('restore history unreadable'));
+      await tester.ensureVisible(find.text('现场维护'));
+      await tester.pumpAndSettle();
+      expect(find.text('现场维护').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('现场维护').hitTestable());
       await pumpUntilFound(tester, find.text('依赖资源'));
       await tester.tap(find.text('依赖资源'));
       await _confirm(tester);
