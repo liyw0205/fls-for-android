@@ -18,7 +18,22 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：独立依赖资源维护与监听交接修正
+#### 最新检查点：恢复占用、缓存与调度器完整租约
+
+FLS `24a85ee06046e1424f4b5ce0324699951cdda550` / `20261128.31`（186）已推 `develop`。Native [46123675083](https://github.com/liyw0205/fls/actions/runs/46123675083) 已完整 success，15/15 jobs 成功。Linux/Windows 占用专项各 214 passed/356 subtests；Linux 长回归 1181 passed、1 skipped、1163 subtests、2 条既有 tar 警告；Windows 长回归全部成功，最后任务源/刷新 step 204 passed/152 subtests。双平台依赖维护分别 76 passed/140 subtests 和 73 passed/3 skipped/138 subtests。Module `46123675022`、Desktop `46123675050`、EXE `46123675080` 全部成功，正式 Release jobs 均跳过。APP 无产品变更，版本及 APK 仍为下方 `.82` / `2c01629`；文档变更不算新 APK。
+
+真实独立恢复进程在原生认证通过后取得独占目录租约，先复现概览/调度器和任务单项/批量/合集加入错误返回 500；任务旧回执、通知历史及热任务缓存还可能绕过门禁返回 200。修正七个 API 异常边界并复用公共 503/code/Retry-After/no-store；任务缓存、通知历史缓存和任务回执在读取前检查共享租约。调度器重载从读任务、构建计划、应用计划直到保存结果全程持租约，防止读取后被目录替换。已有任务保存成功/结果未知的后续恢复语义保留，不把后期故障改成未受理。
+
+新增七项留仓回归，修复前 30 failed/9 passed/40 subtests，修复后专项 11 passed/70 subtests。测试验证原始 JSON 字节与回执不变、无任务启动/停止/重试取消或计划应用、解锁恢复、原回执结果不变、冷/热缓存、无效输入反例，并在构建及应用计划时用独立进程尝试目录替换。正确认证的 Web 对应入口原本已返回 503，因此没有修改 Web 处理器。14 文件相关回归最终 135 passed/223 subtests，线程异常作为错误；发布说明 2 项、编译和 diff 检查通过。独立旧 SHA Git 归档仅加入新测试再次复现同一组 30 个失败，未回退活动工作区。
+
+下一批为 APP 当前面板会话的完整备份流程。源码核对已确认：创建/删除原 ID 只在页面方法内，离页或 401 后没有重查入口；预检查/恢复原 ID 也只在页面状态，原请求 DTO/manager 尚未严格绑定所有 ID/类型/文件版本；预检查、恢复及后续处理的轮询未统一限制次数和前台 generation。这些为已追踪的实现缺口，尚未声称有新 Widget 失败证据。
+
+1. 在面板上下文保留有界的内存恢复记录，发请求前保存精确 request/operation ID、选择范围或文件版本；离页、同面板重新认证后仍可只读查询。未知记录不因新上传被清空，不保留归档、URI、临时路径、正文或凭据。
+2. 覆盖创建、删除、预检查、恢复及调度器/依赖后续处理；原请求入口不依赖文件/作业/历史列表成功。校验返回的原 ID、种类、范围、文件版本及后续操作 ID，404 不证明未执行；不自动重发 POST 或删除同名新文件。
+3. 复用已验证的有界清理观察模式：后台、离页、401、切面板及短暂 inactive 均永久作废旧观察，返回前台只保留人工查询；次数耗尽保留原 ID，旧 200/401 不能影响新会话。
+4. 以 manager/Widget 覆盖丢响应、离页重进、重登、错响应、列表失败、后台 POST/GET 与 320dp 大字；流式 HTTP 用既有 `pumpUntil`，真实点击须等待标签动画完成。递增实际 APP 产品版本，通过完整 CI/APK 后再做 B4；跨 APP 进程恢复仍归 M5，随后继续 M4-M7，不以本批代替全量前端/主题或用户验收。
+
+#### 已通过检查点：独立依赖资源维护与监听交接修正
 
 FLS `4c7b4b591b755c09f0f845a1fb051db7130da3fe` / `20261128.30`（185）与 APP `2c01629866cd9757869c2a4e3cb1a7f6db44b611` / `0.1.82+96` 已推各自 `develop`。后端 [Native `46120102509`](https://github.com/liyw0205/fls/actions/runs/46120102509) 完整 success，15/15 jobs 成功：Linux 1181 passed、1 skipped、1163 subtests、2 条既有 tar 警告；Windows 长回归全部成功，最后任务源/刷新 step 204 passed/152 subtests。双平台依赖维护专项分别 76 passed/140 subtests 和 73 passed/3 skipped/138 subtests。Module `46120102472`、Desktop `46120102444`、EXE `46120102437` 成功，正式 Release 均跳过。APP [Android `46120056742`](https://github.com/liyw0205/fls-for-android/actions/runs/46120056742) 已完整成功，格式/分析、328 项测试、arm64 APK 及 develop artifact 上传通过，正式 Release 跳过。本子批配对自动化候选通过，真实面板手动验收待用户，不关闭 B3/B4 或总 Goal。
 
@@ -658,7 +673,7 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 已有监管、日志、实例锁/WAL、持久性、四域 busy、Windows 指纹、APP 生命周期和独立目录维护完整 CI 通过；最新 `.30` / `.82` 独立依赖维护及交接修正完整配对 CI/APK 成功，见顶部 | 其余域 busy 和当前会话全流程完成并通过故障/兼容回归；明确物理断电未验证边界，独立维护子批和 B2 均不代替 B3/B4 完整交付 |
+| B3 恢复及后续处理 | 独立依赖维护配对 CI/APK、`.31` 占用/缓存边界的完整平台 CI 已通过，准确证据见顶部 | 直接接 APP 当前会话全流程、原请求记录/离页重登恢复及有界前台观察，再做故障/兼容回归；明确物理断电未验证边界，独立维护子批和 B2 均不代替 B3/B4 完整交付 |
 | B4 配对验证 | 待 B3 剩余项完成后，以最终双方 SHA 聚焦新契约及旧备份恢复回归、双方 CI 和 APK；当前配对检查点不关闭 B4 | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
