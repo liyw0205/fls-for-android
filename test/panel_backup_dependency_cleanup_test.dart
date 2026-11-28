@@ -66,30 +66,60 @@ void main() {
     },
   );
 
-  testWidgets('a foreground return cannot revive an in-flight cleanup poll', (
-    tester,
-  ) async {
-    final queryGate = Completer<void>();
-    addTearDown(() {
-      if (!queryGate.isCompleted) queryGate.complete();
+  for (final outcome in ['pending', 'unavailable']) {
+    testWidgets('a foreground return cannot revive a $outcome cleanup poll', (
+      tester,
+    ) async {
+      final queryGate = Completer<void>();
+      addTearDown(() {
+        if (!queryGate.isCompleted) queryGate.complete();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      final harness = _CleanupHarness(outcome, cleanupQueryGate: queryGate);
+      await _submit(tester, harness);
+      await pumpUntil(tester, () => harness.cleanupQueries == 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(find.text('Installation output'), findsNothing);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      queryGate.complete();
+      await _waitForCleanupIdle(tester);
+      await tester.pump(const Duration(seconds: 4));
+      expect(harness.cleanupQueries, 1);
+      expect(harness.posts, hasLength(1));
+      expect(find.text('单独安装恢复依赖'), findsNothing);
+      expect(tester.takeException(), isNull);
     });
-    final harness = _CleanupHarness('pending', cleanupQueryGate: queryGate);
-    await _submit(tester, harness);
-    await pumpUntil(tester, () => harness.cleanupQueries == 1);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    await tester.pump();
-    expect(find.text('Installation output'), findsNothing);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pump();
-    queryGate.complete();
-    await _waitForCleanupIdle(tester);
-    await tester.pump(const Duration(seconds: 4));
-    expect(harness.cleanupQueries, 1);
-    expect(harness.posts, hasLength(1));
-    expect(find.text('单独安装恢复依赖'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+  }
+
+  testWidgets(
+    'background during acceptance prevents starting cleanup polling',
+    (tester) async {
+      final postGate = Completer<void>();
+      addTearDown(() {
+        if (!postGate.isCompleted) postGate.complete();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      final harness = _CleanupHarness('pending', cleanupPostGate: postGate);
+      await _submit(tester, harness);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      postGate.complete();
+      await _waitForCleanupIdle(tester);
+      await tester.pump(const Duration(seconds: 4));
+      expect(harness.cleanupQueries, 0);
+      expect(harness.posts, hasLength(1));
+      expect(find.text('单独安装恢复依赖'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('accepted cleanup queries its owner until cleanup is confirmed', (
     tester,
@@ -173,7 +203,7 @@ Future<void> _submit(WidgetTester tester, _CleanupHarness harness) async {
 }
 
 class _CleanupHarness {
-  _CleanupHarness(this.outcome, {this.cleanupQueryGate}) {
+  _CleanupHarness(this.outcome, {this.cleanupQueryGate, this.cleanupPostGate}) {
     final api = PanelApiClient(
       baseUrl: 'https://fls.example/prefix',
       credentials: const PanelSessionCredentials(
@@ -188,6 +218,7 @@ class _CleanupHarness {
 
   final String outcome;
   final Completer<void>? cleanupQueryGate;
+  final Completer<void>? cleanupPostGate;
   late final PanelBackupManager manager;
   final posts = <http.Request>[];
   int cleanupQueries = 0;
@@ -206,6 +237,7 @@ class _CleanupHarness {
       expect(jsonDecode(request.body), {'operation_id': 'e' * 32});
       expect(request.headers['x-csrf-token'], 'csrf');
       posts.add(request);
+      await cleanupPostGate?.future;
       return _json({
         'ok': true,
         'cleanup_requested': true,

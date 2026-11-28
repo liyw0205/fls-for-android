@@ -57,6 +57,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   int _restoreHistoryRequest = 0;
   bool _sessionExpired = false;
   bool _background = false;
+  int _foregroundGeneration = 0;
   Route<dynamic>? _confirmationRoute;
   String? _preflightRequestId;
   String? _restoreRequestId;
@@ -101,7 +102,10 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!mounted) return;
     setState(() => _background = state != AppLifecycleState.resumed);
-    if (_background) _closeConfirmation();
+    if (_background) {
+      _foregroundGeneration++;
+      _closeConfirmation();
+    }
   }
 
   void _closeConfirmation() {
@@ -945,6 +949,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       ),
     );
     if (!mounted || _sessionExpired || confirmed != true) return;
+    final foregroundGeneration = _foregroundGeneration;
     setState(() => _busy = 'dependency-cleanup');
     try {
       var result = await widget.manager.cleanupRestoreDependencies(
@@ -955,7 +960,10 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       setState(() => _restore = result);
       final accepted = result.dependencyCleanupRequested;
       if (accepted && result.dependencies.cleanupRequired) {
-        result = await _waitForDependencyCleanup(result);
+        result = await _waitForDependencyCleanup(
+          result,
+          foregroundGeneration: foregroundGeneration,
+        );
         if (!mounted || _sessionExpired) return;
         setState(() => _restore = result);
       }
@@ -969,6 +977,9 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     } catch (error) {
       if (!mounted || _sessionExpired) return;
       if (await _handleUnauthorized(error)) return;
+      if (!_canInteract || foregroundGeneration != _foregroundGeneration) {
+        return;
+      }
       try {
         final result = await widget.manager.fetchRestore(
           restore.requestId,
@@ -991,21 +1002,24 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   }
 
   Future<PanelBackupRestore> _waitForDependencyCleanup(
-    PanelBackupRestore initial,
-  ) async {
+    PanelBackupRestore initial, {
+    required int foregroundGeneration,
+  }) async {
+    bool isCurrent() =>
+        _canInteract && foregroundGeneration == _foregroundGeneration;
     var result = initial;
     for (
       var attempt = 0;
-      attempt < 15 && result.dependencies.cleanupRequired && _canInteract;
+      attempt < 15 && result.dependencies.cleanupRequired && isCurrent();
       attempt++
     ) {
       await Future<void>.delayed(const Duration(seconds: 2));
-      if (!_canInteract) break;
+      if (!isCurrent()) break;
       final next = await widget.manager.fetchRestore(
         initial.requestId,
         expectedDependencyOperationId: initial.dependencies.operationId,
       );
-      if (!_canInteract) break;
+      if (!isCurrent()) break;
       result = next;
       setState(() => _restore = result);
     }
