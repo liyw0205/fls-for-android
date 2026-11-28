@@ -10,7 +10,7 @@ import '../services/local_file_bridge.dart';
 import '../services/panel_api_client.dart';
 import '../services/panel_backup_manager.dart';
 
-class PanelBackupView extends StatefulWidget {
+class PanelBackupView extends StatelessWidget {
   const PanelBackupView({
     super.key,
     required this.manager,
@@ -21,11 +21,29 @@ class PanelBackupView extends StatefulWidget {
   final Future<void> Function(Object error) onUnauthorized;
 
   @override
-  State<PanelBackupView> createState() => _PanelBackupViewState();
+  Widget build(BuildContext context) => _PanelBackupSession(
+    key: ObjectKey(manager),
+    manager: manager,
+    onUnauthorized: onUnauthorized,
+  );
 }
 
-class _PanelBackupViewState extends State<PanelBackupView>
-    with SingleTickerProviderStateMixin {
+class _PanelBackupSession extends StatefulWidget {
+  const _PanelBackupSession({
+    super.key,
+    required this.manager,
+    required this.onUnauthorized,
+  });
+
+  final PanelBackupManager manager;
+  final Future<void> Function(Object error) onUnauthorized;
+
+  @override
+  State<_PanelBackupSession> createState() => _PanelBackupViewState();
+}
+
+class _PanelBackupViewState extends State<_PanelBackupSession>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TabController _tabs;
   PanelBackupCapabilities? _capabilities;
   PanelBackupFilesPage? _files;
@@ -38,6 +56,8 @@ class _PanelBackupViewState extends State<PanelBackupView>
   bool _restoreHistoryLoading = false;
   int _restoreHistoryRequest = 0;
   bool _sessionExpired = false;
+  bool _background = false;
+  Route<dynamic>? _confirmationRoute;
   String? _preflightRequestId;
   String? _restoreRequestId;
   String? _preflightError;
@@ -57,17 +77,62 @@ class _PanelBackupViewState extends State<PanelBackupView>
   bool _loading = true;
   bool _refreshing = false;
 
+  bool get _canInteract => mounted && !_sessionExpired && !_background;
+
   @override
   void initState() {
     super.initState();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _background = lifecycle != null && lifecycle != AppLifecycleState.resumed;
+    WidgetsBinding.instance.addObserver(this);
     _tabs = TabController(length: 3, vsync: this);
     unawaited(_load());
   }
 
   @override
   void dispose() {
+    _closeConfirmation();
+    WidgetsBinding.instance.removeObserver(this);
     _tabs.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
+    setState(() => _background = state != AppLifecycleState.resumed);
+    if (_background) _closeConfirmation();
+  }
+
+  void _closeConfirmation() {
+    final route = _confirmationRoute;
+    _confirmationRoute = null;
+    final navigator = route?.navigator;
+    if (route == null || navigator == null) return;
+    scheduleMicrotask(() {
+      if (navigator.mounted && route.isActive) navigator.removeRoute(route);
+    });
+  }
+
+  Future<T?> _confirm<T>({required WidgetBuilder builder}) async {
+    if (!_canInteract ||
+        _confirmationRoute != null ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      return null;
+    }
+    final route = DialogRoute<T>(context: context, builder: builder);
+    _confirmationRoute = route;
+    try {
+      final result = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
+      return _canInteract && identical(_confirmationRoute, route)
+          ? result
+          : null;
+    } finally {
+      if (identical(_confirmationRoute, route)) _confirmationRoute = null;
+    }
   }
 
   Future<void> _load({bool refresh = false}) async {
@@ -114,10 +179,11 @@ class _PanelBackupViewState extends State<PanelBackupView>
   }
 
   Future<bool> _handleUnauthorized(Object error) async {
+    if (!mounted || _sessionExpired) return true;
     if (error is PanelApiException && error.statusCode == 401) {
-      if (!mounted || _sessionExpired) return true;
-      _sessionExpired = true;
+      setState(() => _sessionExpired = true);
       _restoreHistoryRequest++;
+      _closeConfirmation();
       await widget.onUnauthorized(error);
       return true;
     }
@@ -128,7 +194,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
       error is PanelApiException ? error.message : error.toString();
 
   void _notice(String message) {
-    if (!mounted) return;
+    if (!_canInteract) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -137,8 +203,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
   Future<void> _createBackup() async {
     final capabilities = _capabilities;
     if (capabilities == null || _busy != null) return;
-    final selected = await showDialog<List<String>>(
-      context: context,
+    final selected = await _confirm<List<String>>(
       builder: (context) => _BackupScopeDialog(available: capabilities.items),
     );
     if (!mounted || selected == null || selected.isEmpty) return;
@@ -174,8 +239,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
   }
 
   Future<void> _deleteBackup(PanelBackupFile file) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('删除备份'),
         content: Text('${file.name}\n${_formatBytes(file.sizeBytes)}'),
@@ -232,6 +296,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
     var saved = false;
     try {
       final directory = await getTemporaryDirectory();
+      if (!_canInteract) return;
       temporaryPath = p.join(
         directory.path,
         'fls-backup-${DateTime.now().microsecondsSinceEpoch}.tar.gz',
@@ -247,6 +312,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
           });
         },
       );
+      if (!_canInteract) return;
       saved = await LocalFileBridge.saveFile(
         path: temporaryPath,
         filename: file.name,
@@ -350,7 +416,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
       );
       if (!copied) throw const PanelApiException('无法读取所选备份文件');
       final size = await File(temporaryPath).length();
-      if (!mounted) return;
+      if (!_canInteract) return;
       setState(() {
         _stagingArchive = false;
         _uploadTotalBytes = size;
@@ -403,6 +469,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
       try {
         var result = await widget.manager.fetchPreflight(requestId);
         if (result.active) result = await _waitForPreflight(result);
+        if (!mounted || _sessionExpired) return;
         setState(() {
           _preflight = result;
           _restoreItems
@@ -517,8 +584,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
       return;
     }
     final restoreDependencies = _restoreDependencies;
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('确认恢复'),
         content: Text(
@@ -683,8 +749,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
     if (restore.directoryRecoveryRequired || _sessionExpired || _busy != null) {
       return;
     }
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('人工确认恢复结果'),
         content: Text(
@@ -737,8 +802,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
       'unknown',
       'succeeded',
     }.contains(current.state);
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: Text(dependencies ? '安装恢复依赖' : '重新加载调度器'),
         content: Text(
@@ -804,8 +868,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
         _sessionExpired) {
       return;
     }
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('恢复目录现场'),
         content: const Text(
@@ -865,8 +928,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
         !restore.dependencies.cleanupRequired) {
       return;
     }
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('清理依赖作业'),
         content: const Text('终止原依赖作业的残留进程并清理其临时文件。此操作不会再次安装依赖或恢复目录。'),
@@ -953,6 +1015,9 @@ class _PanelBackupViewState extends State<PanelBackupView>
 
   @override
   Widget build(BuildContext context) {
+    if (_background || _sessionExpired) {
+      return Scaffold(appBar: AppBar(title: const Text('备份恢复')));
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('备份恢复'),
@@ -1576,8 +1641,7 @@ class _PanelBackupViewState extends State<PanelBackupView>
   Future<void> _acknowledgeRestoreMaintenance(
     PanelBackupMaintenance maintenance,
   ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('确认维护记录'),
         content: Text(maintenance.notice),

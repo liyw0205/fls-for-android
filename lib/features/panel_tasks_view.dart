@@ -1099,12 +1099,13 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   Future<void> _openBackup() async {
     final api = _api;
     if (api == null) return;
+    final manager = PanelBackupManager(api);
     final panelRoute = ModalRoute.of(context);
     final navigator = Navigator.of(context);
     await navigator.push<void>(
       MaterialPageRoute<void>(
         builder: (_) => PanelBackupView(
-          manager: PanelBackupManager(api),
+          manager: manager,
           onUnauthorized: (error) async {
             if (await _expireSession(error, candidate: api) &&
                 mounted &&
