@@ -18,6 +18,7 @@ import '../services/panel_online_scripts_manager.dart';
 import '../services/panel_records_manager.dart';
 import '../services/panel_log_cleanup_manager.dart';
 import '../services/panel_backup_manager.dart';
+import '../services/panel_backup_recovery.dart';
 import '../services/panel_runtime_deps_manager.dart';
 import '../services/panel_global_env_manager.dart';
 import '../services/panel_config_manager.dart';
@@ -122,6 +123,7 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   PanelRecordsManager? _recordsManager;
   PanelLogCleanupManager? _logCleanupManager;
   final _logCleanupRecoveries = <String, PanelLogCleanupRecovery>{};
+  final _backupRecoveries = <String, PanelBackupRecovery>{};
   final _configRecovery = PanelConfigRecovery();
   final _proxyRecovery = PanelProxyRecovery();
   final _notifyRecovery = PanelNotifyRecovery();
@@ -1099,7 +1101,13 @@ class _PanelTasksViewState extends State<PanelTasksView> {
   Future<void> _openBackup() async {
     final api = _api;
     if (api == null) return;
-    final manager = PanelBackupManager(api);
+    final manager = PanelBackupManager(
+      api,
+      recovery: _backupRecoveries.putIfAbsent(
+        api.panelId,
+        () => PanelBackupRecovery(api.panelId),
+      ),
+    );
     final panelRoute = ModalRoute.of(context);
     final navigator = Navigator.of(context);
     await navigator.push<void>(

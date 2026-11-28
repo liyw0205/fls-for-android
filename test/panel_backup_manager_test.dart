@@ -89,7 +89,15 @@ void main() {
             200,
           );
         }
-        return utf8Response('{"ok":true,"accepted":true}', 200);
+        return utf8Response(
+          jsonEncode({
+            'ok': true,
+            'accepted': true,
+            'request_id': 'c' * 32,
+            'job': null,
+          }),
+          200,
+        );
       }),
     );
     addTearDown(client.close);

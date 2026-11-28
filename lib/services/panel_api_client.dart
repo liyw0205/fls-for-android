@@ -67,6 +67,8 @@ class PanelApiClient {
 
   bool get hasSession => _sessionCookie != null && _csrfToken != null;
 
+  String get panelId => _baseUri.toString();
+
   PanelSessionCredentials get sessionCredentials {
     final cookie = _sessionCookie;
     final csrf = _csrfToken;

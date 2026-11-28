@@ -82,6 +82,9 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
 
   bool get _canInteract => mounted && !_sessionExpired && !_background;
 
+  bool _canObserve(int generation) =>
+      _canInteract && generation == _foregroundGeneration;
+
   @override
   void initState() {
     super.initState();
@@ -94,6 +97,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
 
   @override
   void dispose() {
+    widget.manager.recovery.invalidateObservations();
     _closeConfirmation();
     WidgetsBinding.instance.removeObserver(this);
     _tabs.dispose();
@@ -106,6 +110,7 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     setState(() => _background = state != AppLifecycleState.resumed);
     if (_background) {
       _foregroundGeneration++;
+      widget.manager.recovery.invalidateObservations();
       _closeConfirmation();
     }
   }
@@ -142,7 +147,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
   }
 
   Future<void> _load({bool refresh = false}) async {
-    if (_refreshing) return;
+    if (_refreshing || !_canInteract) return;
+    final generation = _foregroundGeneration;
     setState(() {
       _refreshing = true;
       if (!refresh) _loading = true;
@@ -155,15 +161,16 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         widget.manager.fetchJobs(page: _jobPage),
       ]);
       final capabilities = values[0] as PanelBackupCapabilities;
+      if (!_canObserve(generation)) return;
       PanelBackupMaintenance? maintenance;
       if (capabilities.restoreEnabled) {
         try {
           maintenance = await widget.manager.fetchRestoreMaintenance();
         } catch (error) {
-          if (await _handleUnauthorized(error)) return;
+          if (await _handleUnauthorized(error, generation: generation)) return;
         }
       }
-      if (!mounted || _sessionExpired) return;
+      if (!_canObserve(generation)) return;
       setState(() {
         _capabilities = capabilities;
         _files = values[1] as PanelBackupFilesPage;
@@ -173,8 +180,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       });
       if (capabilities.restoreEnabled) await _loadRestoreHistory();
     } catch (error) {
-      if (!mounted) return;
-      if (await _handleUnauthorized(error)) return;
+      if (!_canObserve(generation)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
       setState(() {
         _error = _messageFor(error);
         _loading = false;
@@ -184,9 +191,11 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
     }
   }
 
-  Future<bool> _handleUnauthorized(Object error) async {
+  Future<bool> _handleUnauthorized(Object error, {int? generation}) async {
+    if (generation != null && !_canObserve(generation)) return true;
     if (!mounted || _sessionExpired) return true;
     if (error is PanelApiException && error.statusCode == 401) {
+      widget.manager.recovery.invalidateObservations();
       setState(() => _sessionExpired = true);
       _restoreHistoryRequest++;
       _closeConfirmation();
@@ -208,11 +217,12 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
 
   Future<void> _createBackup() async {
     final capabilities = _capabilities;
-    if (capabilities == null || _busy != null) return;
+    if (!_canInteract || capabilities == null || _busy != null) return;
     final selected = await _confirm<List<String>>(
       builder: (context) => _BackupScopeDialog(available: capabilities.items),
     );
-    if (!mounted || selected == null || selected.isEmpty) return;
+    if (!_canInteract || selected == null || selected.isEmpty) return;
+    final generation = _foregroundGeneration;
     final requestId = PanelBackupManager.newRequestId();
     setState(() => _busy = 'create');
     var message = '备份请求已提交';
@@ -221,9 +231,13 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         requestId: requestId,
         items: selected,
       );
-      if (response['accepted'] != true) message = '备份请求状态待确认';
+      if (response.accepted != true) message = '备份请求状态待确认';
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
+      if (widget.manager.recovery.find(requestId) == null) {
+        _notice(_messageFor(error));
+        return;
+      }
       try {
         final request = await widget.manager.requestStatus(requestId);
         message = switch (request.status) {
@@ -233,18 +247,21 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
           _ => '备份请求状态未知，请稍后查看作业列表',
         };
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
-        message = '无法确认原请求；未重复提交，请检查作业列表';
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
+        message = '无法确认原请求；可从原请求记录继续查询';
       }
     } finally {
       if (mounted) setState(() => _busy = null);
     }
-    if (!mounted) return;
+    if (!_canObserve(generation)) return;
     _notice(message);
     await _load(refresh: true);
   }
 
   Future<void> _deleteBackup(PanelBackupFile file) async {
+    if (!_canInteract || _busy != null) return;
     final confirmed = await _confirm<bool>(
       builder: (context) => AlertDialog(
         title: const Text('删除备份'),
@@ -261,7 +278,8 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         ],
       ),
     );
-    if (!mounted || confirmed != true || _busy != null) return;
+    if (!_canInteract || confirmed != true || _busy != null) return;
+    final generation = _foregroundGeneration;
     final requestId = PanelBackupManager.newRequestId();
     setState(() => _busy = 'delete:${file.name}');
     var message = '备份已删除';
@@ -270,25 +288,174 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
         requestId: requestId,
         file: file,
       );
-      if (response['deleted'] != true) message = '删除状态待确认';
+      if (response.deleted != true) message = '删除状态待确认';
     } catch (error) {
-      if (await _handleUnauthorized(error)) return;
+      if (await _handleUnauthorized(error, generation: generation)) return;
+      if (widget.manager.recovery.find(requestId) == null) {
+        _notice(_messageFor(error));
+        return;
+      }
       try {
         final request = await widget.manager.requestStatus(requestId);
         message = request.status == 'succeeded'
             ? '备份已删除'
             : '删除结果未知；未重复操作，请刷新核对';
       } catch (queryError) {
-        if (await _handleUnauthorized(queryError)) return;
-        message = '无法确认删除结果；未重复操作，请刷新核对';
+        if (await _handleUnauthorized(queryError, generation: generation)) {
+          return;
+        }
+        message = '无法确认删除结果；可从原请求记录继续查询';
       }
     } finally {
       if (mounted) setState(() => _busy = null);
     }
-    if (!mounted) return;
+    if (!_canObserve(generation)) return;
     _notice(message);
     await _load(refresh: true);
   }
+
+  Future<void> _openOriginalRequests() async {
+    String? querying;
+    final errors = <String, String>{};
+    await _confirm<void>(
+      builder: (_) => StatefulBuilder(
+        builder: (dialogContext, update) {
+          final operations = widget.manager.recovery.operations;
+          return AlertDialog(
+            scrollable: true,
+            title: const Text('原请求记录'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (operations.isEmpty) const Text('暂无原请求'),
+                  for (final operation in operations)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(operation.kind == 'create' ? '创建备份' : '删除备份'),
+                          Text(
+                            operation.filename ??
+                                operation.items
+                                    .map(
+                                      (item) => item == 'data' ? '配置数据' : '脚本',
+                                    )
+                                    .join('、'),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          SelectableText(operation.requestId),
+                          if (operation.version != null)
+                            SelectableText(operation.version!),
+                          Text(_originalRequestLabel(operation.result)),
+                          if (errors[operation.requestId] != null)
+                            Text(errors[operation.requestId]!),
+                          Wrap(
+                            children: [
+                              IconButton(
+                                tooltip: '查询原请求',
+                                onPressed: querying != null || _busy != null
+                                    ? null
+                                    : () async {
+                                        final generation =
+                                            _foregroundGeneration;
+                                        final route = _confirmationRoute;
+                                        bool canApply() =>
+                                            _canObserve(generation) &&
+                                            dialogContext.mounted &&
+                                            identical(
+                                              _confirmationRoute,
+                                              route,
+                                            ) &&
+                                            route?.isActive == true;
+                                        update(
+                                          () => querying = operation.requestId,
+                                        );
+                                        try {
+                                          await widget.manager.requestStatus(
+                                            operation.requestId,
+                                          );
+                                          if (!canApply()) return;
+                                          update(
+                                            () => errors.remove(
+                                              operation.requestId,
+                                            ),
+                                          );
+                                        } catch (error) {
+                                          if (!canApply()) return;
+                                          if (await _handleUnauthorized(
+                                            error,
+                                            generation: generation,
+                                          )) {
+                                            return;
+                                          }
+                                          if (!dialogContext.mounted) return;
+                                          update(
+                                            () => errors[operation.requestId] =
+                                                error is PanelApiException &&
+                                                    error.statusCode == 404
+                                                ? '尚未查到原请求，执行结果仍未确认'
+                                                : '原请求暂无法确认，请稍后查询',
+                                          );
+                                        } finally {
+                                          if (canApply()) {
+                                            update(() => querying = null);
+                                          }
+                                        }
+                                      },
+                                icon: querying == operation.requestId
+                                    ? const SizedBox.square(
+                                        dimension: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.refresh),
+                              ),
+                              if (operation.canReview)
+                                IconButton(
+                                  tooltip: '已核对，移除记录',
+                                  onPressed: querying != null || _busy != null
+                                      ? null
+                                      : () => update(
+                                          () => widget.manager.recovery.review(
+                                            operation,
+                                          ),
+                                        ),
+                                  icon: const Icon(Icons.done),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _originalRequestLabel(PanelBackupRequest? request) =>
+      switch (request?.status) {
+        'succeeded' => '已完成',
+        'failed' => '执行失败',
+        'cancelled' => '已取消',
+        'preparing' || 'running' || 'cancelling' => '执行中',
+        _ => '结果待确认',
+      };
 
   Future<void> _downloadBackup(PanelBackupFile file) async {
     if (_busy != null) return;
@@ -1071,6 +1238,11 @@ class _PanelBackupViewState extends State<_PanelBackupSession>
       appBar: AppBar(
         title: const Text('备份恢复'),
         actions: [
+          IconButton(
+            tooltip: '原请求记录',
+            onPressed: _busy == null ? _openOriginalRequests : null,
+            icon: const Icon(Icons.history),
+          ),
           if (_capabilities?.preflightEnabled == true)
             IconButton(
               tooltip: '预检查备份',

@@ -680,6 +680,10 @@ class PanelBackupRequest {
     required this.status,
     required this.accepted,
     required this.items,
+    required this.active,
+    this.filename,
+    this.version,
+    this.deleted,
   });
 
   final String requestId;
@@ -687,6 +691,13 @@ class PanelBackupRequest {
   final String status;
   final bool? accepted;
   final List<String> items;
+  final bool active;
+  final String? filename;
+  final String? version;
+  final bool? deleted;
+
+  bool get terminal =>
+      !active && const {'succeeded', 'failed', 'cancelled'}.contains(status);
 
   factory PanelBackupRequest.fromJson(Object? value) {
     if (value is! Map<String, dynamic> || value['ok'] != true) {
@@ -695,20 +706,103 @@ class PanelBackupRequest {
     final request = value['request'];
     if (request is! Map<String, dynamic> ||
         request['request_id'] is! String ||
-        request['kind'] is! String ||
-        request['status'] is! String) {
+        !RegExp(r'^[a-f0-9]{32}$').hasMatch(request['request_id'] as String) ||
+        !const {'create', 'delete'}.contains(request['kind']) ||
+        !const {
+          'unknown',
+          'preparing',
+          'running',
+          'cancelling',
+          'succeeded',
+          'failed',
+          'cancelled',
+        }.contains(request['status']) ||
+        request['active'] is! bool ||
+        !request.containsKey('accepted') ||
+        (request['accepted'] != null && request['accepted'] is! bool)) {
       throw const FormatException('备份请求摘要格式无效');
+    }
+    final kind = request['kind'] as String;
+    final status = request['status'] as String;
+    final active = request['active'] as bool;
+    final accepted = request['accepted'] as bool?;
+    if (active !=
+            const {'preparing', 'running', 'cancelling'}.contains(status) ||
+        ((active || status == 'succeeded' || status == 'cancelled') &&
+            accepted != true)) {
+      throw const FormatException('备份请求状态不一致');
+    }
+    var items = const <String>[];
+    String? filename;
+    String? version;
+    bool? deleted;
+    if (kind == 'create') {
+      final rawItems = request['items'];
+      if (accepted is! bool ||
+          rawItems is! List ||
+          rawItems.isEmpty ||
+          rawItems.length > 2 ||
+          rawItems.any((item) => !const {'data', 'scripts'}.contains(item)) ||
+          rawItems.toSet().length != rawItems.length ||
+          request['deleted'] != null ||
+          request['version'] != null) {
+        throw const FormatException('备份请求范围无效');
+      }
+      items = List<String>.unmodifiable(rawItems.cast<String>());
+      final job = request['job'];
+      if (job != null &&
+          (job is! Map<String, dynamic> ||
+              job['id'] != request['request_id'] ||
+              job['status'] != status ||
+              job['active'] != active ||
+              job['items'] is! List ||
+              (job['items'] as List).length != items.length ||
+              (job['items'] as List).toSet().length != items.length ||
+              (job['items'] as List).any((item) => !items.contains(item)))) {
+        throw const FormatException('备份作业与原请求摘要不一致');
+      }
+    } else {
+      filename = request['filename'] is String
+          ? request['filename'] as String
+          : null;
+      version = request['version'] is String
+          ? request['version'] as String
+          : null;
+      if (filename == null ||
+          filename.length > 255 ||
+          filename.contains(':') ||
+          filename.codeUnits.any((unit) => unit < 32 || unit == 127) ||
+          version == null ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(version) ||
+          !request.containsKey('deleted') ||
+          (request['deleted'] != null && request['deleted'] is! bool) ||
+          request['items'] != null ||
+          active ||
+          !const {'unknown', 'succeeded'}.contains(status)) {
+        throw const FormatException('备份删除请求摘要无效');
+      }
+      PanelBackupFile.fromJson({
+        'name': filename,
+        'version': version,
+        'size_bytes': 0,
+        'modified_at': '',
+      });
+      deleted = request['deleted'] as bool?;
+      if ((status == 'succeeded' && (deleted != true || accepted != true)) ||
+          (status == 'unknown' && deleted != null)) {
+        throw const FormatException('备份删除结果不一致');
+      }
     }
     return PanelBackupRequest(
       requestId: request['request_id'] as String,
       kind: request['kind'] as String,
       status: request['status'] as String,
-      accepted: request['accepted'] is bool
-          ? request['accepted'] as bool
-          : null,
-      items: request['items'] is List
-          ? (request['items'] as List).whereType<String>().toList()
-          : const [],
+      accepted: accepted,
+      items: items,
+      active: active,
+      filename: filename,
+      version: version,
+      deleted: deleted,
     );
   }
 }

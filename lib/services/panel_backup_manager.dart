@@ -5,11 +5,18 @@ import '../models/panel_backup.dart';
 import '../models/panel_directory_maintenance.dart';
 import '../models/panel_dependency_maintenance.dart';
 import 'panel_api_client.dart';
+import 'panel_backup_recovery.dart';
 
 class PanelBackupManager {
-  const PanelBackupManager(this._api);
+  PanelBackupManager(this._api, {PanelBackupRecovery? recovery})
+    : recovery = recovery ?? PanelBackupRecovery(_api.panelId) {
+    if (this.recovery.panelId != _api.panelId) {
+      throw ArgumentError('备份原请求记录不属于当前面板');
+    }
+  }
 
   final PanelApiClient _api;
+  final PanelBackupRecovery recovery;
 
   static String newRequestId() => List.generate(
     16,
@@ -71,8 +78,15 @@ class PanelBackupManager {
   Future<PanelBackupRequest> requestStatus(String requestId) async {
     _validateRequestId(requestId);
     final path = '/api/backup/native/requests/$requestId';
+    final operation = recovery.find(requestId);
+    final observation = operation?.beginObservation();
     try {
-      return PanelBackupRequest.fromJson(await _api.getJson(path));
+      final result = PanelBackupRequest.fromJson(await _api.getJson(path));
+      if (result.requestId != requestId) {
+        throw const FormatException('备份响应与原请求标识不一致');
+      }
+      if (operation != null) operation.accept(result, observation!);
+      return result;
     } on FormatException catch (error) {
       throw PanelApiException(error.message, path: path);
     }
@@ -515,7 +529,7 @@ class PanelBackupManager {
     return result;
   }
 
-  Future<Map<String, dynamic>> create({
+  Future<PanelBackupRequest> create({
     required String requestId,
     required List<String> items,
     bool confirmRetry = false,
@@ -526,12 +540,42 @@ class PanelBackupManager {
         items.toSet().length != items.length) {
       throw ArgumentError('备份范围无效');
     }
-    final value = await _api.postJson('/api/backup/native/jobs', {
-      'request_id': requestId,
-      'items': items,
-      if (confirmRetry) 'confirm_retry': true,
-    });
-    return _responseMap(value, '/api/backup/native/jobs');
+    final operation = recovery.admitCreate(requestId, items);
+    final observation = operation.beginObservation();
+    const path = '/api/backup/native/jobs';
+    try {
+      final value = await _api.postJson(path, {
+        'request_id': requestId,
+        'items': operation.items,
+        if (confirmRetry) 'confirm_retry': true,
+      });
+      if (value is! Map<String, dynamic> ||
+          value['ok'] != true ||
+          value['accepted'] != true ||
+          value['request_id'] != requestId ||
+          (value['job'] != null && value['job'] is! Map<String, dynamic>)) {
+        throw const FormatException('备份受理响应与原请求不一致');
+      }
+      final job = value['job'] as Map<String, dynamic>?;
+      if (job != null && (job['id'] != requestId || job['active'] is! bool)) {
+        throw const FormatException('备份作业不属于原请求');
+      }
+      final result = PanelBackupRequest.fromJson({
+        'ok': true,
+        'request': {
+          'request_id': requestId,
+          'kind': 'create',
+          'status': job?['status'] ?? 'unknown',
+          'active': job?['active'] ?? false,
+          'accepted': true,
+          'items': job == null ? operation.items : job['items'],
+        },
+      });
+      operation.accept(result, observation);
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
   }
 
   Future<Map<String, dynamic>> cancel(String jobId) async {
@@ -540,20 +584,47 @@ class PanelBackupManager {
     return _responseMap(await _api.postJson(path, const {}), path);
   }
 
-  Future<Map<String, dynamic>> deleteFile({
+  Future<PanelBackupRequest> deleteFile({
     required String requestId,
     required PanelBackupFile file,
   }) async {
     _validateRequestId(requestId);
+    _validateArchiveFilename(file.name);
+    _validateDigest(file.version);
     const path = '/api/backup/native/files/delete';
-    return _responseMap(
-      await _api.postJson(path, {
+    final operation = recovery.admitDelete(requestId, file);
+    final observation = operation.beginObservation();
+    try {
+      final value = await _api.postJson(path, {
         'request_id': requestId,
-        'filename': file.name,
-        'version': file.version,
-      }),
-      path,
-    );
+        'filename': operation.filename,
+        'version': operation.version,
+      });
+      if (value is! Map<String, dynamic> ||
+          value['ok'] != true ||
+          value['accepted'] != true ||
+          value['deleted'] != true ||
+          value['status'] != 'deleted') {
+        throw const FormatException('备份删除响应未确认结果');
+      }
+      final result = PanelBackupRequest.fromJson({
+        'ok': true,
+        'request': {
+          'request_id': value['request_id'],
+          'kind': 'delete',
+          'status': 'succeeded',
+          'active': false,
+          'accepted': value['accepted'],
+          'deleted': value['deleted'],
+          'filename': value['filename'],
+          'version': value['version'],
+        },
+      });
+      operation.accept(result, observation);
+      return result;
+    } on FormatException catch (error) {
+      throw PanelApiException(error.message, path: path);
+    }
   }
 
   Future<int> downloadFile({
