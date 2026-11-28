@@ -18,7 +18,23 @@ B2 后端已改为上传完成后启动单个后台检查作业，支持只读�
 
 历史检查点 FLS `bfe175b` / `20261127.4`（124）与 APP `4563e2e` / `0.1.59+73` 用于验证 Termux 无法运行的 Windows Job Object 和 Flutter tester。最新检查点见下方；这些检查点均不代表 B3 完成，也不满足 B4 配对交付门槛，不合并 main、不发布正式 Release。后端入口集中在 `native_api.py`，依赖监管在 `dependency_process.py`，持久目录事务在 `backup_commit.py`，跨进程锁在 `backup_lease.py`，短 I/O 门禁在 `data_access.py`，会话锁在 `native_sessions.py`；APP 复用备份页、DTO 和 manager。
 
-#### 最新检查点：提交前刷新与 Windows 写穿透
+#### 最新检查点：四域 busy、异步清理查询与 Windows 指纹
+
+最新 FLS 候选 `04c84e685a80e97a17a38fcc9a304e4106331f87` / `20261128.23`（178），APP 候选 `b87e6362a7e32a73bffcc2086a17e4d3213f626a` / `0.1.78+92`，仅推各自 `develop`。后端 [Native `46104145392`](https://github.com/liyw0205/fls/actions/runs/46104145392) 已完整 success，15 个 jobs 全部成功：Linux 1154 passed、1 Windows 专用 skipped、1138 subtests、2 条既有 tar 警告；Windows 跨 worker 清理/native API job `140852996031` 为 52 passed、3 skipped、124 subtests，真实任务 worker 为 17 passed/46 subtests。Windows 长回归全部步骤成功：目录恢复 11 passed/10 subtests、脚本 66 passed/1 skipped/182 subtests、调试 42 passed/2 skipped/23 subtests、在线安装 181 passed/5 skipped/134 subtests、独立任务导入 66 passed/76 subtests、任务源/刷新 204 passed/152 subtests；平台跳过不计通过。Module `46104145407`、Desktop `46104145484`、EXE `46104145388` 全部 success，已核对相同 SHA，正式 Release jobs 均 skipped。APP [Android CI `46102903017`](https://github.com/liyw0205/fls-for-android/actions/runs/46102903017) 已完整 success：格式/分析、300 项测试、APK 构建和 develop artifact 成功，正式 Release 跳过。
+
+FLS `.22` 实现 `5056de8` 修正变量、应用配置、代理、通知四域的 18 个异常边界，使真实恢复锁竞争交给全局 `panel_storage_busy` 503/Retry-After/no-store 处理；提交确认成功后的回执恢复保留。新回归在原实现有 18 failed/4 passed/5 subtests，修正后四项/23 subtests；扩展 152 项/247 subtests 通过。初次 Native `46099596851` 因 Windows 临时路径、POSIX 命令引用及 killpg mock 的 13 个夹具失败而失败；`a4d946e` 规范 fixture 根路径、复用跨平台命令转换并断言真实平台终止 API。新增路径回归先失败后通过；Windows busy job `140843132367` 为 153 passed/249 subtests，Linux 对应 job 同样成功。此证据只覆盖上述四域。
+
+Native `46100987630` 终态 failure：14 jobs 成功，Windows 任务 worker 用例超时；两个任务实际均成功，但共享 buffered append 计数仅留一行。`a0b8f23` 将测试观察改为每次执行独立 UUID 标记，保留 1/2/3 次、零启动、历史、计数和停止/重试断言；本机 17 passed/46 subtests，最终双任务完整退出后计数另行通过。随后 Native `46102667657` 的 Windows 任务 job `140848406580` 成功；该 run 最终仍为 failure，另外 14 jobs 成功（含 Linux/Windows 长回归），Windows 旧归档下载用例返回 409。两个测试修正提交的三打包均成功；旧失败保留，未取消长 job。
+
+归档指纹问题由 `.23` 修正：CPython 3.12 Windows 路径 `stat` 的 ctime 使用创建时间，句柄 `fstat` 则使用变更时间，原统一哈希可能误判同一文件变化。现在 Windows 优先取显式 `st_birthtime_ns`，旧 Python 回退原 ctime；POSIX 不变，已有 Windows 列表版本不变，设备/inode/大小/mtime/创建时间全部保留。新增确定性时间语义回归先失败、修正后通过，在独立旧 Git 归档再确认失败；同时覆盖旧 Python 和 POSIX，新增 100 次真实写入/列表/下载循环。native API/旧文件恢复本机 49 passed/138 subtests；扩大 atomic publication 有 9 项既有 Termux os.link 相关失败，不能记全绿，交由新平台 CI 验证。新诊断记录文件身份及打开异常，不跳过校验、不重试 409。该根因解释相同时间语义缺陷；不声称已重现下节历史 OSError 夹具的原始现场。
+
+APP 先以 `9155059` 的四项行为回归复现 202 清理受理后无 GET：Android `46101249547` 原 290 项通过、新四项超时。`fea35ba` 保留严格可选 `cleanup_requested`、校验原 dependency operation，并每两秒只 GET 原 restore，最多 15 次；清理确认和原安装结果分开。Android `46101999272` 为 296 passed/1 failed，剩余后台用例超时。`e47bdd0` 改用明确 idle 条件及可控 in-flight GET，Android `46102510673` 为 296 passed/2 failed，证实持续和短暂切后台都可能继续旧轮询。`b87e636` 在清理 POST 前捕获前台 generation，后台永久作废，延迟/GET/异常补查均核对；返回前台只保留人工原请求查询。新增 POST 受理跨后台、GET 失败跨后台等回归，完整 300 项通过；不自动重新清理、安装或恢复。
+
+开发手测包：[artifact `15245758532`](https://github.com/liyw0205/fls-for-android/actions/runs/46102903017/artifacts/15245758532)，到期 `2026-12-12T03:33:30Z`；本机 `build/develop-0.1.78+92-b87e636/app-release.apk`，11,519,137 字节，SHA256 `33528e4baedf15f956972a7f6f8043991d3bda896fc64654a4d210857f4aec49`。aapt 确认包名 `top.fls.fls_for_android`、版本 `0.1.78`/`92`，未安装、不做 ADB。手测应在隔离面板确认清理受理后的进度、后台返回后仅人工查询，以及原安装结果仍未知的区分。
+
+本批不关闭 B3/B4。其余域 busy、全部回执损坏时维护、APP 当前会话完整流程仍需推进；随后 B4 和 M4-M7 的首次设置/维护、补缺/跨进程恢复、全量导航/DeepSeek 主题及最终配对验收。用户手动反馈待执行，不合并 main、不发布正式 Release。
+
+#### 已通过检查点：提交前刷新与 Windows 写穿透
 
 FLS `ef4e38f847352d3fec8e1b47bfc862b25fb5b967` / `20261128.21`（176）已推送 `develop`；APP 代码与下节 `a6a3620` / `0.1.76+90` 相同。后端 [Native `46096518024`](https://github.com/liyw0205/fls/actions/runs/46096518024) 已完整 success，13 个 jobs 全部成功：Linux 完整回归 1152 passed、1 Windows 专用 skipped、1033 subtests、2 条既有 tar 警告；Windows 目录恢复 11 passed/10 subtests、调试 42 passed/2 skipped/23 subtests、在线安装 181 passed/5 skipped/134 subtests、独立任务导入 66 passed/76 subtests、任务源/刷新 204 passed/152 subtests，其余步骤全部成功。Module `46096517799`、Desktop `46096517784`、EXE `46096517812` 全部 success，正式 Release jobs 均 skipped，已核对实际 SHA。
 
@@ -572,8 +588,8 @@ B1/B2 已验证的资源基线为：原生 staging 同时最多 2 个已受理�
 | --- | --- | --- |
 | B1 文件与备份作业 | FLS `f72624b` 三项打包 workflow 成功；APP `ddac555` / `0.1.55+68` 的 CI `45813098368`、arm64 APK/artifact `15113503595` 通过 | 自动化候选通过：创建失联只查询、GET 零写/清理、流式下载、取消与终态分开；真实面板手动验收待用户 |
 | B2 预检查 | FLS `ec318d8` / `20261126.12` 的 19 项定向及 119 项相关回归、三项打包 workflow 通过；APP `394993b` / `0.1.56+70` 的 CI `45832261224`、214 项测试及 arm64 APK/artifact 通过 | 自动化候选通过：预检查不替换目录/安装依赖，覆盖坏包、超限、路径异常、取消、重启和重复 ID；真实面板手动验收待用户 |
-| B3 恢复及后续处理 | 实例锁、真实 WAL、多 worker 清理和 APP 生命周期子批完整 CI 通过；FLS `.21` `ef4e38f` 提交前刷新与 Windows 写穿透、完整回归及三打包均成功。APP `a6a3620` 的 290 项测试及 APK 成功；逐域 busy、坏回执维护及 APP 全流程继续 | 上述剩余项完成并通过故障/兼容回归，明确物理断电未验证边界；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
-| B4 配对验证 | 双方版本递增、提交推送 develop，聚焦新契约及旧备份恢复回归、双方 CI 和 APK | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
+| B3 恢复及后续处理 | 实例锁、真实 WAL、多 worker 清理和 `.21` 文件刷新/写穿透已有完整平台 CI；四域 busy、任务标记及 Windows 指纹修正由最新 FLS `04c84e6` / `.23` 的完整 Native/三打包验证；APP `b87e636` / `0.1.78+92` 的后台作废、有界查询及完整 300 项测试/APK 成功 | 其余域 busy、坏回执维护及 APP 当前会话全流程完成并通过故障/兼容回归，明确物理断电未验证边界；检查点和 B2 证据均不能代替 B3/B4 完整交付 |
+| B4 配对验证 | 待 B3 剩余项完成后，以最终双方 SHA 聚焦新契约及旧备份恢复回归、双方 CI 和 APK；当前配对检查点不关闭 B4 | 记录确切 SHA/版本、工作流终态、测试边界及 artifact；手动验收待用户，不合并 main |
 
 旧回归至少涵盖 `test_backup_request_recovery`、`test_backup_cancel_recovery`、`test_backup_file_recovery`、`test_backup_orphan_staging`、`test_backup_atomic_publication`、`test_backup_limits`、`test_backup_restore_idempotency`、`test_backup_restore_recovery` 和 `test_auth_backup` 中相关用例。平台不支持的测试单列，不跳过后宣称全量通过。新测试注入存储/线程/进程及目录提交故障，不修改真实面板数据。
 
